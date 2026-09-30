@@ -22,6 +22,26 @@ describe('Toast', () => {
     expect(region).toBeEmptyDOMElement();
   });
 
+  it('a weak notice never takes the place of a standing Undo, and gives way to any notice', () => {
+    render(<Toast />);
+    act(() => {
+      showToast({ message: '2 done items deleted', action: { label: 'Undo', onSelect: () => undefined } });
+      showToast({ message: 'Milk done', weak: true, action: { label: 'Undo', onSelect: () => undefined } });
+    });
+    expect(screen.getByRole('status')).toHaveTextContent('2 done items deleted');
+
+    act(() => {
+      dismissToast();
+      showToast({ message: 'Milk done', weak: true, action: { label: 'Undo', onSelect: () => undefined } });
+      showToast({ message: 'Eggs done', weak: true, action: { label: 'Undo', onSelect: () => undefined } });
+    });
+    expect(screen.getByRole('status')).toHaveTextContent('Eggs done');
+    act(() => {
+      showToast({ message: 'Deleted', action: { label: 'Undo', onSelect: () => undefined } });
+    });
+    expect(screen.getByRole('status')).toHaveTextContent('Deleted');
+  });
+
   it('shows the notice with its action, which fires once and dismisses it', async () => {
     const user = userEvent.setup();
     const undo = vi.fn();

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { ROUTES } from '@/app/routes.ts';
+import { RESTORE_SCROLL } from '@/app/useScrollRestore.ts';
 import { Icon, type IconName } from '@/components/Icon.tsx';
 import { useReducedMotion } from '@/hooks/useReducedMotion.ts';
 
@@ -106,7 +107,9 @@ export function CaptureScreen() {
    */
   const leave = useCallback(
     (to: string) => {
-      void navigate(to, { replace: true });
+      // At the offset it was left at: the note someone recorded into from
+      // forty paragraphs down should not reopen at its title (R7-6b).
+      void navigate(to, { replace: true, state: RESTORE_SCROLL });
     },
     [navigate],
   );

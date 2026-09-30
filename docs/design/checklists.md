@@ -481,7 +481,17 @@ flips every `[x]` to `[ ]` in place (`uncheckAll`). Delete done drops every
 done line, and a done parent's sub-items with it (`removeDone`), and offers
 Undo in the shell's toast for six seconds — no typed word and no dialog
 (OF-DEL): Undo writes the previous body back and saves, unless the list
-changed since (see Split up). Done rows have no grip, because their order
+changed since (see Split up). A tick, which moves the row out of sight
+into Done, offers an Undo for four seconds as "<item> done" (R7-13), the
+item's words cut at forty characters: Undo writes the body from before the
+tick back, so the row returns to its place, and only while the body is
+still exactly the tick's — after any later act, the person's own included,
+it says "The list changed since — nothing undone." rather than undo that
+act too. So only the last tick is undoable. Reopening a done row offers
+none, and the status line still says "Marked done". The tick's toast is
+weak (`ToastNotice.weak`): it never takes the place of a standing Delete
+done or adoption Undo, so a tick right after Delete done leaves that Undo
+standing, and the tick is said by the status line alone. Done rows have no grip, because their order
 is the body's and nothing shows it; a drag among them would move lines
 whose places are invisible.
 

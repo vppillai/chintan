@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -26,6 +27,7 @@ import { languageName } from '@/features/settings/languages.ts';
 import { useAutoGrow } from '@/hooks/useAutoGrow.ts';
 import { useHorizontalSwipe } from '@/hooks/useHorizontalSwipe.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
+import { useReducedMotion } from '@/hooks/useReducedMotion.ts';
 import { useCachedNote } from '@/offline/useNotesCache.ts';
 
 import { CleanedPanel } from './CleanedPanel.tsx';
@@ -52,7 +54,7 @@ import {
   type NoteTabDescriptor,
 } from './NoteTabs.tsx';
 import { Recordings } from './Recordings.tsx';
-import { SAVE_LABELS } from './autosave.ts';
+import { SAVE_LABELS, additionTo } from './autosave.ts';
 import { FIND_CLOSED, findMatches, findReducer, type FindState, type FindAction } from './find.ts';
 import { describeRecordings, formatRowTime } from './groups.ts';
 import { ChecklistEditor } from './ChecklistEditor.tsx';
@@ -436,6 +438,16 @@ function NoteViews({
     },
     [dispatchFind],
   );
+  /*
+   * What the banner's Show asked to be pointed at: the note's body from
+   * before the recording, from which the Text panel works out what it added.
+   * `n` makes a second Show of the same landing a new flash.
+   */
+  const [flash, setFlash] = useState<Flash | null>(null);
+  const clearFlash = useCallback(() => {
+    setFlash(null);
+  }, []);
+
   const searchable = tab !== 'recordings';
   const target: FindTarget | null =
     find.open && find.query !== '' && searchable
@@ -451,7 +463,22 @@ function NoteViews({
         Recordings tab, where the row itself wears the same strip and the
         same Retry — two of them a hundred pixels apart said nothing twice.
       */}
-      {tab !== 'recordings' && <FilingBanner note={note} localUpload={localUpload} />}
+      {tab !== 'recordings' && (
+        <FilingBanner
+          note={note}
+          localUpload={localUpload}
+          checklist={checklist}
+          onShow={(before) => {
+            // The addition is drawn on the text; from Cleaned, go there.
+            if (tab !== 'text') setTab('text');
+            setFlash((was) => ({ before, n: (was?.n ?? 0) + 1 }));
+          }}
+        />
+      )}
+      {/* Always mounted, so the sentence is announced when it appears. */}
+      <p className="visually-hidden" role="status" aria-live="polite">
+        {flash ? 'Added text shown' : ''}
+      </p>
       {/* The hook writes `--tab-swipe-x` on this element itself; only
           `dragging` comes through React, so a move re-renders nothing. */}
       <div
@@ -497,6 +524,8 @@ function NoteViews({
               onDismissFind={() => {
                 dispatchFind({ type: 'close' });
               }}
+              flash={flash}
+              onFlashDone={clearFlash}
             />
           ) : tab === 'cleaned' ? (
             <CleanedPanel note={note} editor={editor} lang={lang} find={target} />
@@ -555,6 +584,8 @@ function TextPanel({
   lang,
   find,
   onDismissFind,
+  flash = null,
+  onFlashDone = () => {},
 }: {
   /** For the Items tab's Done disclosure, remembered per note. */
   noteId: string;
@@ -564,6 +595,9 @@ function TextPanel({
   find: FindTarget | null;
   /** A tap on the mirror: close the bar and go back to editing. */
   onDismissFind: () => void;
+  /** A recording's addition to point at, from the filing banner's Show. */
+  flash?: Flash | null;
+  onFlashDone?: () => void;
 }) {
   const body = editor.model.draft.body;
   // Measured here, in the panel, so re-opening the Text tab measures again:
@@ -613,6 +647,91 @@ function TextPanel({
     wasMirrored.current = mirrored;
   }, [mirrored]);
 
+  /*
+   * Show on "Added at the end": the recording's addition, marked for
+   * `FLASH_MS` and scrolled to (R7-6b). Prose draws it in the find mirror's
+   * box, since a textarea cannot colour a range; a checklist marks the rows
+   * the recording added. Find outranks it: its marks are the ones asked for.
+   */
+  const reduced = useReducedMotion();
+  const flashing = flash !== null && find === null;
+  const flashRange = useMemo(
+    () => (flashing && !checklist ? addedRange(flash.before, body) : null),
+    [flashing, checklist, flash, body],
+  );
+  const flashItems = useMemo(
+    () => (flashing && checklist ? addedItems(flash.before, body) : null),
+    [flashing, checklist, flash, body],
+  );
+  /*
+   * Focus follows Show, so a keyboard or a screen reader lands on the
+   * addition too, and nothing drops to <body> when the banner's button goes:
+   * onto the mirror while it stands, then into the textarea with the caret at
+   * the paragraph's start; on a checklist, into the first added row's field
+   * at once, since the rows stay.
+   */
+  const flashMirrorRef = useRef<HTMLElement>(null);
+  const caretAfterFlash = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (!flashing) return;
+    const target = document.querySelector<HTMLElement>('[data-flash]');
+    if (target && typeof target.scrollIntoView === 'function') {
+      target.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
+    }
+    // With nothing to mark (every added item was already on the list, or a
+    // body with no text) focus still lands in the text, never on <body>.
+    if (checklist) {
+      const field =
+        target?.querySelector<HTMLTextAreaElement>('textarea') ??
+        document.querySelector<HTMLTextAreaElement>('.checklist textarea');
+      field?.focus({ preventScroll: true });
+    } else if (flashRange) {
+      caretAfterFlash.current = flashRange.start;
+      flashMirrorRef.current?.focus({ preventScroll: true });
+    } else {
+      bodyRef.current?.focus({ preventScroll: true });
+    }
+    const timer = setTimeout(onFlashDone, FLASH_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+    // A new Show (`n`) is a new flash; the body settling under it is not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flashing, flash?.n]);
+  useEffect(() => {
+    if (flashing) return;
+    const at = caretAfterFlash.current;
+    caretAfterFlash.current = null;
+    const textarea = bodyRef.current;
+    if (at === null || !textarea) return;
+    textarea.focus({ preventScroll: true });
+    try {
+      textarea.setSelectionRange(at, at);
+    } catch {
+      /* A browser that will not place the caret still has the focus. */
+    }
+  }, [flashing]);
+
+  if (flashRange) {
+    return (
+      <section
+        ref={flashMirrorRef}
+        tabIndex={-1}
+        className="note-body-mirror prose"
+        lang={lang}
+        aria-label="Note body"
+        // Any tap goes back to editing at once.
+        onClick={onFlashDone}
+      >
+        {body.slice(0, flashRange.start)}
+        <mark className="note-flash" data-flash="">
+          {body.slice(flashRange.start, flashRange.end)}
+        </mark>
+        {body.slice(flashRange.end)}
+      </section>
+    );
+  }
+
   if (find) {
     return (
       <section
@@ -636,6 +755,7 @@ function TextPanel({
         noteId={noteId}
         body={body}
         currentBody={() => editor.current().body}
+        flash={flashItems}
         onChange={(next) => {
           editor.edit({ body: next });
         }}
@@ -662,6 +782,40 @@ function TextPanel({
         onBlur={() => void editor.saveNow()}
       />
     </>
+  );
+}
+
+/** A recording's addition to point at: the body from before it, and which Show this is. */
+interface Flash {
+  before: string;
+  n: number;
+}
+
+/** How long Show's mark stays on the addition. */
+const FLASH_MS = 2000;
+
+/**
+ * Where in `body` a recording's addition is: what it added to `before` at
+ * the end, found where it now stands; or, when the body changed some other
+ * way meanwhile, its last paragraph, which is where the worker appends.
+ */
+export function addedRange(before: string, body: string): { start: number; end: number } | null {
+  const addition = additionTo(before, body);
+  const start = addition === null ? -1 : body.lastIndexOf(addition);
+  if (addition !== null && start >= 0) return { start, end: start + addition.length };
+  const end = body.trimEnd().length;
+  if (end === 0) return null;
+  const gap = body.lastIndexOf('\n\n', end - 1);
+  return { start: gap < 0 ? 0 : gap + 2, end };
+}
+
+/** The open items of `body` whose words `before` did not have: what a recording merged in. */
+export function addedItems(before: string, body: string): ReadonlySet<string> {
+  const had = new Set(parseChecklist(before).map((item) => item.text.trim()));
+  return new Set(
+    parseChecklist(body)
+      .filter((item) => !item.done && !had.has(item.text.trim()))
+      .map((item) => item.text.trim()),
   );
 }
 

@@ -33,6 +33,16 @@ export const TOAST_MS = 6000;
 export interface ToastNotice {
   message: string;
   action?: { label: string; onSelect: () => void };
+  /** How long it stands, when not `TOAST_MS`. */
+  ms?: number;
+  /**
+   * A convenience that must not cost anything: a weak notice never replaces
+   * a standing one that is not weak and carries an action. A tick's Undo is
+   * weak, because a tick right after Delete done must not take away the one
+   * Undo that brings those items back; the tick is said by its own live
+   * region either way.
+   */
+  weak?: boolean;
 }
 
 let current: ToastNotice | null = null;
@@ -42,8 +52,9 @@ function emit(): void {
   for (const listener of listeners) listener();
 }
 
-/** Shows this notice, replacing whatever was showing. */
+/** Shows this notice, replacing whatever was showing — unless it is weak (see `weak`). */
 export function showToast(notice: ToastNotice): void {
+  if (notice.weak && current?.action && !current.weak) return;
   current = notice;
   emit();
 }
@@ -101,7 +112,7 @@ function Card({ notice }: { notice: ToastNotice }) {
 
   useEffect(() => {
     if (attended) return;
-    const timer = setTimeout(dismissToast, TOAST_MS);
+    const timer = setTimeout(dismissToast, notice.ms ?? TOAST_MS);
     return () => {
       clearTimeout(timer);
     };

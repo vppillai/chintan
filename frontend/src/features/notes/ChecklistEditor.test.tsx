@@ -822,11 +822,68 @@ describe('the Done section', () => {
     const user = userEvent.setup();
     const { log, body } = mount('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
     await user.click(screen.getByRole('button', { name: 'Delete done' }));
+    // A tick's own Undo is weak: it does not take Delete done's place.
     await user.click(screen.getByRole('checkbox', { name: 'Bread' }));
     expect(body()).toBe('- [x] Bread');
+    expect(screen.getByText('2 done items deleted', { selector: '.toast__text' })).toBeInTheDocument();
+    expect(screen.getByText('Marked done', { selector: '[aria-live]' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Undo' }));
     expect(body()).toBe('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
     expect(log.saves).toBe(3);
+  });
+
+  it('a tick\'s Undo refuses after the person\'s own later edit, rather than undo it too', async () => {
+    const user = userEvent.setup();
+    const { log } = mount('- [ ] Milk\n- [ ] Bread');
+    await user.click(screen.getByRole('checkbox', { name: 'Milk' }));
+    await user.type(screen.getByRole('textbox', { name: 'Add an item' }), 'Jam{Enter}');
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(log.bodies.at(-1)).toBe('- [x] Milk\n- [ ] Bread\n- [ ] Jam');
+    expect(screen.getByText('The list changed since — nothing undone.', { selector: '.toast__text' })).toBeInTheDocument();
+  });
+
+  it('a long item is cut short in the toast', async () => {
+    const user = userEvent.setup();
+    mount('- [ ] Call the plumber about the leaking tap under the kitchen sink before Friday');
+    await user.click(screen.getByRole('checkbox', { name: /^Call the plumber/ }));
+    expect(screen.getByText('Call the plumber about the leaking tap… done', { selector: '.toast__text' })).toBeInTheDocument();
+  });
+
+  it('a tick says "<item> done" with Undo, and Undo puts the row back where it was', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount('- [ ] Milk\n- [ ] Eggs\n- [ ] Bread');
+    await user.click(screen.getByRole('checkbox', { name: 'Eggs' }));
+    expect(body()).toBe('- [ ] Milk\n- [x] Eggs\n- [ ] Bread');
+    expect(screen.getByText('Eggs done', { selector: '.toast__text' })).toBeInTheDocument();
+    // The live region still says it, as before the toast.
+    expect(screen.getByText('Marked done', { selector: '[aria-live]' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(body()).toBe('- [ ] Milk\n- [ ] Eggs\n- [ ] Bread');
+    expect(log.saves).toBe(2);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+    expect(openValues()).toEqual(['Milk', 'Eggs', 'Bread', '']);
+  });
+
+  it('a tick\'s Undo refuses when the list changed under it meanwhile', async () => {
+    const user = userEvent.setup();
+    const { log } = mount('- [ ] Milk\n- [ ] Bread');
+    await user.click(screen.getByRole('checkbox', { name: 'Milk' }));
+    act(() => {
+      log.setBody('- [x] Milk\n- [ ] Bread\n- [ ] Jam');
+    });
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(log.bodies).toEqual(['- [x] Milk\n- [ ] Bread']);
+    expect(screen.getByText('The list changed since — nothing undone.', { selector: '.toast__text' })).toBeInTheDocument();
+  });
+
+  it('reopening a done item offers no Undo', async () => {
+    const user = userEvent.setup();
+    mount(LIST);
+    await user.click(within(doneSection()).getByRole('checkbox', { name: 'Eggs' }));
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
   });
 
   it('says "1 done item" for one', async () => {
@@ -834,6 +891,24 @@ describe('the Done section', () => {
     mount(LIST);
     await user.click(screen.getByRole('button', { name: 'Delete done' }));
     expect(screen.getByText('1 done item deleted', { selector: '.toast__text' })).toBeInTheDocument();
+  });
+});
+
+describe('the rows a recording added', () => {
+  it('are marked while the banner\'s Show points at them', () => {
+    render(
+      <ChecklistEditor
+        noteId="shopping"
+        body={'- [ ] Milk\n- [ ] Bread'}
+        currentBody={() => ''}
+        flash={new Set(['Bread'])}
+        onChange={() => {}}
+        onSave={() => {}}
+      />,
+    );
+    const rows = within(items()).getAllByRole('listitem');
+    expect(rows[0]).not.toHaveAttribute('data-flash');
+    expect(rows[1]).toHaveAttribute('data-flash');
   });
 });
 

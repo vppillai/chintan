@@ -106,3 +106,35 @@ describe('which capture the banner is about', () => {
     expect(bannerCapture([landed], new Set())).toBeNull();
   });
 });
+
+describe('the filing banner once the recording lands (R7-6b)', () => {
+  it('says the paragraph went at the end, and Show hands back the body from before it', async () => {
+    const user = userEvent.setup();
+    const onShow = vi.fn();
+    const ui = (captures: CaptureWire[], body: string) => (
+      <TestProviders api={testApiContext(vi.fn<typeof fetch>())}>
+        <MemoryRouter>
+          <FilingBanner note={{ ...note(captures), body }} localUpload={null} onShow={onShow} />
+        </MemoryRouter>
+      </TestProviders>
+    );
+    const view = render(ui([capture()], 'Ridge tiles.'));
+    expect(screen.queryByText('Added at the end')).toBeNull();
+
+    view.rerender(ui([capture({ status: 'appended' })], 'Ridge tiles.\n\nGutter leaks.'));
+    expect(await screen.findByText('Added at the end')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Show' }));
+    expect(onShow).toHaveBeenCalledWith('Ridge tiles.');
+  });
+
+  it('says nothing for a note opened with its recordings already filed', () => {
+    render(
+      <TestProviders api={testApiContext(vi.fn<typeof fetch>())}>
+        <MemoryRouter>
+          <FilingBanner note={note([capture({ status: 'appended' })])} localUpload={null} onShow={vi.fn()} />
+        </MemoryRouter>
+      </TestProviders>,
+    );
+    expect(screen.queryByRole('region', { name: 'Filing a recording' })).toBeNull();
+  });
+});

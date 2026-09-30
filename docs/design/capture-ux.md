@@ -71,8 +71,17 @@ recording is still coming. Between the meta line and the tab strip it draws
 this device's own upload row ("Uploading… 40 %") while the PUT is in flight,
 then the newest of the note's captures that is neither appended nor dismissed
 as the same row the library draws — "Filing your recording" over the four
-stage segments (Uploaded · Transcribing · Filing · Saving) — until it appends,
-when the body has already refreshed and the banner has nothing left to say. A
+stage segments (Uploaded · Transcribing · Filing · Saving) — until it appends.
+The body has refreshed by then, but in a long note the paragraph is far below
+where the person was reading, so for six seconds the banner says "Added at the
+end · Show" ("Added to the list" on a checklist); Show scrolls to the
+recording's addition and marks it in the selection wash for two seconds — the
+paragraph, drawn in the find mirror's box, or the rows it added — without
+motion under reduced motion (R7-6b). Focus goes with Show — onto the marked
+paragraph, then into the textarea with the caret at its start; on a checklist
+into the first added row's field — and "Added text shown" is said politely,
+so the keyboard and a screen reader land there too. The note itself comes back at the offset
+it was left at (`RESTORE_SCROLL`, `useScrollRestore`), not at its title. A
 failed or stuck capture keeps the row's Retry and Dismiss; a dismissal is per
 device (`dismissed.ts`), so it does not return with the note. The banner is
 not drawn on the Recordings tab, whose own row wears the same strip.

@@ -159,6 +159,18 @@
   cursor: text;
 }
 
+/*
+ * The mirror carries `.prose` for its type, and `.prose` is a grid with a gap
+ * that `notes.css` declares after this file. At equal specificity the grid
+ * won: every match and every run of text between matches became its own row,
+ * and the active match a full-width bar. Two classes outrank one, so the
+ * mirror stays one block of flowing text with the textarea's padding.
+ */
+.note-body-mirror.prose {
+  display: block;
+  padding: var(--space-3);
+}
+
 /* An inline fact in the meta line that opens the Details panel. The line is
    thirteen pixels tall; the target is not — the padding reaches the 44 px
    minimum and the negative margin gives the line its height back. */
@@ -176,4 +188,64 @@
 
 .note-meta__language:hover {
   color: var(--color-ink);
+}
+
+/*
+ * "Added at the end · Show", the filing banner's last word once a recording
+ * has landed in the note (R7-6b). Show is a real button with the full
+ * target, set as a link-weight action beside the sentence.
+ */
+.filing-landed {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding-inline: var(--space-3);
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+}
+
+.filing-landed__show {
+  min-block-size: var(--layout-touch-target-min);
+  min-inline-size: var(--layout-touch-target-min);
+  padding-inline: var(--space-2);
+  color: var(--color-ink);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+/*
+ * What Show points at: the recording's paragraph in the body's mirror, or the
+ * rows it added to a list. The selection wash, fading out over the two
+ * seconds it stands; under reduced motion it is simply there and then gone.
+ */
+.note-flash,
+.checklist__row[data-flash] {
+  background-color: var(--color-selection);
+  animation: note-flash 2s var(--motion-ease-standard) forwards;
+}
+
+.note-flash {
+  color: inherit;
+  border-radius: var(--radius-sm);
+  box-decoration-break: clone;
+}
+
+@keyframes note-flash {
+  0%,
+  50% {
+    background-color: var(--color-selection);
+  }
+
+  100% {
+    background-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .note-flash,
+  .checklist__row[data-flash] {
+    animation: none;
+  }
 }

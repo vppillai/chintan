@@ -108,6 +108,7 @@ export function ChecklistEditor({
   noteId,
   body,
   currentBody,
+  flash = null,
   onChange,
   onSave,
 }: {
@@ -119,6 +120,8 @@ export function ChecklistEditor({
    * that may fire after this component has gone, when `body` is stale.
    */
   currentBody: () => string;
+  /** The words of rows a recording just added, marked for a moment (R7-6b). */
+  flash?: ReadonlySet<string> | null;
   onChange: (body: string) => void;
   /** A discrete act — a tick, a move, a delete, leaving a field — is done; save now. */
   onSave: () => void;
@@ -203,12 +206,44 @@ export function ChecklistEditor({
   const save = onSave;
 
   const toggle = (index: number, item: ChecklistItem): void => {
+    const previous = body;
     const next = toggleItem(body, index);
     // Every row the tick flipped is held with the one tapped — a parent's
     // sub-items, a reopened sub-item's parent — so a block moves to Done, or
     // back, together. Indices match line for line: a tick adds no line.
     const after = parseChecklist(next);
     const flipped = items.flatMap((was, i) => (was.done === after[i]?.done ? [] : [i]));
+    /*
+     * A tick moves the row out of sight into Done, so a mistaken one gets an
+     * Undo (R7-13). Shorter than Delete done's toast: a tick is small, and
+     * the next tick replaces it, so only the last tick is undoable. Weak: it
+     * never takes the place of a standing Delete done or adoption Undo,
+     * which would leave those items with no way back. The toast goes before
+     * the write for the same reason as Delete done's: in Split up the write
+     * is the adoption, whose own toast must land last. Undo writes the whole
+     * body back, so the row returns to its place — and only while the body
+     * is still exactly the tick's: after any later act, the person's own
+     * included, it refuses rather than undo that act too.
+     */
+    if (!item.done) {
+      showToast({
+        message: `${shortName(item.text)} done`,
+        ms: TICK_TOAST_MS,
+        weak: true,
+        action: {
+          label: 'Undo',
+          onSelect: () => {
+            if (currentBody() !== next) {
+              showToast({ message: UNDO_STALE });
+              return;
+            }
+            write(previous);
+            setAnnouncement('Reopened');
+            save();
+          },
+        },
+      });
+    }
     write(next, undefined, flipped);
     setAnnouncement(item.done ? 'Reopened' : 'Marked done');
     save();
@@ -482,6 +517,7 @@ export function ChecklistEditor({
             position={position}
             dragging={drag.draggingId === String(index)}
             nestPreview={nestPreview(position)}
+            flash={flash?.has(item.text.trim()) ?? false}
             hintId={hintId}
             fieldHintId={fieldHintId}
             menu={gripMenu(index, position, item)}
@@ -576,6 +612,22 @@ export function ChecklistEditor({
 
 /** The add row, as a focus target. Never an item index. */
 const ADD_ROW = -1;
+
+/** How long a tick's Undo stands: long enough to read a short line and reach the button. */
+const TICK_TOAST_MS = 4000;
+
+/** The most of an item's words a toast line carries. */
+const TOAST_NAME_MAX = 40;
+
+/** An item's words for a one-line toast: cut at a word with an ellipsis when long. */
+export function shortName(text: string): string {
+  const words = text.trim().replace(/\s+/g, ' ');
+  if (words === '') return 'Item';
+  if (words.length <= TOAST_NAME_MAX) return words;
+  const cut = words.slice(0, TOAST_NAME_MAX);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > TOAST_NAME_MAX / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
 
 /** What an Undo says instead of writing over a list that changed under it. */
 export const UNDO_STALE = 'The list changed since — nothing undone.';
