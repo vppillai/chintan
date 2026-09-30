@@ -54,6 +54,16 @@ describe('the cached list says why it is the cached list', () => {
     expect(refetch).toHaveBeenCalled();
   });
 
+  it.each([
+    ['a timeout', new ApiError({ kind: 'timeout', status: 0, title: 'Timed out' })],
+    ['a 429', new ApiError({ kind: 'http', status: 429, title: 'Too Many Requests' })],
+  ])('says the server did not answer for %s too, not that the device is offline', (_, error) => {
+    renderCached(error);
+
+    expect(screen.getByText(/server didn.t answer/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
   it('keeps the offline sentence for a network failure', () => {
     renderCached(new ApiError({ kind: 'network', status: 0, title: 'Network error' }));
 

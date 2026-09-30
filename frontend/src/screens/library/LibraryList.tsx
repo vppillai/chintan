@@ -83,8 +83,9 @@ export function LibraryList({
       )}
 
       {/*
-        A 5xx while the device is online is not "offline": the rows are the
-        device's copy because the server failed, the list may be missing
+        A server failure while the device is online — a 5xx, a timeout, a
+        429 — is not "offline": the rows are the device's copy because the
+        server failed, the list may be missing
         what another device added, and the way back is a retry, not a
         connection (R7-12). A network failure keeps the offline sentence.
       */}
@@ -295,7 +296,19 @@ function failureMessage(error: unknown): string {
   return 'Your notes could not be loaded.';
 }
 
-/** The list failed because the server answered 5xx, not because the device has no network. */
+/**
+ * The list failed while the device is online for a reason a connection
+ * would not fix: a 5xx, a timeout, a 429 or another refusal. Only a network
+ * failure or a cancelled request is "offline"; a 401 has its own way back
+ * (signing in), which the shell's session handling takes.
+ */
 export function serverFailed(error: unknown, online: boolean, paused: boolean): boolean {
-  return online && !paused && error instanceof ApiError && error.kind === 'http' && error.status >= 500;
+  return (
+    online &&
+    !paused &&
+    error instanceof ApiError &&
+    error.kind !== 'network' &&
+    error.kind !== 'cancelled' &&
+    error.status !== 401
+  );
 }
