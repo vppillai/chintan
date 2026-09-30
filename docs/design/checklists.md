@@ -33,6 +33,31 @@ reader. The server never converts a body: switching `kind` is a PATCH that
 carries the converted body from the client, and a body the client did not
 send is left as it is.
 
+**The line rule.** Every reader — the editor (`parseChecklist`, the `ITEM`
+pattern in `checklist.ts`) and the backend (`cleanup.ParseLine`, used by
+`cleanup.ItemsFromLines` and by every tick, reopen and match in
+`pipeline/append.go`) — reads an item line one way: an indent of spaces and
+tabs, a tab counting as two spaces; `- [`; a box of a space (open), `x` or
+`X` (done); `]`; at most one space; then the text as written. So `- [ ]Milk`
+is an item, `\t- [x] Candles` is a done sub-item, and ` - [ ] Plates` (one
+space) is top level. An indent of two columns or more is one level down,
+clamped as below; a trailing `\r` is not part of the text. Any other
+non-blank line is prose. The rule is pinned by example in
+`backend/internal/cleanup/testdata/checklist-lines.json`, which the Go
+suite (`cleanup/items_test.go`) and the Vitest suite (`checklist.test.ts`)
+both assert, so a change to one reader that the other does not share fails
+a test. Until R7-19 (2026-09-30) the backend required the space after the
+box and read depth only from a two-space prefix, so a line typed `- [ ]Milk`
+was an item in the editor and prose to the worker, and its tick never
+carried. Three differences are left on purpose, since they change no
+line's meaning: the editor keeps an item's text byte for byte (it writes
+back on every keystroke) while the Go readers collapse whitespace and skip
+an item with no words; the editor shows an indented prose line as a
+top-level item, while `ItemsFromLines` reads it as a child, because it also
+reads the clean artefact's box-less lines (`cleanup.RenderItems`); and a
+tick or reopen in the worker writes the line back in the normal form
+(`- [x] ` with its one space).
+
 A sub-item is two spaces of indent under its parent — `  - [ ] Plates` under
 `- [ ] Party` — and there is one level of them (`MAX_DEPTH = 1` in
 `checklist.ts`; owner decision CL-D1, 2026-09-27, Keep parity: a spoken list
@@ -196,7 +221,9 @@ marker, in the recording's order. Three rules:
   reopened sub-item reopens its parent, because "add milk" over a ticked
   Milk means milk is wanted again;
 - matching folds case, punctuation and whitespace (`llm.FoldWords`, the one
-  fold every reader uses) and never reads indent; a marker line or a blank
+  fold every reader uses; a combining mark such as an Indic vowel sign or
+  virama is part of its word, so പാൽ and പുൽ, or दाल and दिल, are two
+  items) and never reads indent; a marker line or a blank
   line is left where it stands and an insertion never crosses a marker; a
   merge never ticks a line the list has, only ever flips `[x]` → `[ ]` (an
   item that arrives done is a tick a regeneration carried, written as it

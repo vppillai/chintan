@@ -1,7 +1,9 @@
 package cleanup_test
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -185,5 +187,75 @@ func TestItemsMaxTokensGrowsWithTheTranscriptFromAFloor(t *testing.T) {
 	long := strings.Repeat("x", 8_000) // ~2,000 tokens
 	if got := cleanup.ItemsMaxTokens(long); got < 8_000 {
 		t.Errorf("ItemsMaxTokens(8 KB) = %d, want about four times the input", got)
+	}
+}
+
+// The Go readers and the editor read checklist body lines by one rule
+// (ParseLine, checklist.ts ITEM). testdata/checklist-lines.json is the rule
+// by example, and checklist.test.ts reads the same file, so the two cannot
+// drift apart again: until R7-19 the editor took "- [ ]Milk" as an item and
+// the Go readers did not, so a tick the person made on it never carried.
+func TestItemsFromLinesMatchesTheSharedFixture(t *testing.T) {
+	raw, err := os.ReadFile("testdata/checklist-lines.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type line struct {
+		Text  string `json:"text"`
+		Done  bool   `json:"done"`
+		Depth int    `json:"depth"`
+	}
+	var fixture struct {
+		Cases []struct {
+			Name  string `json:"name"`
+			Body  string `json:"body"`
+			Items []line `json:"items"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.Cases) == 0 {
+		t.Fatal("the fixture has no cases")
+	}
+	for _, tc := range fixture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			got := []line{}
+			for _, it := range cleanup.ItemsFromLines(tc.Body) {
+				got = append(got, line{it.Text, it.Done, 0})
+				for _, c := range it.Children {
+					got = append(got, line{c.Text, c.Done, 1})
+				}
+			}
+			if !reflect.DeepEqual(got, tc.Items) {
+				t.Errorf("cleanup.ItemsFromLines(%q) = %+v, want %+v", tc.Body, got, tc.Items)
+			}
+		})
+	}
+}
+
+func TestParseLine(t *testing.T) {
+	for _, tc := range []struct {
+		line  string
+		text  string
+		done  bool
+		depth int
+		ok    bool
+	}{
+		{"- [ ] Milk", "Milk", false, 0, true},
+		{"- [ ]Milk", "Milk", false, 0, true},
+		{"- [X]  two", " two", true, 0, true},
+		{"\t- [x] Candles\r", "Candles", true, 1, true},
+		{" - [ ] Plates", "Plates", false, 0, true},
+		{"- [ ]", "", false, 0, true},
+		{"- [-] Maybe", "", false, 0, false},
+		{"- [", "", false, 0, false},
+		{"<!-- chintan:capture:c_1 -->", "", false, 0, false},
+		{"Milk", "", false, 0, false},
+	} {
+		text, done, depth, ok := cleanup.ParseLine(tc.line)
+		if text != tc.text || done != tc.done || depth != tc.depth || ok != tc.ok {
+			t.Errorf("ParseLine(%q) = (%q, %v, %d, %v), want (%q, %v, %d, %v)", tc.line, text, done, depth, ok, tc.text, tc.done, tc.depth, tc.ok)
+		}
 	}
 }

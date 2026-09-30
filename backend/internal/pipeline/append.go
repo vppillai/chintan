@@ -389,19 +389,26 @@ func keepTick(old, text string) string {
 }
 
 // tick writes an open task-list line as done, its indent kept.
-func tick(line string) string {
-	trimmed := strings.TrimLeft(line, " \t")
-	return line[:len(line)-len(trimmed)] + "- [x] " + strings.TrimPrefix(trimmed, "- [ ] ")
-}
+func tick(line string) string { return withBox(line, "- [x] ") }
 
 // reopen writes a done task-list line as open, its indent kept; a typed
-// "[X]" is a tick too, as the frontend reads it (checklist.ts ITEM).
-func reopen(line string) string {
-	trimmed := strings.TrimLeft(line, " \t")
-	if strings.HasPrefix(trimmed, "- [x] ") || strings.HasPrefix(trimmed, "- [X] ") {
-		return line[:len(line)-len(trimmed)] + "- [ ] " + trimmed[len("- [x] "):]
+// "[X]" is a tick too, as the frontend reads it (cleanup.ParseLine).
+func reopen(line string) string { return withBox(line, "- [ ] ") }
+
+// withBox rewrites a task-list line with box, its indent and text kept, in
+// the normal form ("- [ ] " with its one space) whatever form it was typed
+// in. A trailing "\r" is kept, so a CRLF body keeps one line ending
+// throughout. A line that is not an item is returned as it is.
+func withBox(line, box string) string {
+	text, _, _, ok := cleanup.ParseLine(line)
+	if !ok {
+		return line
 	}
-	return line
+	cr := ""
+	if strings.HasSuffix(line, "\r") {
+		cr = "\r"
+	}
+	return line[:len(line)-len(strings.TrimLeft(line, " \t"))] + box + text + cr
 }
 
 // checklistLineText is the words of a task-list line, indent and box aside,
@@ -415,21 +422,12 @@ func checklistLineText(line string) (text string, ok bool) {
 	return text, ok
 }
 
-// parseChecklistLine reads one body line as an item: its folded words, its
-// tick, its depth (1 for a sub-item, the two-space indent) and whether it is
-// an item line at all — a marker, a blank or prose is not.
+// parseChecklistLine reads one body line as an item (cleanup.ParseLine): its
+// folded words, its tick, its depth (1 for a sub-item) and whether it is an
+// item line at all — a marker, a blank or prose is not.
 func parseChecklistLine(line string) (text string, done bool, depth int, ok bool) {
-	if strings.HasPrefix(line, "  ") {
-		depth = 1
-	}
-	trimmed := strings.TrimLeft(line, " \t")
-	switch {
-	case strings.HasPrefix(trimmed, "- [ ] "):
-		return llm.FoldWords(trimmed[len("- [ ] "):]), false, depth, true
-	case strings.HasPrefix(trimmed, "- [x] "), strings.HasPrefix(trimmed, "- [X] "):
-		return llm.FoldWords(trimmed[len("- [x] "):]), true, depth, true
-	}
-	return "", false, 0, false
+	text, done, depth, ok = cleanup.ParseLine(line)
+	return llm.FoldWords(text), done, depth, ok
 }
 
 // replaceChecklistItems puts text — a recording's items, freshly extracted —

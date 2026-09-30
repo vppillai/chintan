@@ -912,3 +912,26 @@ func TestWithinRouteBudgetCutsTheTailOfALongList(t *testing.T) {
 		t.Error("one ordinary candidate alone must fit the budget")
 	}
 }
+
+// The prefix rules compare names in NormalizeSpeech form, which kept only
+// letters and digits: a Malayalam or Hindi vowel sign became a break, so a
+// recording opening with പുൽ വാങ്ങണം (buy grass) was filed into the note
+// പാൽ വാങ്ങണം (buy milk) (R7-2). The vowel signs now stay in their words.
+func TestThePrefixRuleKeepsIndicVowelSigns(t *testing.T) {
+	t.Parallel()
+	active := []model.NoteIndex{
+		{ID: "ml", Title: "പാൽ വാങ്ങണം"},
+		{ID: "hi", Title: "दाल की सूची"},
+	}
+	fresh := provider.RouteDecision{Action: provider.RouteNew, Title: "x", Confidence: 0.5}
+	for _, tc := range []struct{ transcript, want string }{
+		{"പാൽ വാങ്ങണം രണ്ട് ലിറ്റർ", "ml"},
+		{"പുൽ വാങ്ങണം നാളെ", ""},
+		{"दाल की सूची में मूंग", "hi"},
+		{"दिल की सूची में मूंग", ""},
+	} {
+		if got, _ := existingNoteNamed(fresh, tc.transcript, active); got != tc.want {
+			t.Errorf("existingNoteNamed(%q) = %q, want %q", tc.transcript, got, tc.want)
+		}
+	}
+}

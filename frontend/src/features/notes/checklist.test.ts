@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -342,4 +345,27 @@ describe('progress and the row snippet', () => {
     expect(openItemsText(items)).toBe('Bread · Butter');
     expect(openItemsText(parseChecklist('- [x] Done\n- [ ] '))).toBe('');
   });
+});
+
+// The editor and the Go readers (cleanup.ParseLine) read body lines by one
+// rule; the backend's fixture is that rule by example, and the Go suite reads
+// the same file (R7-19). Resolved from the Vitest root, as
+// contract-requests.test.ts does, because import.meta.url is not a file: URL
+// under the transform.
+describe('the checklist line rule shared with the backend', () => {
+  const fixture = JSON.parse(
+    readFileSync(
+      join(process.cwd(), '..', 'backend', 'internal', 'cleanup', 'testdata', 'checklist-lines.json'),
+      'utf8',
+    ),
+  ) as { cases: { name: string; body: string; items: { text: string; done: boolean; depth: number }[] }[] };
+
+  it('has cases', () => {
+    expect(fixture.cases.length).toBeGreaterThan(0);
+  });
+  for (const { name, body, items } of fixture.cases) {
+    it(name, () => {
+      expect(parseChecklist(body)).toEqual(items);
+    });
+  }
 });

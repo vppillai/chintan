@@ -44,8 +44,22 @@ export interface ChecklistItem {
   depth: number;
 }
 
-/** One line of the body: the indent, the marker, the box, the text. Case-insensitive on the x. */
-const ITEM = /^( *)- \[( |x|X)\] ?(.*)$/;
+/**
+ * One line of the body: the indent, the marker, the box, the text.
+ * Case-insensitive on the x, and the space after the box is optional. The
+ * indent is spaces and tabs, a tab counting as two spaces, so a list indented
+ * in another editor keeps its sub-items instead of reading as prose. The Go
+ * readers apply the same rule (backend `cleanup.ParseLine`), and both test
+ * suites assert it against backend/internal/cleanup/testdata/checklist-lines.json.
+ */
+const ITEM = /^([ \t]*)- \[( |x|X)\] ?(.*)$/;
+
+/** An indent's width in spaces, a tab counting as two. */
+function indentWidth(indent: string): number {
+  let width = 0;
+  for (const ch of indent) width += ch === '\t' ? 2 : 1;
+  return width;
+}
 
 /**
  * How deep an item may nest: one level, as Keep allows (CL-D1). A third
@@ -67,7 +81,7 @@ export function parseChecklist(body: string): ChecklistItem[] {
       // MAX_DEPTH: a two-level jump reads as one, and a child with no parent
       // is top level.
       const parentDepth = items[items.length - 1]?.depth ?? -1;
-      const depth = Math.min(Math.floor((match[1] ?? '').length / 2), parentDepth + 1, MAX_DEPTH);
+      const depth = Math.min(Math.floor(indentWidth(match[1] ?? '') / 2), parentDepth + 1, MAX_DEPTH);
       // As written, spaces and all: the editor writes back on every
       // keystroke, and a trim here would eat the space after each word.
       items.push({ text: match[3] ?? '', done: match[2] !== ' ', depth });

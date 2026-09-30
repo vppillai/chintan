@@ -74,15 +74,30 @@ func ExtractJSONObject(raw string) (string, error) {
 // FoldWords is text as the checks compare it: its comparable words joined by
 // single spaces, so "passport." and "Passport" are one item to every reader
 // — the tick checks, the append's merge and the regeneration's search by
-// words. Empty when the text has no letter or digit.
+// words. Empty when the text has no letter, digit or mark.
 func FoldWords(s string) string {
 	return strings.Join(comparableWords(s), " ")
 }
 
-// comparableWords reduces text to lowercase alphanumeric words, so that
+// comparableWords reduces text to lowercase words (IsWordRune), so that
 // punctuation and casing differences do not count as rewriting.
 func comparableWords(s string) []string {
-	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
-	})
+	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !IsWordRune(r) })
+}
+
+// IsWordRune reports whether r belongs inside a word: a letter, a digit, or
+// a nonspacing or spacing combining mark (Mn, Mc) of any script. The marks
+// matter because an Indic vowel sign or virama is a mark, not a letter;
+// treating it as a break folds പാൽ (milk) and പുൽ (grass) alike, or दाल and
+// दिल, and every check built on the folded form then takes one word for the
+// other. The variation selectors (U+FE0F after most emoji) are Mn too but
+// belong to the emoji, not to a word, and the enclosing keycap U+20E3 is Me:
+// counting either made "✈️ Travel" fold to a stray selector and "Milk❤️" stop
+// matching "Milk", so both stay breaks. ask.Tokenize and the recording
+// filename slug keep marks for the same reason.
+func IsWordRune(r rune) bool {
+	if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		return true
+	}
+	return (unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Mc, r)) && !unicode.Is(unicode.Variation_Selector, r)
 }
