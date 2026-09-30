@@ -29,6 +29,9 @@ import (
 // switch: the verifier seeded a verbatim note and counted one paid cleanup
 // call (review T11). Pointing CleanKey at the source key, rather than copying
 // the text, keeps every reader of CleanKey working and costs no write.
+//
+// Cleaned is not written on its own: both callers of cleanForNote go straight
+// to the append, whose setStatus writes CleanKey with it (deferPersist).
 func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.CaptureIndex, verbatim bool) error {
 	if err := p.setStatus(ctx, capture, service.StatusCleaning); err != nil {
 		return err
@@ -56,7 +59,7 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 		capture.CleanKey = sourceKey
 		capture.Status = model.StatusCleaned
 		capture.Error = ""
-		return p.persist(ctx, capture)
+		return p.deferPersist(capture)
 	}
 
 	var cleaned provider.Cleaned
@@ -97,7 +100,7 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 	capture.CleanKey = cleanKey
 	capture.Status = model.StatusCleaned
 	capture.Error = ""
-	return p.persist(ctx, capture)
+	return p.deferPersist(capture)
 }
 
 // extractItems is clean for a checklist: one model call over the RAW

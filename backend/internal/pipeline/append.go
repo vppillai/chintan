@@ -154,6 +154,11 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 	// before this one take seconds — so a lost race re-reads and stamps again.
 	if err := p.stampNoteAppend(ctx, tenantID, note.ID, capture.ID); err != nil {
 		p.releaseAppendClaim(ctx, capture)
+		if errors.Is(err, service.ErrNoteArchived) {
+			// The capture's own verdict, as run() records it for a note
+			// already in the trash when the capture got there.
+			return *capture, p.markFailed(ctx, capture, service.ErrNoteArchived.Error())
+		}
 		return *capture, fmt.Errorf("pipeline: stamp note for append: %w", err)
 	}
 
@@ -192,6 +197,12 @@ func (p *Pipeline) stampNoteAppend(ctx context.Context, tenantID, noteID, captur
 		note, err := p.cfg.Store.GetNote(ctx, tenantID, noteID)
 		if err != nil {
 			return err
+		}
+		if !service.NoteIsActive(note) {
+			// The row run() checked may be as old as the transcription
+			// (Pipeline.destination), and a note trashed since is caught here,
+			// on the read the stamp needs anyway, before a word is written.
+			return service.ErrNoteArchived
 		}
 		if p.anotherAppendInFlight(note, captureID) && p.now().Before(giveUpWaiting) {
 			// Another capture's paragraph is going into this body right now.

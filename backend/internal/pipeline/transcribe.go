@@ -90,10 +90,41 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	if err != nil {
 		return fmt.Errorf("pipeline: raw key: %w", err)
 	}
-	if err := p.cfg.Objects.Put(ctx, rawKey, []byte(result.Text), "text/plain"); err != nil {
-		return fmt.Errorf("pipeline: store raw text: %w", err)
+	// A transcript that reads the spelling hints back is kept, and nothing
+	// else of it is: no segments, nothing routed (below).
+	echoed := echoesHints(result.Text, hints)
+	segmentsKey := ""
+	var segments []byte
+	if !echoed && (len(result.Segments) > 0 || len(result.Words) > 0) {
+		segments, err = json.Marshal(newTranscriptDocument(result))
+		if err != nil {
+			return fmt.Errorf("pipeline: encode segments: %w", err)
+		}
+		segmentsKey, err = keys.CaptureSegments(tenantID, capture.ID)
+		if err != nil {
+			return fmt.Errorf("pipeline: segments key: %w", err)
+		}
 	}
-	if echoesHints(result.Text, hints) {
+	// The two objects are independent, so they are written side by side
+	// rather than one round trip after the other (R7-16a). Either failing
+	// fails the stage, and the retry writes both again.
+	segmentsDone := make(chan error, 1)
+	go func() {
+		if segmentsKey == "" {
+			segmentsDone <- nil
+			return
+		}
+		segmentsDone <- p.cfg.Objects.Put(ctx, segmentsKey, segments, "application/json")
+	}()
+	rawErr := p.cfg.Objects.Put(ctx, rawKey, []byte(result.Text), "text/plain")
+	segmentsErr := <-segmentsDone
+	if rawErr != nil {
+		return fmt.Errorf("pipeline: store raw text: %w", rawErr)
+	}
+	if segmentsErr != nil {
+		return fmt.Errorf("pipeline: store segments: %w", segmentsErr)
+	}
+	if echoed {
 		// Whisper can answer silence by reading its prompt back, with
 		// confident log-probs, so neither the silence gate nor a letter test
 		// catches it; filed, the person's note titles would become the
@@ -105,21 +136,6 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		capture.Status = model.StatusNoContent
 		capture.Error = ""
 		return p.persist(ctx, capture)
-	}
-
-	segmentsKey := ""
-	if len(result.Segments) > 0 || len(result.Words) > 0 {
-		encoded, err := json.Marshal(newTranscriptDocument(result))
-		if err != nil {
-			return fmt.Errorf("pipeline: encode segments: %w", err)
-		}
-		segmentsKey, err = keys.CaptureSegments(tenantID, capture.ID)
-		if err != nil {
-			return fmt.Errorf("pipeline: segments key: %w", err)
-		}
-		if err := p.cfg.Objects.Put(ctx, segmentsKey, encoded, "application/json"); err != nil {
-			return fmt.Errorf("pipeline: store segments: %w", err)
-		}
 	}
 
 	// Shape, never content. The shape is taken on its own line so the
@@ -157,6 +173,14 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		capture.Status = model.StatusNoContent
 	}
 	capture.Error = ""
+	if capture.NoteID == "" && capture.Status == model.StatusTranscribed {
+		// Routing is next, and its setStatus is the very next call. A
+		// recording with no speech ends here and is written now.
+		return p.deferPersist(capture)
+	}
+	// A capture with a destination goes on to the note read and, it may be,
+	// the instruction strip's model call before the cleanup's status write,
+	// so the transcript is recorded now rather than left for that write.
 	return p.persist(ctx, capture)
 }
 
@@ -182,7 +206,7 @@ func (p *Pipeline) transcriptionLanguage(ctx context.Context, tenantID string, c
 	}
 	language := ""
 	if capture.NoteID != "" {
-		note, err := p.cfg.Store.GetNote(ctx, tenantID, capture.NoteID)
+		note, err := p.destination(ctx, tenantID, capture.NoteID)
 		if err != nil && !errors.Is(err, repository.ErrNotFound) {
 			return "", fmt.Errorf("pipeline: get target note for language: %w", err)
 		}
@@ -227,7 +251,7 @@ func (p *Pipeline) spellingHints(ctx context.Context, tenantID string, capture *
 	}
 	var notes []model.NoteIndex
 	if capture.NoteID != "" {
-		note, err := p.cfg.Store.GetNote(ctx, tenantID, capture.NoteID)
+		note, err := p.destination(ctx, tenantID, capture.NoteID)
 		if err != nil {
 			if !errors.Is(err, repository.ErrNotFound) {
 				obs.Log(ctx).Warn("spelling hints unavailable; transcribing without them",
