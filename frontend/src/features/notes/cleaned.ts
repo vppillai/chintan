@@ -5,12 +5,29 @@ import type { CleanedMode, CleanedWire } from '@/api/schema.ts';
  *
  * `POST /v1/notes/{id}/clean` answers 202 and says nothing more; the result
  * arrives on the note's `cleaned` a few seconds later. The screen asks for
- * the note every `CLEAN_POLL_MS` for up to `CLEAN_POLL_TIMEOUT_MS`, and
- * `cleanSettled` is how it knows to stop.
+ * the note on the `cleanPollInterval` ladder for up to
+ * `CLEAN_POLL_TIMEOUT_MS`, and `cleanSettled` is how it knows to stop.
  */
 
 export const CLEAN_POLL_MS = 2_000;
+export const CLEAN_POLL_SLOW_MS = 5_000;
+export const CLEAN_POLL_FAST_WINDOW_MS = 10_000;
 export const CLEAN_POLL_TIMEOUT_MS = 60_000;
+
+/**
+ * The next delay, `elapsedMs` after the rewrite was queued, or `false` once
+ * the wait is over.
+ *
+ * Most rewrites land in the first few seconds, so the first ten are asked
+ * after every two; past that the worker is slow and every five is plenty.
+ * A flat two seconds for the whole minute was up to thirty full-note GETs
+ * per tap of Clean.
+ */
+export function cleanPollInterval(elapsedMs: number): number | false {
+  if (elapsedMs < CLEAN_POLL_FAST_WINDOW_MS) return CLEAN_POLL_MS;
+  if (elapsedMs < CLEAN_POLL_TIMEOUT_MS) return CLEAN_POLL_SLOW_MS;
+  return false;
+}
 
 export const CLEANED_MODE_LABELS: Record<CleanedMode, string> = {
   structured: 'Structured',

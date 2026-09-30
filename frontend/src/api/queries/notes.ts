@@ -117,10 +117,11 @@ export function useSearchCorpus(enabled = true) {
   });
 }
 
-export function useNote(noteId: string | undefined) {
+/** The detail query's key and fetch, shared by every observer of one note. */
+function useNoteQueryOptions(noteId: string | undefined) {
   const api = useApi();
   const queryClient = useQueryClient();
-  return useQuery({
+  return {
     queryKey: queryKeys.note(noteId ?? ''),
     queryFn: async () => {
       const previous = queryClient.getQueryData<NoteDetailWire>(queryKeys.note(noteId ?? ''));
@@ -142,6 +143,12 @@ export function useNote(noteId: string | undefined) {
       }
       return note;
     },
+  };
+}
+
+export function useNote(noteId: string | undefined) {
+  return useQuery({
+    ...useNoteQueryOptions(noteId),
     enabled: Boolean(noteId),
     /*
      * A note with a recording still moving through the pipeline is about to
@@ -153,6 +160,27 @@ export function useNote(noteId: string | undefined) {
      * filing cadence, and stops the moment the last one settles.
      */
     refetchInterval: (query) => capturePollInterval(query.state.data?.captures ?? []),
+  });
+}
+
+/**
+ * The open note asked for again on a cadence of the caller's, while the
+ * caller waits for something only a fresh read can show — the Cleaned view's
+ * rewrite, which a 202 promises and the note's `cleaned` later carries.
+ * `every` is null when there is nothing to wait for.
+ *
+ * A second observer of the one detail query, not a timer of its own: the
+ * answers land where the screen already reads, a poll already in flight is
+ * joined rather than doubled, and TanStack stops asking while the app is in
+ * the background. The `setInterval` this replaced kept firing into a
+ * pocketed phone, every answer rewriting the device's copy.
+ */
+export function usePollNote(noteId: string, every: (() => number | false) | null): void {
+  useQuery({
+    ...useNoteQueryOptions(noteId),
+    enabled: every !== null,
+    refetchInterval: () => every?.() ?? false,
+    refetchIntervalInBackground: false,
   });
 }
 

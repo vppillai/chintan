@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { CleanedWire } from '@/api/schema.ts';
 
-import { cleanSettled, cleanedDocument, cleanedMarkdown } from './cleaned.ts';
+import { cleanPollInterval, cleanSettled, cleanedDocument, cleanedMarkdown } from './cleaned.ts';
 import { describeAgo } from './groups.ts';
 
 const VIEW: CleanedWire = {
@@ -62,5 +62,15 @@ describe('describeAgo', () => {
     // "on 15 Aug" or "on Aug 15", as the locale writes it.
     expect(ago(20 * 86_400_000)).toMatch(/^on (\d{1,2} \w{3}|\w{3} \d{1,2})$/);
     expect(describeAgo('not a date')).toBe('');
+  });
+});
+
+describe('cleanPollInterval', () => {
+  it('asks every two seconds for ten, then every five, then stops at the minute', () => {
+    expect(cleanPollInterval(0)).toBe(2_000);
+    expect(cleanPollInterval(9_999)).toBe(2_000);
+    expect(cleanPollInterval(10_000)).toBe(5_000);
+    expect(cleanPollInterval(59_999)).toBe(5_000);
+    expect(cleanPollInterval(60_000)).toBe(false);
   });
 });

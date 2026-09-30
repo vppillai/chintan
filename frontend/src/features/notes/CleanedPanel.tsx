@@ -1,20 +1,20 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
-import { queryKeys } from '@/api/queries.ts';
+import { usePollNote } from '@/api/queries.ts';
 import type { CleanedMode, CleanedWire, NoteDetailWire } from '@/api/schema.ts';
 import { CheckMark } from '@/components/CheckMark.tsx';
 import { showToast } from '@/components/Toast.tsx';
 
 import { ChecklistEditor, UNDO_STALE } from './ChecklistEditor.tsx';
 import {
-  CLEAN_POLL_MS,
   CLEAN_POLL_TIMEOUT_MS,
   CLEANED_MODE_HINTS,
   CLEANED_MODE_LABELS,
   PLAIN_CLEANED_MODES,
+  cleanPollInterval,
   cleanSettled,
 } from './cleaned.ts';
 import { markTree, useReportTotal, useScrollToActiveMatch, type FindTarget } from './FindBar.tsx';
@@ -396,8 +396,8 @@ interface Queued {
  * Asks the worker for a new cleaned view and waits for it to appear.
  *
  * The request is answered 202 and carries nothing; the answer is the note's
- * own `cleaned` changing. So after a 202 the note is asked for again every
- * `CLEAN_POLL_MS` until `cleanSettled` says the view moved, the backend
+ * own `cleaned` changing. So after a 202 the note is asked for again on the
+ * `cleanPollInterval` ladder until `cleanSettled` says the view moved, the backend
  * reports an error on it, or `CLEAN_POLL_TIMEOUT_MS` has passed — a worker
  * that never answers must not leave the screen saying "Rewriting…" for good.
  */
@@ -407,7 +407,6 @@ export function useRegenerateCleaned(note: Pick<NoteDetailWire, 'id' | 'cleaned'
   notice: string | null;
 } {
   const api = useApi();
-  const queryClient = useQueryClient();
   const [queued, setQueued] = useState<Queued | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -438,21 +437,19 @@ export function useRegenerateCleaned(note: Pick<NoteDetailWire, 'id' | 'cleaned'
     if (current?.error) setNotice(current.error);
   }
 
+  usePollNote(note.id, queued ? () => cleanPollInterval(Date.now() - queued.since) : null);
+
   useEffect(() => {
     if (!queued) return;
-    const tick = setInterval(() => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.note(note.id) });
-    }, CLEAN_POLL_MS);
     const remaining = Math.max(0, CLEAN_POLL_TIMEOUT_MS - (Date.now() - queued.since));
     const giveUp = setTimeout(() => {
       setQueued(null);
       setNotice('The rewrite is taking longer than usual. Pull down to refresh in a moment.');
     }, remaining);
     return () => {
-      clearInterval(tick);
       clearTimeout(giveUp);
     };
-  }, [queued, note.id, queryClient]);
+  }, [queued]);
 
   return {
     regenerate: (mode) => {
