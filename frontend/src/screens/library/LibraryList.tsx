@@ -82,7 +82,27 @@ export function LibraryList({
         </p>
       )}
 
-      {showingCached && (
+      {/*
+        A 5xx while the device is online is not "offline": the rows are the
+        device's copy because the server failed, the list may be missing
+        what another device added, and the way back is a retry, not a
+        connection (R7-12). A network failure keeps the offline sentence.
+      */}
+      {showingCached && serverFailed(list.error, online, paused) && (
+        <div className="screen__count screen__count--retry" role="status">
+          <p>Chintan&rsquo;s server didn&rsquo;t answer — showing notes saved on this device.</p>
+          <button
+            type="button"
+            className="screen__action"
+            onClick={() => void list.refetch()}
+            disabled={list.isFetching}
+          >
+            {list.isFetching ? 'Trying…' : 'Retry'}
+          </button>
+        </div>
+      )}
+
+      {showingCached && !serverFailed(list.error, online, paused) && (
         <p className="screen__count" role="status">
           Saved on this device. Recordings and transcripts need a connection.
         </p>
@@ -273,4 +293,9 @@ function noteForHit(hit: MergedHit, notes: readonly NoteWire[]): NoteWire {
 function failureMessage(error: unknown): string {
   if (error instanceof ApiError) return error.userMessage;
   return 'Your notes could not be loaded.';
+}
+
+/** The list failed because the server answered 5xx, not because the device has no network. */
+export function serverFailed(error: unknown, online: boolean, paused: boolean): boolean {
+  return online && !paused && error instanceof ApiError && error.kind === 'http' && error.status >= 500;
 }
