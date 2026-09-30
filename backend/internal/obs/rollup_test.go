@@ -16,8 +16,7 @@ import (
 // the dimensionless identity, which obs.CountWithRollup publishes and obs.Count
 // does not. A counter emitted through Count with any dimension leaves the alarm
 // watching a metric that never exists — green forever, on exactly the failure
-// it was added for. CaptureMoveUnrecovered was emitted that way until its alarm
-// was added.
+// it was added for.
 func TestEveryAlarmedMetricIsRolledUp(t *testing.T) {
 	raw, err := os.ReadFile("../../../infrastructure/template.yaml")
 	if err != nil {

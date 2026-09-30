@@ -2316,7 +2316,7 @@ Resources:
   # alarm says the same thing; and a 5xx-rate alarm, an average over a quiet
   # five minutes, trips on a single 500 in ten requests. The 4xx and 5xx
   # alarms above are counts with thresholds one stray request does not reach,
-  # which is why they earn their alarm-months and a rate does not. Eight
+  # which is why they earn their alarm-months and a rate does not. Seven
   # alarms exist, and none notifies on OK: an OK transition is not something
   # anyone needs an e-mail about. InboxKeyRefusedAlarm above earns its slot as
   # the only signal between one mistyped header and the thousand-in-five-
@@ -2384,34 +2384,6 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       # The metric does not exist until the first rejection, which is the
       # healthy state.
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref AlarmTopic
-
-  # A capture move that failed after cutting the paragraph out of the source
-  # note AND could not put it back (CaptureService.undoCut): the paragraph is
-  # in neither note's current body. The source note's previous S3 version
-  # still holds it — for 90 days, ExpireNoncurrentVersions above — but nothing
-  # retries its way back to it, so the first occurrence is an e-mail. The counter emits through obs.CountWithRollup for the
-  # dimensionless identity, like ProviderKeyRejected above;
-  # TestEveryAlarmedMetricIsRolledUp pins that.
-  CaptureMoveUnrecoveredAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Condition: AlarmsEnabled
-    Properties:
-      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-capture-move-unrecovered'
-      AlarmDescription: >-
-        A capture move failed and the source note could not be restored: the
-        paragraph is in neither note. The API log line "could not be restored"
-        names the capture and both notes; restore the source note's previous S3
-        version (README, Operate, Note history).
-      Namespace: Chintan
-      MetricName: CaptureMoveUnrecovered
-      Statistic: Sum
-      Period: 300
-      EvaluationPeriods: 1
-      Threshold: 1
-      ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       AlarmActions:
         - !Ref AlarmTopic
