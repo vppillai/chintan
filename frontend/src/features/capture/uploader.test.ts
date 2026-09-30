@@ -378,6 +378,32 @@ describe('a resumed upload never replays a dead credential', () => {
     expect(h.events).toContainEqual({ type: 'captureCreated', serverCaptureId: 'srv-2' });
   });
 
+  it('re-keys the create when another device deleted the row, rather than replaying it', async () => {
+    // Replaying would PUT to the deleted row's key, and the worker removes an
+    // object with no row after this device has pruned its copy.
+    const keys: (string | undefined)[] = [];
+    const h = harness({
+      createCapture: async (_body?: unknown, key?: string) => {
+        keys.push(key);
+        return presign('https://s3.test/fresh', HOUR);
+      },
+      getCapture: async () => {
+        throw new ApiError({ kind: 'http', status: 404, title: 'Not Found' });
+      },
+    });
+
+    await uploadCapture(
+      h.api,
+      { ...REQUEST, serverCaptureId: 'srv-1' },
+      emitInto(h.events),
+      h.deps,
+    );
+
+    expect(keys).toHaveLength(1);
+    expect(keys[0], 'the create replayed the deleted row').not.toBe('cap-1');
+    expect(h.confirmed).toEqual(['cap-1']);
+  });
+
   it('does not re-key a first attempt, so one recording is still one capture', async () => {
     const keys: (string | undefined)[] = [];
     const h = harness({

@@ -80,7 +80,8 @@ function resumeKey(localId: string): string {
 }
 
 /**
- * Whether the server already has these bytes.
+ * Where the server's row for a resend stands: `landed` when it already has
+ * these bytes, `gone` when the row was deleted (404), `waiting` otherwise.
  *
  * A capture sits at `uploaded` from the moment it is created until the object
  * event fires, so any other status means the audio arrived and the pipeline
@@ -94,16 +95,24 @@ function resumeKey(localId: string): string {
  * (`presignExpired`) mints a second capture, by which time the object event
  * has long since fired or never will.
  *
- * An error here is deliberately not fatal: if the server cannot be reached the
+ * Any other error here is deliberately not fatal: if the server cannot be reached the
  * upload is not going to succeed either, and the ordinary path reports that
  * better than this does.
  */
-async function alreadyLanded(api: ChintanApi, captureId: string): Promise<boolean> {
+async function landedState(
+  api: ChintanApi,
+  captureId: string,
+): Promise<'landed' | 'waiting' | 'gone'> {
   try {
     const capture = await api.getCapture(captureId);
-    return capture.status !== 'uploaded';
-  } catch {
-    return false;
+    return capture.status !== 'uploaded' ? 'landed' : 'waiting';
+  } catch (error) {
+    // A 404 is a row another device deleted. Replaying the original create
+    // would hand back a URL for that row, and an object landing with no row
+    // is removed by the worker as an orphan after this device has pruned its
+    // copy: the recording gone without a word. So a gone row is re-keyed and
+    // sent as a new capture (R7-11 review).
+    return error instanceof ApiError && error.status === 404 ? 'gone' : 'waiting';
   }
 }
 
@@ -166,7 +175,8 @@ export async function uploadCapture(
    * succeeding and the prune; the audio is on the server and the note already
    * has the dictation. Uploading it again would append it a second time.
    */
-  if (request.serverCaptureId && (await alreadyLanded(api, request.serverCaptureId))) {
+  const landed = request.serverCaptureId ? await landedState(api, request.serverCaptureId) : 'waiting';
+  if (landed === 'landed') {
     await deps.confirm(request.localId);
     emit({ type: 'uploadDone' });
     return;
@@ -185,7 +195,7 @@ export async function uploadCapture(
   try {
     // The local id IS the idempotency key. A resumed upload after a crash
     // replays the original create rather than making a second capture.
-    created = await api.createCapture(body, request.localId);
+    created = await api.createCapture(body, landed === 'gone' ? resumeKey(request.localId) : request.localId);
 
     /*
      * …and that replay is verbatim, presigned URL included.
