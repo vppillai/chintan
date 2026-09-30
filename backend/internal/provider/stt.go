@@ -3,6 +3,8 @@ package provider
 import (
 	"context"
 	"io"
+	"strings"
+	"unicode"
 )
 
 // Audio is one recording handed to a transcription provider.
@@ -43,6 +45,11 @@ type Segment struct {
 	Start float64 `json:"start"`
 	End   float64 `json:"end"`
 	Text  string  `json:"text"`
+	// NoSpeechProb and AvgLogprob are Whisper's own confidence that the
+	// segment is silence and in the words it chose; see NoSpeech. Zero when
+	// the provider does not report them, which reads as speech.
+	NoSpeechProb float64 `json:"no_speech_prob,omitempty"`
+	AvgLogprob   float64 `json:"avg_logprob,omitempty"`
 }
 
 // Word is one timestamped word of the raw transcript.
@@ -71,6 +78,36 @@ func (t Transcription) DurationMS() int64 {
 		return 0
 	}
 	return int64(t.Duration*1000 + 0.5)
+}
+
+// Whisper's own silence thresholds, the defaults of its reference
+// transcribe(): a segment is skipped as silence when no_speech_prob is over
+// 0.6 unless avg_logprob is over -1, i.e. the model is also unsure of the
+// words. Using its tuned pair rather than a number of ours means a quiet
+// but confidently heard "Buy milk" is kept.
+const (
+	noSpeechThreshold = 0.6
+	logprobThreshold  = -1.0
+)
+
+// NoSpeech reports that the recording held no dictation (R7-10c): the
+// transcript has no letter or digit in it (a 1.5 s tone came back as "."
+// and became a note called "Dictation"), or every segment is one Whisper
+// itself would have skipped as silence. A transcript without segments is
+// judged by its text alone.
+func (t Transcription) NoSpeech() bool {
+	if strings.IndexFunc(t.Text, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsNumber(r) }) < 0 {
+		return true
+	}
+	if len(t.Segments) == 0 {
+		return false
+	}
+	for _, s := range t.Segments {
+		if s.NoSpeechProb <= noSpeechThreshold || s.AvgLogprob > logprobThreshold {
+			return false
+		}
+	}
+	return true
 }
 
 // STT transcribes speech.

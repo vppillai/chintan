@@ -135,6 +135,13 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		capture.DurationMS = ms
 	}
 	capture.Status = model.StatusTranscribed
+	if result.NoSpeech() {
+		// Nothing was said, so there is nothing to route or file; left to go
+		// on, a tone became a new note called "Dictation" whose body was "."
+		// (R7-10c). The transcript and segments stay stored beside the audio.
+		obs.Count(ctx, "CaptureNoSpeech", nil)
+		capture.Status = model.StatusNoContent
+	}
 	capture.Error = ""
 	return p.persist(ctx, capture)
 }
