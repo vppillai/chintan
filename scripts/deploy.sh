@@ -664,24 +664,54 @@ fi
 # version history below is created regardless, so the history is already there
 # when the integration moves.
 
+# "<function> <previous version>" for every alias this run moved off a version,
+# so a failed smoke below can put each back rather than leave prod on the code
+# that just failed it. A function whose alias was created here has nothing to
+# go back to and is not listed.
+MOVED_ALIASES=()
+
+# rollback_and_fail puts every alias this run moved back where it was, then
+# fails the job: on a failed smoke, which tests the code the alias now serves,
+# and on a later function failing to publish or move, which must not leave an
+# earlier one alone on the new code. Before this, a failed curl exited under set -e
+# with prod on the new versions and a rollback command in the log for someone
+# to notice. Only the code goes back — the stack update stays, and an old
+# version runs with the configuration it was published with.
+rollback_and_fail() {
+    local entry fn previous
+    err "$STACK: $*"
+    for entry in ${MOVED_ALIASES[@]+"${MOVED_ALIASES[@]}"}; do
+        fn="${entry% *}"
+        previous="${entry##* }"
+        if aws_cli lambda update-alias --function-name "$fn" --name live \
+            --function-version "$previous" >/dev/null; then
+            warn "rolled back: $fn live -> version $previous"
+        else
+            err "could not roll $fn back; run: aws lambda update-alias --function-name $fn --name live --function-version $previous"
+        fi
+    done
+    die "$STACK failed after its aliases moved; they were rolled back"
+}
+
 publish_alias() {
     local fn="$1" alias_name=live previous published
     previous="$(aws_cli lambda get-alias --function-name "$fn" --name "$alias_name" \
         --query FunctionVersion --output text 2>/dev/null || echo "")"
 
     published="$(aws_cli lambda publish-version --function-name "$fn" \
-        --description "${GITHUB_SHA:-manual}" --query Version --output text)"
+        --description "${GITHUB_SHA:-manual}" --query Version --output text)" || return 1
 
     if [ -n "$previous" ]; then
         aws_cli lambda update-alias --function-name "$fn" --name "$alias_name" \
-            --function-version "$published" >/dev/null
+            --function-version "$published" >/dev/null || return 1
     else
         aws_cli lambda create-alias --function-name "$fn" --name "$alias_name" \
-            --function-version "$published" >/dev/null
+            --function-version "$published" >/dev/null || return 1
     fi
 
     ok "alias $alias_name -> version $published (was ${previous:-none})"
     if [ -n "$previous" ]; then
+        MOVED_ALIASES+=("$fn $previous")
         log ""
         info "ROLLBACK: to put $fn back on the previous version, run"
         dim "  aws lambda update-alias --function-name $fn --name $alias_name --function-version $previous"
@@ -699,7 +729,7 @@ publish_alias() {
 if is_apply; then
     while IFS= read -r fn; do
         [ -n "$fn" ] || continue
-        publish_alias "$fn"
+        publish_alias "$fn" || rollback_and_fail "publishing $fn"
     done < <(stack_resources_of_type "$STACK" 'AWS::Lambda::Function')
 fi
 
@@ -713,15 +743,46 @@ if [ "$SMOKE" = "1" ] && is_apply; then
     gateway="$(stack_output "$STACK" ApiGatewayEndpoint)"
     [ -n "$gateway" ] && [ "$gateway" != "None" ] || die "no ApiGatewayEndpoint output on $STACK"
     info "smoke: GET ${gateway}/v1/health"
-    curl -fsS --max-time 20 "${gateway}/v1/health" >&2
+    curl -fsS --max-time 20 "${gateway}/v1/health" >&2 || rollback_and_fail "smoke: GET /v1/health"
     log ""
     # /health/ready round-trips DynamoDB and S3 under the Lambda's own role. The
     # liveness probe alone passed a multi-day outage in which the API could not
     # read an index it had just been deployed against (gsi2, since removed; see
     # the index note on the Lambda role in the template).
     info "smoke: GET ${gateway}/v1/health/ready"
-    curl -fsS --max-time 20 "${gateway}/v1/health/ready" >&2
+    curl -fsS --max-time 20 "${gateway}/v1/health/ready" >&2 || rollback_and_fail "smoke: GET /v1/health/ready"
     log ""
+    # The worker, which the health routes never reach. {"task":"smoke"} is
+    # the worker's explicit no-op (smokeTask in cmd/worker): Handler returns
+    # nil once setup() has run — the environment, the secrets and the clients
+    # a bad deploy breaks first. A synchronous invoke reports a panic or an
+    # init failure as FunctionError. stderr is kept apart from the answer so
+    # a CLI warning on it cannot read as a failure.
+    worker="$(stack_output "$STACK" WorkerFunctionLiveAliasArn)"
+    if [ -n "$worker" ] && [ "$worker" != "None" ]; then
+        info "smoke: invoke ${worker##*:function:} with the smoke task"
+        worker_out="$(mktemp)"
+        worker_errf="$(mktemp)"
+        if function_error="$(aws_cli lambda invoke --function-name "$worker" \
+            --cli-binary-format raw-in-base64-out --payload '{"task":"smoke"}' \
+            --query FunctionError --output text "$worker_out" 2>"$worker_errf")"; then
+            rm -f "$worker_out" "$worker_errf"
+            [ "$function_error" = "None" ] || rollback_and_fail "smoke: the worker answered FunctionError $function_error"
+        else
+            worker_err="$(cat "$worker_errf")"
+            rm -f "$worker_out" "$worker_errf"
+            # Neither of these says the new code is bad, so neither rolls a
+            # deploy back. AccessDenied is a deploy role without
+            # lambda:InvokeFunction on the alias (a bootstrap stack from before
+            # 2026-10); TooManyRequests is the worker's concurrency ceiling
+            # busy with real work at the moment of the check.
+            case "$worker_err" in
+                *AccessDenied*) warn "worker smoke skipped: this role may not invoke $worker; redeploy infrastructure/bootstrap.yaml (scripts/setup.sh)" ;;
+                *TooManyRequests*) warn "worker smoke skipped: the worker is throttled; invoke it by hand to check" ;;
+                *) rollback_and_fail "smoke: invoking the worker: $worker_err" ;;
+            esac
+        fi
+    fi
     # The custom domain, when there is one: certificate, mapping and DNS in a
     # single request. A record created minutes ago may not have propagated, so
     # curl retries for about a minute; the failure then names the record to

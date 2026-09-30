@@ -127,3 +127,18 @@ func TestHandlerRefusesAnUnknownTaskWithAnError(t *testing.T) {
 		t.Fatalf("Handler = %v, want ErrUnknownTask", err)
 	}
 }
+
+// TestHandlerSmokeTaskIsANoOp pins the payload scripts/deploy.sh invokes the
+// live alias with after every deploy. It must return nil through Handler with
+// the real dispatch: handleWork is nil here, so a smoke task that fell through
+// to the pipeline would panic, and a non-nil return would roll every deploy
+// back.
+func TestHandlerSmokeTaskIsANoOp(t *testing.T) {
+	prevWork := handleWork
+	t.Cleanup(func() { handleWork = prevWork })
+	handleWork = nil
+
+	if err := Handler(context.Background(), json.RawMessage(`{"task":"smoke"}`)); err != nil {
+		t.Fatalf("Handler(smoke) = %v, want nil", err)
+	}
+}

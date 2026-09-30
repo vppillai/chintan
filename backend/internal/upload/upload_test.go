@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -233,5 +234,48 @@ func TestEveryLifecycleRuleRequiresTheProcessedTag(t *testing.T) {
 			t.Errorf("%s does not filter on chintan-processed; its audio expires on schedule "+
 				"whether or not the pipeline ever got a chance to run", id)
 		}
+	}
+}
+
+// TestNoteBodyVersionsAreKept90Days pins the note's undo window (R7-3).
+//
+// Note bodies carry no tag, so the only rule that reaches their superseded
+// versions is the unfiltered ExpireNoncurrentVersions, and S3 honours the
+// shortest matching expiry. That rule must keep 90 days, and every rule with a
+// shorter noncurrent expiry must be narrowed by a tag filter, or it deletes a
+// note's history on its own schedule — as the 7-day default did until 2026-09.
+func TestNoteBodyVersionsAreKept90Days(t *testing.T) {
+	raw, err := os.ReadFile("../../../infrastructure/template.yaml")
+	if err != nil {
+		t.Fatalf("read the template: %v", err)
+	}
+	template := string(raw)
+	start := strings.Index(template, "LifecycleConfiguration:")
+	end := strings.Index(template[start:], "BucketEncryption:")
+	if start == -1 || end == -1 {
+		t.Fatal("no LifecycleConfiguration block in the template")
+	}
+	rules := strings.Split(template[start:start+end], "- Id: ")[1:]
+
+	found := false
+	for _, rule := range rules {
+		id := strings.Fields(rule)[0]
+		m := regexp.MustCompile(`NoncurrentDays: (\d+)`).FindStringSubmatch(rule)
+		if m == nil {
+			continue
+		}
+		days, _ := strconv.Atoi(m[1])
+		tagged := strings.Contains(rule, "TagFilters:")
+		if id == "ExpireNoncurrentVersions" {
+			found = true
+			if tagged || days != 90 {
+				t.Errorf("ExpireNoncurrentVersions: tagged=%v, %d days; want untagged and 90", tagged, days)
+			}
+		} else if !tagged && days < 90 {
+			t.Errorf("%s expires every noncurrent version after %d days, note bodies included", id, days)
+		}
+	}
+	if !found {
+		t.Error("no ExpireNoncurrentVersions rule; noncurrent versions would never expire")
 	}
 }
