@@ -85,8 +85,14 @@ export function retryAccepted(capture: CaptureWire): boolean {
   return Date.now() - since > after;
 }
 
-/** The row's title for a capture that is moving or stopped short. An appended one is a receipt (`ReceiptGroup`). */
-export function describe(capture: CaptureWire, stuck: boolean): string {
+/**
+ * The row's title for a capture that is moving or stopped short. An appended
+ * one is a receipt (`ReceiptGroup`). `recordedHere` is false on a device that
+ * did not make the recording (`useRecordedHere`): there, a capture still at
+ * `uploaded` is waiting on the device that holds the bytes, stuck or not, and
+ * nothing this one can do will move it.
+ */
+export function describe(capture: CaptureWire, stuck: boolean, recordedHere = true): string {
   switch (capture.status) {
     case 'needs_target':
       return 'Which note should this go in?';
@@ -97,6 +103,9 @@ export function describe(capture: CaptureWire, stuck: boolean): string {
     case 'failed':
       return capture.error ?? 'That capture did not finish';
     default:
+      if (capture.status === 'uploaded' && !recordedHere) {
+        return 'Waiting for the device that recorded it';
+      }
       if (stuck) return 'Still not done — something may have gone wrong';
       return 'Filing your recording';
   }

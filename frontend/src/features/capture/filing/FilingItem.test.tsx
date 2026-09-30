@@ -2,7 +2,24 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
+import { saveCaptureRecord } from '@/features/capture/buffer.ts';
 import { STUCK_CREATED_AT, capture, json, mount } from '@/test/filing.tsx';
+
+/** This device's capture store names `serverCaptureId`: it made the recording. */
+async function recordHere(serverCaptureId: string): Promise<void> {
+  await saveCaptureRecord({
+    localId: `local-${serverCaptureId}`,
+    serverCaptureId,
+    noteId: null,
+    contentType: 'audio/webm',
+    durationMs: 1_000,
+    bytes: 1,
+    chunkCount: 1,
+    createdAt: Date.now(),
+    uploadedAt: null,
+    peaks: null,
+  });
+}
 
 describe('a failed capture has a Retry that is actually wired', () => {
   it('calls POST /v1/captures/{id}/retry', async () => {
@@ -62,6 +79,7 @@ describe('a capture that never left "uploaded" is not a permanent dead end', () 
   // finding `stuck_capture`; the row recognises it live instead of only being
   // detectable from an operator's terminal.
   it('offers Retry once a non-terminal capture has sat past the stuck threshold', async () => {
+    await recordHere('srv-stuck');
     mount([capture({ id: 'srv-stuck', status: 'uploaded', created_at: STUCK_CREATED_AT })]);
 
     expect(
@@ -89,6 +107,7 @@ describe('a capture that never left "uploaded" is not a permanent dead end', () 
   });
 
   it('does not treat a recent capture the same way', async () => {
+    await recordHere('srv-1');
     mount([capture({ status: 'uploaded' })]);
     await screen.findByText('Filing your recording');
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
@@ -151,5 +170,35 @@ describe('a capture that never left "uploaded" is not a permanent dead end', () 
     expect(retryIn(rows[5])).toBe(true);
     // Dismiss is still the way off the screen for every one of them.
     expect(screen.getAllByRole('button', { name: 'Dismiss' })).toHaveLength(6);
+  });
+});
+
+describe('an upload that has not landed, read on another device', () => {
+  /*
+   * R7-11: the app was closed mid-upload, so the row sat at `uploaded` and
+   * every device said "Filing your recording — Upload in progress" for good.
+   * Only the device holding the bytes can move it; every other one says so.
+   */
+  it('says it is waiting for the device that recorded it, stuck or not', async () => {
+    mount([
+      capture({ id: 'fresh', status: 'uploaded' }),
+      capture({ id: 'old', status: 'uploaded', created_at: STUCK_CREATED_AT }),
+    ]);
+    expect(await screen.findAllByText('Waiting for the device that recorded it')).toHaveLength(2);
+    expect(screen.queryByText(/Filing your recording|still not done/i)).toBeNull();
+    // The stuck one keeps its way off the screen.
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+  });
+
+  it('keeps the usual words on the device that recorded it', async () => {
+    await recordHere('mine');
+    mount([capture({ id: 'mine', status: 'uploaded' })]);
+    await screen.findByText('Filing your recording');
+    expect(screen.queryByText('Waiting for the device that recorded it')).toBeNull();
+  });
+
+  it('is only about the upload: a capture past it reads the same everywhere', async () => {
+    mount([capture({ id: 'theirs', status: 'transcribing' })]);
+    await screen.findByText('Filing your recording');
   });
 });

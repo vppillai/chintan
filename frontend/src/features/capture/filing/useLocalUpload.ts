@@ -1,10 +1,11 @@
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
 import { queryKeys } from '@/api/queries.ts';
 import type { CaptureWire } from '@/api/schema.ts';
 
 import { UNSENT_CAPTURES_KEY } from '../ResumePrompt.tsx';
+import { recordedHereIds } from '../buffer.ts';
 import type { CaptureModel } from '../machine.ts';
 import { useCaptureStore } from '../store.ts';
 
@@ -91,4 +92,24 @@ export function useLocalUpload(
   if (options.homeOnly && target !== null && !failed) return null;
   if (uploading || failed || (landed && !serverHasIt)) return model;
   return null;
+}
+
+/** Under `['captures']`, so every invalidation of the capture lists re-reads it too. */
+const RECORDED_HERE_KEY = ['captures', 'recorded-here'] as const;
+
+/**
+ * Whether this device recorded the capture: it is the one being sent now, or
+ * the device's capture store names it. `null` (a receipt, which has no one
+ * capture) and a store not read yet both answer true, which keeps the words
+ * every row said before this existed.
+ *
+ * The filing row asks so that an upload interrupted by the app closing reads,
+ * on every other device, as what it is — waiting for the device that holds
+ * the bytes — rather than "Upload in progress" for ever (R7-11).
+ */
+export function useRecordedHere(captureId: string | null): boolean {
+  const sending = useCaptureStore((state) => state.model.serverCaptureId);
+  const { data } = useQuery({ queryKey: RECORDED_HERE_KEY, queryFn: recordedHereIds, retry: false });
+  if (captureId === null || sending === captureId || data === undefined) return true;
+  return data.has(captureId);
 }
