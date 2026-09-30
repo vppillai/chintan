@@ -1075,18 +1075,40 @@ Resources:
               NoncurrentDays: 1
           # Versioning is on unconditionally, so every delete and every rewrite
           # of an artifact leaves a noncurrent version behind that is billed and
-          # invisible to `aws s3 ls`. This rule is deliberately unconditional and
-          # untagged: the tier rules above only match audio a tenant asked to
-          # expire, and the default retention is 0, so a rule that depended on
-          # them would mean the default deploy never frees a byte. It expires the
-          # superseded copy only; the current object is untouched, which is a
-          # different concern and belongs to the tier rules. ExpireDeleteMarkers
-          # below cannot do this job either — a delete marker only expires once
-          # nothing is behind it.
+          # invisible to `aws s3 ls`. Those superseded versions are also the
+          # only undo a note has: every append, save, move and merge rewrites
+          # tenants/<t>/notes/<n>/note.md (and meta.json) in place. So the
+          # unconditional rule keeps them 90 days, the window the owner chose.
+          #
+          # It is the untagged catch-all rather than a rule on a note tag
+          # because S3 applies the SHORTEST matching expiry and a filter cannot
+          # say "everything but notes": a 7-day default beside a 90-day note
+          # rule would still delete note versions at 7 days. Inverting it makes
+          # the safe case the default — note versions written before this rule
+          # existed, and any writer added later, get 90 days without a tag.
+          # What is worth expiring sooner is audio, which is nearly all of the
+          # noncurrent bytes (about 4.5 MB of a week's 5.7 MB in 2026-09; the
+          # text and JSON beside it are kilobytes), and the upload PUT already
+          # signs chintan-artifact=capture-audio onto every recording.
+          # ExpireCaptureAudioVersions keeps audio at the 7 days it had; the
+          # tier rules above give 7 to 365, and the shortest wins, so a
+          # superseded or deleted recording still goes after a week. Exports
+          # keep their 1 day. The current object is untouched by either rule;
+          # that is the tier rules' concern. ExpireDeleteMarkers below cannot
+          # do this job — a delete marker only expires once nothing is behind
+          # it.
+          - Id: ExpireCaptureAudioVersions
+            Status: Enabled
+            Prefix: 'tenants/'
+            TagFilters:
+              - Key: chintan-artifact
+                Value: capture-audio
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
           - Id: ExpireNoncurrentVersions
             Status: Enabled
             NoncurrentVersionExpiration:
-              NoncurrentDays: 7
+              NoncurrentDays: 90
           - Id: AbortStaleMultipartUploads
             Status: Enabled
             AbortIncompleteMultipartUpload:
@@ -2227,6 +2249,35 @@ Resources:
       AlarmActions:
         - !Ref AlarmTopic
 
+  # The gateway's own 5xx count. ApiFunctionErrorsAlarm above sees only the
+  # function faulting; a handler that returns a 500 on purpose (a DynamoDB or
+  # S3 call failing, a bug caught by the error mapper) is a clean invocation
+  # to Lambda, and so was silent until this alarm. A Sum rather than a rate,
+  # for the reason the note below the inbox alarm gives: five in five minutes
+  # is well past one request retried, and at single-user volume it is the app
+  # failing for somebody, not noise.
+  Api5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-api-5xx'
+      AlarmDescription: >-
+        The gateway answered five or more 5xx in five minutes. Requests are
+        failing server-side; the API log says which route and why.
+      Namespace: AWS/ApiGateway
+      MetricName: 5xx
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref HttpApi
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
   # The gap between the 4xx flood alarm and silence. deviceAuthenticated
   # counts every inbox request it refuses as Chintan/InboxKeyRefused — a
   # counter, no key material — through the same rollup ProviderKeyRejected
@@ -2259,15 +2310,15 @@ Resources:
         - !Ref AlarmTopic
 
   # There are deliberately no Throttles alarms, no worker Errors alarm and no
-  # API 5xx-rate alarm. Each would be an alarm-month billed to say nothing
+  # API 5xx-RATE alarm. Each would be an alarm-month billed to say nothing
   # useful: a throttles alarm watches a reserved-concurrency ceiling one
   # browser tab cannot reach; a worker Errors alarm fires just before the DLQ
   # alarm says the same thing; and a 5xx-rate alarm, an average over a quiet
-  # five minutes, trips on a single 500 in ten requests. The 4xx alarm above
-  # is a count with a threshold nothing but a flood reaches, which is why it
-  # earns its alarm-month and a 5xx rate does not. Six alarms exist, and
-  # none notifies on OK: an OK transition is not something anyone needs an
-  # e-mail about. The sixth, InboxKeyRefusedAlarm above, earns its slot as
+  # five minutes, trips on a single 500 in ten requests. The 4xx and 5xx
+  # alarms above are counts with thresholds one stray request does not reach,
+  # which is why they earn their alarm-months and a rate does not. Eight
+  # alarms exist, and none notifies on OK: an OK transition is not something
+  # anyone needs an e-mail about. InboxKeyRefusedAlarm above earns its slot as
   # the only signal between one mistyped header and the thousand-in-five-
   # minutes flood: a device left posting with a revoked key is invisible to
   # every other alarm here and costs a billed request per attempt.
@@ -2333,6 +2384,34 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       # The metric does not exist until the first rejection, which is the
       # healthy state.
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # A capture move that failed after cutting the paragraph out of the source
+  # note AND could not put it back (CaptureService.undoCut): the paragraph is
+  # in neither note's current body. The source note's previous S3 version
+  # still holds it — for 90 days, ExpireNoncurrentVersions above — but nothing
+  # retries its way back to it, so the first occurrence is an e-mail. The counter emits through obs.CountWithRollup for the
+  # dimensionless identity, like ProviderKeyRejected above;
+  # TestEveryAlarmedMetricIsRolledUp pins that.
+  CaptureMoveUnrecoveredAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-capture-move-unrecovered'
+      AlarmDescription: >-
+        A capture move failed and the source note could not be restored: the
+        paragraph is in neither note. The API log line "could not be restored"
+        names the capture and both notes; restore the source note's previous S3
+        version (README, Operate, Note history).
+      Namespace: Chintan
+      MetricName: CaptureMoveUnrecovered
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       AlarmActions:
         - !Ref AlarmTopic
