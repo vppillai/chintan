@@ -480,14 +480,18 @@ func (s *CaptureService) RetryCapture(ctx context.Context, userID, captureID str
 	// nothing written, rather than marked failed: the only bytes are on the
 	// device that recorded it, whose resend lands on this row while its link
 	// is live and arrives as a new capture after, so there is nothing a
-	// failed status would let anyone do that delete does not. The row stays
-	// deletable (DeleteCapture) because it is stuck.
+	// failed status would let anyone do that delete does not. While the link
+	// could still be used (uploadMayStillLand) it is refused as in flight,
+	// since the upload may yet arrive.
 	if neverMoved && capture.AudioKey != "" {
 		present, err := s.objects.Exists(ctx, capture.AudioKey)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check the recording's audio: %w", err)
 		}
 		if !present {
+			if uploadMayStillLand(capture, now) {
+				return &capture, ErrCaptureInFlight
+			}
 			return &capture, ErrCaptureNeverUploaded
 		}
 	}

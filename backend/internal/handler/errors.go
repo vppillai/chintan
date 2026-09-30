@@ -52,7 +52,7 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, service.ErrCaptureAudioExpired):
 		httperr.Conflict(w, r, "the recording's audio has expired, so it cannot be transcribed again", nil)
 	case errors.Is(err, service.ErrCaptureNeverUploaded):
-		httperr.Conflict(w, r, "the recording never finished uploading; send it again from the device that recorded it, or delete it", nil)
+		httperr.Conflict(w, r, "the recording never finished uploading; only the device that recorded it can send it again", nil)
 	case errors.Is(err, service.ErrRegenerateInFlight):
 		httperr.Conflict(w, r, err.Error(), nil)
 	case errors.Is(err, service.ErrPinLimit),

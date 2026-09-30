@@ -919,7 +919,11 @@ paths:
             The capture is still moving through the pipeline. Deleting it
             while the worker may be writing its paragraph would leave the
             text behind with nothing pointing at it; wait for a terminal
-            status.
+            status. A capture that has not moved for 15 minutes may be
+            deleted, except one still `uploaded` with no audio, which is
+            refused until 35 minutes after it was created: its upload link
+            is good for 30, and a delete under a PUT that then landed would
+            lose the recording.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -1077,8 +1081,10 @@ paths:
             may still be working on it — see the description for when a
             stalled capture becomes retryable — or it is a stalled `uploaded`
             capture whose audio never reached the server (the app was closed
-            mid-upload), which only the device that recorded it can send, and
-            which DELETE removes. `detail` says which.
+            mid-upload) and whose upload link has run out, which only the
+            device that recorded it can send; until the link and five minutes
+            more have passed it is refused as still in flight. `detail` says
+            which.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }

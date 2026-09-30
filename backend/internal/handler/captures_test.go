@@ -348,3 +348,22 @@ func ids(items []handler.Capture) []string {
 	}
 	return out
 }
+
+// A retry of an upload that never landed, past its link's life, is a 409
+// with its own fixed sentence, which points at no control the filing row
+// does not have (R7-11).
+func TestRetryOfAnUploadThatNeverLandedIs409WithItsSentence(t *testing.T) {
+	h := newHarness(t)
+	c := h.putCapture(t, model.CaptureIndex{
+		ID: "c_gone", UserID: "user1", Status: model.StatusUploaded,
+		AudioKey:  "tenants/user1/captures/c_gone/audio.webm",
+		CreatedAt: model.FormatTime(time.Now().Add(-time.Hour)),
+	})
+	w := h.do(t, http.MethodPost, "/v1/captures/"+c.ID+"/retry", "user1", nil)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body=%s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "the recording never finished uploading") {
+		t.Errorf("detail is not the never-uploaded sentence: %s", w.Body.String())
+	}
+}
