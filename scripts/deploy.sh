@@ -670,20 +670,43 @@ fi
 # go back to and is not listed.
 MOVED_ALIASES=()
 
+# rollback_and_fail puts every alias this run moved back where it was, then
+# fails the job: on a failed smoke, which tests the code the alias now serves,
+# and on a later function failing to publish or move, which must not leave an
+# earlier one alone on the new code. Before this, a failed curl exited under set -e
+# with prod on the new versions and a rollback command in the log for someone
+# to notice. Only the code goes back — the stack update stays, and an old
+# version runs with the configuration it was published with.
+rollback_and_fail() {
+    local entry fn previous
+    err "$STACK: $*"
+    for entry in ${MOVED_ALIASES[@]+"${MOVED_ALIASES[@]}"}; do
+        fn="${entry% *}"
+        previous="${entry##* }"
+        if aws_cli lambda update-alias --function-name "$fn" --name live \
+            --function-version "$previous" >/dev/null; then
+            warn "rolled back: $fn live -> version $previous"
+        else
+            err "could not roll $fn back; run: aws lambda update-alias --function-name $fn --name live --function-version $previous"
+        fi
+    done
+    die "$STACK failed after its aliases moved; they were rolled back"
+}
+
 publish_alias() {
     local fn="$1" alias_name=live previous published
     previous="$(aws_cli lambda get-alias --function-name "$fn" --name "$alias_name" \
         --query FunctionVersion --output text 2>/dev/null || echo "")"
 
     published="$(aws_cli lambda publish-version --function-name "$fn" \
-        --description "${GITHUB_SHA:-manual}" --query Version --output text)"
+        --description "${GITHUB_SHA:-manual}" --query Version --output text)" || return 1
 
     if [ -n "$previous" ]; then
         aws_cli lambda update-alias --function-name "$fn" --name "$alias_name" \
-            --function-version "$published" >/dev/null
+            --function-version "$published" >/dev/null || return 1
     else
         aws_cli lambda create-alias --function-name "$fn" --name "$alias_name" \
-            --function-version "$published" >/dev/null
+            --function-version "$published" >/dev/null || return 1
     fi
 
     ok "alias $alias_name -> version $published (was ${previous:-none})"
@@ -706,7 +729,7 @@ publish_alias() {
 if is_apply; then
     while IFS= read -r fn; do
         [ -n "$fn" ] || continue
-        publish_alias "$fn"
+        publish_alias "$fn" || rollback_and_fail "publishing $fn"
     done < <(stack_resources_of_type "$STACK" 'AWS::Lambda::Function')
 fi
 
@@ -714,66 +737,49 @@ fi
 # Smoke
 # ---------------------------------------------------------------------------
 
-# smoke_failed puts every alias this run moved back where it was, then fails
-# the job. The smoke tests the code the alias now serves, so a failure is a
-# reason to stop serving it: before this, a failed curl exited under set -e
-# with prod on the new versions and a rollback command in the log for someone
-# to notice. Only the code goes back — the stack update stays, and an old
-# version runs with the configuration it was published with.
-smoke_failed() {
-    local entry fn previous
-    err "smoke failed for $STACK: $*"
-    for entry in ${MOVED_ALIASES[@]+"${MOVED_ALIASES[@]}"}; do
-        fn="${entry% *}"
-        previous="${entry##* }"
-        if aws_cli lambda update-alias --function-name "$fn" --name live \
-            --function-version "$previous" >/dev/null; then
-            warn "rolled back: $fn live -> version $previous"
-        else
-            err "could not roll $fn back; run: aws lambda update-alias --function-name $fn --name live --function-version $previous"
-        fi
-    done
-    die "smoke failed for $STACK; the live aliases were rolled back"
-}
-
 if [ "$SMOKE" = "1" ] && is_apply; then
     # The execute-api URL, not ApiEndpoint: it exists the moment the stack
     # does and proves the Lambda before anything about DNS has to be true.
     gateway="$(stack_output "$STACK" ApiGatewayEndpoint)"
     [ -n "$gateway" ] && [ "$gateway" != "None" ] || die "no ApiGatewayEndpoint output on $STACK"
     info "smoke: GET ${gateway}/v1/health"
-    curl -fsS --max-time 20 "${gateway}/v1/health" >&2 || smoke_failed "GET /v1/health"
+    curl -fsS --max-time 20 "${gateway}/v1/health" >&2 || rollback_and_fail "smoke: GET /v1/health"
     log ""
     # /health/ready round-trips DynamoDB and S3 under the Lambda's own role. The
     # liveness probe alone passed a multi-day outage in which the API could not
     # read an index it had just been deployed against (gsi2, since removed; see
     # the index note on the Lambda role in the template).
     info "smoke: GET ${gateway}/v1/health/ready"
-    curl -fsS --max-time 20 "${gateway}/v1/health/ready" >&2 || smoke_failed "GET /v1/health/ready"
+    curl -fsS --max-time 20 "${gateway}/v1/health/ready" >&2 || rollback_and_fail "smoke: GET /v1/health/ready"
     log ""
-    # The worker, which the health routes never reach. A task name the worker
-    # does not know is its one side-effect-free payload: Handler logs "ignoring
-    # an unrecognised task" and returns nil, after setup() has run — the
-    # environment, the secrets and the clients a bad deploy breaks first. A
-    # synchronous invoke reports a panic or an init failure as FunctionError.
+    # The worker, which the health routes never reach. {"task":"smoke"} is
+    # the worker's explicit no-op (smokeTask in cmd/worker): Handler returns
+    # nil once setup() has run — the environment, the secrets and the clients
+    # a bad deploy breaks first. A synchronous invoke reports a panic or an
+    # init failure as FunctionError. stderr is kept apart from the answer so
+    # a CLI warning on it cannot read as a failure.
     worker="$(stack_output "$STACK" WorkerFunctionLiveAliasArn)"
     if [ -n "$worker" ] && [ "$worker" != "None" ]; then
-        info "smoke: invoke ${worker##*:function:} with an unrecognised task"
+        info "smoke: invoke ${worker##*:function:} with the smoke task"
         worker_out="$(mktemp)"
-        if worker_err="$(aws_cli lambda invoke --function-name "$worker" \
-            --cli-binary-format raw-in-base64-out --payload '{"task":"deploy-smoke"}' \
-            --query FunctionError --output text "$worker_out" 2>&1)"; then
-            rm -f "$worker_out"
-            [ "$worker_err" = "None" ] || smoke_failed "the worker answered FunctionError $worker_err"
+        worker_errf="$(mktemp)"
+        if function_error="$(aws_cli lambda invoke --function-name "$worker" \
+            --cli-binary-format raw-in-base64-out --payload '{"task":"smoke"}' \
+            --query FunctionError --output text "$worker_out" 2>"$worker_errf")"; then
+            rm -f "$worker_out" "$worker_errf"
+            [ "$function_error" = "None" ] || rollback_and_fail "smoke: the worker answered FunctionError $function_error"
         else
-            rm -f "$worker_out"
-            # A deploy role without lambda:InvokeFunction on the alias (a
-            # bootstrap stack from before 2026-10) cannot run this check. That
-            # is a missing permission, not failed code, so it warns rather than
-            # rolling a healthy deploy back.
+            worker_err="$(cat "$worker_errf")"
+            rm -f "$worker_out" "$worker_errf"
+            # Neither of these says the new code is bad, so neither rolls a
+            # deploy back. AccessDenied is a deploy role without
+            # lambda:InvokeFunction on the alias (a bootstrap stack from before
+            # 2026-10); TooManyRequests is the worker's concurrency ceiling
+            # busy with real work at the moment of the check.
             case "$worker_err" in
                 *AccessDenied*) warn "worker smoke skipped: this role may not invoke $worker; redeploy infrastructure/bootstrap.yaml (scripts/setup.sh)" ;;
-                *) smoke_failed "invoking the worker: $worker_err" ;;
+                *TooManyRequests*) warn "worker smoke skipped: the worker is throttled; invoke it by hand to check" ;;
+                *) rollback_and_fail "smoke: invoking the worker: $worker_err" ;;
             esac
         fi
     fi
