@@ -354,6 +354,21 @@ id the answer leaked with the note's title (`ask.NameNotesInProse`), and
 refuses an answer over 8,000 runes (`ask.MaxAnswerRunes`). **Metrics:**
 `AskOutcome{Outcome}`, `AskRetried{Reason}`, `AskTimedOut{Attempt}`.
 
+## Whisper's spelling prompt
+
+Not one of the six: transcription is not an LLM call, but Whisper takes a
+`prompt` field that biases how it spells (R7-10b). `pipeline.spellingHints`
+supplies names — the destination note's title and aliases for a capture
+recorded into a note, else the titles and aliases of the 50 most recently
+touched notes, likeliest first — and `provider.spellingPrompt` joins them
+into a comma list, keeping whole names until an over-estimate of Whisper's
+tokens (`promptTokens`: an ASCII byte is half a token, any other byte a
+whole one) would pass 200 of the 224 Whisper reads. A recording of 1.5 s
+or less, or of unknown length, gets no prompt (`minHintAudioMS`): on
+near-silence Whisper can answer with its prompt as the transcript. A store
+fault reading the notes is logged and the recording is transcribed without
+hints.
+
 ## Measured sizes
 
 From the prod worker log, 2026-09-20..26, 439 provider-usage rows across two

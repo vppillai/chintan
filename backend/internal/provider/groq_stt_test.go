@@ -427,3 +427,60 @@ func TestGroqSTTSendsTheLanguageOnlyWhenGiven(t *testing.T) {
 		t.Errorf("an unset language was sent as %q; the field must be omitted so Whisper detects", got["language"])
 	}
 }
+
+// R7-10b: the hints reach Whisper as a comma list in the prompt field, whole
+// names kept in order until the budget is spent, and no field at all when
+// there are none.
+func TestGroqSTTSendsHintsAsATrimmedPrompt(t *testing.T) {
+	t.Parallel()
+
+	promptOf := func(t *testing.T, hints []string) (string, bool) {
+		t.Helper()
+		got := map[string]string{}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				t.Errorf("parse form: %v", err)
+			}
+			for k, v := range r.MultipartForm.Value {
+				got[k] = v[0]
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"text":"ok","duration":3}`))
+		}))
+		t.Cleanup(srv.Close)
+		stt, err := NewGroqSTT("k", srv.URL, "", srv.Client())
+		if err != nil {
+			t.Fatalf("NewGroqSTT: %v", err)
+		}
+		if _, err := stt.Transcribe(context.Background(), Audio{
+			Body: bytes.NewReader([]byte("audio")), ContentType: "audio/webm", Hints: hints,
+		}); err != nil {
+			t.Fatalf("Transcribe: %v", err)
+		}
+		p, ok := got["prompt"]
+		return p, ok
+	}
+
+	if got, _ := promptOf(t, []string{"Roof repair", " gutters\n", "", "Chintan"}); got != "Roof repair, gutters, Chintan" {
+		t.Errorf("prompt = %q", got)
+	}
+	if _, ok := promptOf(t, nil); ok {
+		t.Error("a prompt field was sent with no hints")
+	}
+
+	many := make([]string, 100)
+	for i := range many {
+		many[i] = fmt.Sprintf("Note title %02d", i)
+	}
+	got, _ := promptOf(t, many)
+	if promptTokens(got) > maxPromptTokens || !strings.HasPrefix(got, "Note title 00, Note title 01") {
+		t.Errorf("prompt was not trimmed from the end to the budget: %d tokens, %q", promptTokens(got), got)
+	}
+	if strings.Contains(got, "Note title 99") || strings.HasSuffix(got, ", ") {
+		t.Errorf("prompt kept the least likely names or a dangling separator: %q", got)
+	}
+	// A non-Latin title is counted a token a byte, so it cannot overrun.
+	if n := promptTokens("കുറിപ്പ്"); n != len("കുറിപ്പ്") {
+		t.Errorf("promptTokens(malayalam) = %d, want %d", n, len("കുറിപ്പ്"))
+	}
+}

@@ -54,6 +54,8 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		sent = ""
 	}
 
+	hints := p.spellingHints(ctx, tenantID, capture)
+
 	var result provider.Transcription
 	_, err = p.cfg.Breaker.Do(ctx, breaker.Estimate{
 		Provider: p.cfg.STTProvider,
@@ -71,6 +73,7 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 			URL:         audioURL,
 			ContentType: contentTypeForAudioKey(capture.AudioKey),
 			Language:    sent,
+			Hints:       hints,
 		})
 		if err != nil {
 			return breaker.Result{}, err
@@ -177,6 +180,56 @@ func (p *Pipeline) transcriptionLanguage(ctx context.Context, tenantID string, c
 		language = model.DefaultLanguage
 	}
 	return language, nil
+}
+
+// minHintAudioMS is the shortest recording that gets a spelling prompt.
+// Whisper can answer near-silence by echoing its prompt back as the
+// transcript, and a 1.5 s clip is mostly the ring's start and stop; below it
+// a list of the person's note titles would become the "dictation".
+const minHintAudioMS = 1500
+
+// maxHintNotes bounds the notes read for an untargeted capture's hints. The
+// adapter keeps only what fits Whisper's 224-token prompt, which is fewer
+// names than this, so the extra rows only cost read bytes.
+const maxHintNotes = 50
+
+// spellingHints is the names Whisper is asked to spell as written (R7-10b):
+// the destination note's title and aliases for a capture recorded into a
+// note, else the titles and aliases of the most recently touched notes,
+// which is the order the router reads them in. It is a convenience like
+// routing: a store fault is logged and the recording is transcribed without
+// hints rather than failed. An unknown or short duration gets none, see
+// minHintAudioMS.
+func (p *Pipeline) spellingHints(ctx context.Context, tenantID string, capture *model.CaptureIndex) []string {
+	if capture.DurationMS <= minHintAudioMS {
+		return nil
+	}
+	var notes []model.NoteIndex
+	if capture.NoteID != "" {
+		note, err := p.cfg.Store.GetNote(ctx, tenantID, capture.NoteID)
+		if err != nil {
+			if !errors.Is(err, repository.ErrNotFound) {
+				obs.Log(ctx).Warn("spelling hints unavailable; transcribing without them",
+					slog.String("capture_id", capture.ID), slog.String("error", err.Error()))
+			}
+			return nil
+		}
+		notes = []model.NoteIndex{note}
+	} else {
+		active, _, err := p.cfg.Store.DrainNotes(ctx, tenantID, repository.DrainOptions{MaxItems: maxHintNotes})
+		if err != nil {
+			obs.Log(ctx).Warn("spelling hints unavailable; transcribing without them",
+				slog.String("capture_id", capture.ID), slog.String("error", err.Error()))
+			return nil
+		}
+		notes = active
+	}
+	var hints []string
+	for _, n := range notes {
+		hints = append(hints, n.Title)
+		hints = append(hints, n.Aliases...)
+	}
+	return hints
 }
 
 // languageOutcome is the Outcome dimension of TranscribedLanguage: whether the

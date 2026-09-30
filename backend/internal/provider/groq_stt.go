@@ -19,6 +19,12 @@ const (
 	// transcript with word timestamps, which is proportional to speech, not to
 	// the audio file — the audio itself never lands in memory.
 	maxTranscriptResponseBytes = 64 << 20
+
+	// maxPromptTokens is the budget for Whisper's spelling prompt. Whisper
+	// reads at most 224 prompt tokens; this leaves 24 of margin for the
+	// estimate in promptTokens, which is an approximation of Whisper's
+	// tokenizer, not the tokenizer itself.
+	maxPromptTokens = 200
 )
 
 // GroqSTT implements STT via Groq's OpenAI-compatible Whisper API.
@@ -78,7 +84,7 @@ func (g *GroqSTT) Transcribe(ctx context.Context, in Audio) (Transcription, erro
 	contentType := mw.FormDataContentType()
 
 	go func() {
-		pw.CloseWithError(g.writeMultipart(mw, source, in.ContentType, in.Language))
+		pw.CloseWithError(g.writeMultipart(mw, source, in.ContentType, in.Language, spellingPrompt(in.Hints)))
 	}()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.baseURL+"/audio/transcriptions", pr)
@@ -134,7 +140,7 @@ func (g *GroqSTT) openSource(ctx context.Context, in Audio) (io.Reader, func(), 
 // writeMultipart builds the request body incrementally on the writer side of the
 // pipe. verbose_json with both granularities is what produces segments.json and
 // the duration the spend estimate is priced from.
-func (g *GroqSTT) writeMultipart(mw *multipart.Writer, source io.Reader, contentType, language string) error {
+func (g *GroqSTT) writeMultipart(mw *multipart.Writer, source io.Reader, contentType, language, prompt string) error {
 	fields := [][2]string{
 		{"model", g.model},
 		{"response_format", "verbose_json"},
@@ -145,6 +151,9 @@ func (g *GroqSTT) writeMultipart(mw *multipart.Writer, source io.Reader, content
 	// value is "detect", and the field is omitted rather than sent empty.
 	if language != "" {
 		fields = append(fields, [2]string{"language", language})
+	}
+	if prompt != "" {
+		fields = append(fields, [2]string{"prompt", prompt})
 	}
 	for _, f := range fields {
 		if err := mw.WriteField(f[0], f[1]); err != nil {
@@ -162,6 +171,50 @@ func (g *GroqSTT) writeMultipart(mw *multipart.Writer, source io.Reader, content
 		return fmt.Errorf("provider: close multipart: %w", err)
 	}
 	return nil
+}
+
+// spellingPrompt joins the hints into the comma list Whisper's prompt biases
+// spelling with, keeping whole names in order until the next one would pass
+// maxPromptTokens. The likeliest names lead, so the ones dropped are the
+// least likely to be spoken. Each hint is folded to one line first, since a
+// title is the speaker's text.
+func spellingPrompt(hints []string) string {
+	var b strings.Builder
+	used := 0
+	for _, h := range hints {
+		h = strings.Join(strings.Fields(h), " ")
+		if h == "" {
+			continue
+		}
+		piece := h
+		if b.Len() > 0 {
+			piece = ", " + h
+		}
+		cost := promptTokens(piece)
+		if used+cost > maxPromptTokens {
+			break
+		}
+		b.WriteString(piece)
+		used += cost
+	}
+	return b.String()
+}
+
+// promptTokens over-estimates what s costs in Whisper's byte-level BPE
+// tokenizer: a token is never shorter than one byte, so a non-ASCII byte is
+// counted as a whole token (a Malayalam or Tamil title is about that), and
+// ASCII text, whose English words average about four characters a token, is
+// counted at two, which also covers digits and punctuation.
+func promptTokens(s string) int {
+	ascii, other := 0, 0
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x80 {
+			ascii++
+		} else {
+			other++
+		}
+	}
+	return (ascii+1)/2 + other
 }
 
 // groqTranscription is the verbose_json shape. The plain-json shape is the same

@@ -27,6 +27,12 @@ type Audio struct {
 	// provider detect it. Whisper is faster and more accurate when told; left
 	// to guess on a short clip it can answer in the wrong script entirely.
 	Language string
+	// Hints are names the speech may contain — note titles and aliases, the
+	// likeliest first — sent to Whisper as a spelling prompt, so "Chintan"
+	// is not heard as "chin tan" and the router can match the note. The
+	// adapter keeps as many as fit the provider's prompt limit. The caller
+	// leaves it empty for very short audio (see pipeline.spellingHints).
+	Hints []string
 }
 
 // Segment is one timestamped span of the raw transcript.
