@@ -57,6 +57,29 @@ func TestVerifySubsequence(t *testing.T) {
 	}
 }
 
+// Indic vowel signs and viramas are combining marks, not letters. Treated as
+// word breaks they folded പാൽ (milk) and പുൽ (grass) to one word, and दाल
+// and दिल, so a model that changed a vowel passed the check (R7-2).
+func TestVerifySubsequenceKeepsIndicVowelSigns(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name, out, in string
+		want          bool
+	}{
+		{name: "Malayalam, vowel changed", out: "പുൽ വാങ്ങണം", in: "പാൽ വാങ്ങണം", want: false},
+		{name: "Malayalam, words dropped and punctuated", out: "പാൽ.", in: "നാളെ പാൽ വാങ്ങണം", want: true},
+		{name: "Hindi, vowel changed", out: "दिल लाना है", in: "दाल लाना है", want: false},
+		{name: "Hindi, identical", out: "दाल लाना है।", in: "दाल लाना है", want: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := VerifySubsequence(tt.out, tt.in); got != tt.want {
+				t.Errorf("VerifySubsequence(%q) = %v, want %v", tt.out, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExtractJSONObject(t *testing.T) {
 	t.Parallel()
 
@@ -90,5 +113,19 @@ func TestExtractJSONObject(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFoldWordsKeepsIndicWordsWhole(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{
+		"പാൽ":       "പാൽ",
+		"പുൽ":       "പുൽ",
+		"दाल, दिल!": "दाल दिल",
+		"Milk. പാൽ": "milk പാൽ",
+	} {
+		if got := FoldWords(in); got != want {
+			t.Errorf("FoldWords(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

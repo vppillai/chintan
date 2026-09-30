@@ -196,7 +196,9 @@ marker, in the recording's order. Three rules:
   reopened sub-item reopens its parent, because "add milk" over a ticked
   Milk means milk is wanted again;
 - matching folds case, punctuation and whitespace (`llm.FoldWords`, the one
-  fold every reader uses) and never reads indent; a marker line or a blank
+  fold every reader uses; a combining mark such as an Indic vowel sign or
+  virama is part of its word, so പാൽ and പുൽ, or दाल and दिल, are two
+  items) and never reads indent; a marker line or a blank
   line is left where it stands and an insertion never crosses a marker; a
   merge never ticks a line the list has, only ever flips `[x]` → `[ ]` (an
   item that arrives done is a tick a regeneration carried, written as it

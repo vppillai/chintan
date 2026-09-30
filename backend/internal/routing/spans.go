@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"unicode"
+
+	"github.com/vppillai/chintan/backend/internal/llm"
 )
 
 // Span is a run of words in the whitespace-tokenised transcript that the
@@ -148,12 +149,14 @@ func ExtendSpans(words []string, spans []Span, title string) []Span {
 }
 
 // NormalizeSpeech is the comparison form of spoken words: lowercased, with
-// everything but letters, digits and apostrophes dropped, one space between
-// words. Speech-to-text punctuates and capitalises as it likes, so a name
-// heard in a transcript is compared to a note's name in this form.
+// everything but word runes (llm.IsWordRune: letters, digits and combining
+// marks, so Indic vowel signs stay in their words) and apostrophes dropped,
+// one space between words. Speech-to-text punctuates and capitalises as it
+// likes, so a name heard in a transcript is compared to a note's name in
+// this form.
 func NormalizeSpeech(s string) string {
 	words := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '\''
+		return !llm.IsWordRune(r) && r != '\''
 	})
 	return strings.Join(words, " ")
 }

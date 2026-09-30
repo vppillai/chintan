@@ -274,6 +274,8 @@ func TestNormalizeSpeechKeepsWordsOnly(t *testing.T) {
 		"App Feedback: the split-up": "app feedback the split up",
 		"don't":                      "don't",
 		"test 1,2,3":                 "test 1 2 3",
+		"പാൽ വാങ്ങണം.":               "പാൽ വാങ്ങണം",
+		"दाल की सूची":                "दाल की सूची",
 		"":                           "",
 	} {
 		if got := NormalizeSpeech(in); got != want {
