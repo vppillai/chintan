@@ -362,12 +362,15 @@ supplies names — the destination note's title and aliases for a capture
 recorded into a note, else the titles and aliases of the 50 most recently
 touched notes, likeliest first — and `provider.spellingPrompt` joins them
 into a comma list, keeping whole names until an over-estimate of Whisper's
-tokens (`promptTokens`: an ASCII byte is half a token, any other byte a
-whole one) would pass 200 of the 224 Whisper reads. A recording of 1.5 s
-or less, or of unknown length, gets no prompt (`minHintAudioMS`): on
-near-silence Whisper can answer with its prompt as the transcript. A store
-fault reading the notes is logged and the recording is transcribed without
-hints.
+tokens (`promptTokens`: an ASCII letter or space is half a token, any other
+byte a whole one) would pass 200 of the 224 Whisper reads. A recording of
+1.5 s or less, or of unknown length, gets no prompt (`minHintAudioMS`): on
+near-silence Whisper can answer with its prompt as the transcript. Longer
+silence can still be answered that way, with confident log-probs that pass
+the silence gate, so a transcript that is only hint names, or with two
+pieces or more a run of the prompt's words, ends as `no_content` with the
+transcript kept (`echoesHints`, `CaptureHintEcho`). A store fault reading
+the notes is logged and the recording is transcribed without hints.
 
 ## Measured sizes
 

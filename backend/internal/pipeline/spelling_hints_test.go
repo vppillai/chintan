@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
 )
 
@@ -56,5 +57,61 @@ func TestSpellingHintsFollowTheTargetAndSkipShortAudio(t *testing.T) {
 		if got := hintsSentTo(t, "", ms); len(got) != 0 {
 			t.Errorf("hints for %d ms = %q, want none", ms, got)
 		}
+	}
+}
+
+// Whisper can read its prompt back on silence with confident log-probs, so
+// the silence gate passes it; the echo of the hint names must still end as
+// no_content with nothing routed, while dictation that merely names a note
+// is routed as before.
+func TestAnEchoOfTheSpellingPromptEndsAsNoContent(t *testing.T) {
+	cases := []struct {
+		name, text string
+		want       model.CaptureStatus
+	}{
+		{"the whole prompt", "Chintan feedback, app bugs.", model.StatusNoContent},
+		{"an echo cut off mid-name", "feedback, app", model.StatusNoContent},
+		{"dictation naming a note", "Chintan feedback the app crashed on save", model.StatusAppended},
+		{"a word of a title said alone", "Chintan", model.StatusAppended},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, harnessOpts{
+				stt: &fake.STT{Result: &provider.Transcription{
+					Text: tc.text, Duration: 5,
+					Segments: []provider.Segment{{End: 5, Text: tc.text, NoSpeechProb: 0.9, AvgLogprob: -0.3}},
+				}},
+				llm: &fake.LLM{Response: "Cleaned."},
+			})
+			ctx := context.Background()
+			if _, err := h.store.PutNote(ctx, "user1", model.NoteIndex{
+				ID: "n_other", Title: "Chintan feedback", Aliases: []string{"app bugs"}, UpdatedAt: model.Now(),
+			}); err != nil {
+				t.Fatalf("seed note: %v", err)
+			}
+			capture := seedUploadedCapture(t, h, "")
+			capture.DurationMS = 5_000
+			if _, err := h.store.PutCapture(ctx, capture); err != nil {
+				t.Fatalf("set duration: %v", err)
+			}
+			got, err := h.pipeline.Run(ctx, "user1", "c_1")
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if len(h.stt.Sources) == 0 || len(h.stt.Sources[0].Hints) == 0 {
+				t.Fatal("no hints were sent")
+			}
+			if got.Status != tc.want {
+				t.Fatalf("status = %q, want %q", got.Status, tc.want)
+			}
+			if tc.want == model.StatusNoContent {
+				if h.router.LastCandidates != nil || len(h.creator.createdTitles()) > 0 {
+					t.Errorf("an echoed prompt was routed or filed (notes created: %q)", h.creator.createdTitles())
+				}
+				if got.RawKey == "" {
+					t.Error("the echoed transcript was not kept")
+				}
+			}
+		})
 	}
 }

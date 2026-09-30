@@ -21,9 +21,9 @@ const (
 	maxTranscriptResponseBytes = 64 << 20
 
 	// maxPromptTokens is the budget for Whisper's spelling prompt. Whisper
-	// reads at most 224 prompt tokens; this leaves 24 of margin for the
-	// estimate in promptTokens, which is an approximation of Whisper's
-	// tokenizer, not the tokenizer itself.
+	// reads at most 224 prompt tokens; this leaves 24 of margin beyond the
+	// high estimate in promptTokens, which approximates Whisper's tokenizer
+	// rather than running it.
 	maxPromptTokens = 200
 )
 
@@ -200,21 +200,23 @@ func spellingPrompt(hints []string) string {
 	return b.String()
 }
 
-// promptTokens over-estimates what s costs in Whisper's byte-level BPE
-// tokenizer: a token is never shorter than one byte, so a non-ASCII byte is
-// counted as a whole token (a Malayalam or Tamil title is about that), and
-// ASCII text, whose English words average about four characters a token, is
-// counted at two, which also covers digits and punctuation.
+// promptTokens is a deliberately high estimate of what s costs in Whisper's
+// byte-level BPE tokenizer. A token is never shorter than one byte, so a
+// non-ASCII byte (a Malayalam or Tamil title is about that), a digit and a
+// punctuation mark are counted as a whole token each; ASCII letters and
+// spaces, whose English words average about four characters a token, are
+// counted at two a token.
 func promptTokens(s string) int {
-	ascii, other := 0, 0
+	half, whole := 0, 0
 	for i := 0; i < len(s); i++ {
-		if s[i] < 0x80 {
-			ascii++
+		c := s[i]
+		if c == ' ' || (c|0x20 >= 'a' && c|0x20 <= 'z') {
+			half++
 		} else {
-			other++
+			whole++
 		}
 	}
-	return (ascii+1)/2 + other
+	return (half+1)/2 + whole
 }
 
 // groqTranscription is the verbose_json shape. The plain-json shape is the same
