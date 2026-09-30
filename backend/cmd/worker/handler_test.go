@@ -91,7 +91,18 @@ func TestHandlerDispatchesEveryTaskConstant(t *testing.T) {
 		return nil
 	}
 
+	real := pipeline.NewWorker(nil)
 	for task, constant := range taskNames(t) {
+		// A pipeline task must be one the real worker's switch serves, not
+		// one it refuses. With a tenant and nothing else, each served task
+		// discards the payload before it reaches the (nil) pipeline.
+		if strings.HasPrefix(constant, "pipeline.") {
+			raw, _ := json.Marshal(map[string]string{"task": task, "tenant_id": "u"})
+			if err := real.Handle(context.Background(), raw); errors.Is(err, pipeline.ErrUnknownTask) {
+				t.Errorf("%s (%q) is not in Worker.Handle's switch", constant, task)
+			}
+		}
+
 		ran = nil
 		raw, _ := json.Marshal(map[string]string{"task": task, "tenant_id": "u"})
 		if err := Handler(context.Background(), raw); err != nil {
