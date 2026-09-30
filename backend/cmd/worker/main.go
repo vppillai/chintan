@@ -372,6 +372,11 @@ func sniff(raw json.RawMessage) (invocation, error) {
 	return inv, nil
 }
 
+// smokeTask is the deploy smoke's payload task, {"task":"smoke"}: an explicit
+// no-op in scheduled rather than an unrecognised name, which the pipeline
+// refuses with ErrUnknownTask and would fail every deploy's smoke.
+const smokeTask = "smoke"
+
 // scheduled are the tasks this binary runs itself: the EventBridge rules'
 // constant inputs, whose handlers need nothing from the pipeline. Every other
 // task goes to the pipeline worker, which owns the list of the tasks it
@@ -396,6 +401,10 @@ var scheduled = map[string]func(context.Context) error{
 		_, err := snapshots.Run(ctx)
 		return err
 	},
+	// scripts/deploy.sh's worker smoke. Reaching here means setup() ran —
+	// the environment, the secrets and the clients a bad deploy breaks
+	// first — and that is all the smoke asks; nothing is read or written.
+	smokeTask: func(context.Context) error { return nil },
 }
 
 // handleWork is the pipeline worker's Handle, set by setup; a variable for the
