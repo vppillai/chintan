@@ -19,7 +19,7 @@ import { cacheNoteDetail, cacheNoteList, forgetNote } from '@/offline/notesCache
 import { useApi } from '../ApiProvider.tsx';
 import type { NoteCreateWire, NoteDetailWire, NoteListQuery, NoteWire, Page } from '../schema.ts';
 
-import { capturePollInterval, newlyAppendedNoteIds } from './captures.ts';
+import { newlyAppendedNoteIds } from './captures.ts';
 import { SEARCH_CORPUS_KEY, invalidateNoteLists, queryKeys } from './keys.ts';
 
 /**
@@ -146,21 +146,13 @@ function useNoteQueryOptions(noteId: string | undefined) {
   };
 }
 
+/**
+ * One note, body and captures. While any capture is still filing the note
+ * screen asks after those captures on its own (`useInFlightCaptures`) and
+ * this query is read again when one settles.
+ */
 export function useNote(noteId: string | undefined) {
-  return useQuery({
-    ...useNoteQueryOptions(noteId),
-    enabled: Boolean(noteId),
-    /*
-     * A note with a recording still moving through the pipeline is about to
-     * change under the reader, and nothing else on this screen would notice:
-     * the filing row's poll lives on the library and stops when the user
-     * leaves it. A note opened while its own capture was still at "Uploaded"
-     * sat on the pre-recording body indefinitely — one GET, then silence. So
-     * while any of its captures is non-terminal the note asks again on the
-     * filing cadence, and stops the moment the last one settles.
-     */
-    refetchInterval: (query) => capturePollInterval(query.state.data?.captures ?? []),
-  });
+  return useQuery({ ...useNoteQueryOptions(noteId), enabled: Boolean(noteId) });
 }
 
 /**

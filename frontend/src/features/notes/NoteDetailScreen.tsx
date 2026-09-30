@@ -15,7 +15,7 @@ import { flushSync } from 'react-dom';
 import { useNavigate, useParams } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
-import { queryKeys, useNote, useSettings } from '@/api/queries.ts';
+import { queryKeys, useInFlightCaptures, useNote, useSettings } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
@@ -83,7 +83,14 @@ import { useNoteEditor, type NoteEditor } from './useNoteEditor.ts';
 export function NoteDetailScreen() {
   const { id } = useParams<{ id: string }>();
   const online = useOnline();
-  const { data: served, isLoading, fetchStatus, error } = useNote(id);
+  const { data: served, isLoading, fetchStatus, error, dataUpdatedAt } = useNote(id);
+  /*
+   * A note with a recording still moving through the pipeline is about to
+   * change under the reader: while any capture is non-terminal each is asked
+   * after on the filing cadence, and the note is read again when one settles.
+   * Here and not in `useNote`, which the tab bar reads too.
+   */
+  useInFlightCaptures(id, served?.captures, dataUpdatedAt);
   const cached = useCachedNote(id);
 
   /*

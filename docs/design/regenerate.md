@@ -114,8 +114,8 @@ any capture of the note is non-terminal and not stuck (`CaptureStuck`) — this
 regeneration, or a recording being filed — or while the row carries a young
 append stamp (`AppendInProgress`) is 409 `this note is being regenerated, or a
 recording is being filed into it; wait for it to finish`. The app's poll and
-strip are the ones a fresh recording gets: `useNote` polls while any capture
-is non-terminal (`capturePollInterval`), the `FilingBanner` shows the newest
+strip are the ones a fresh recording gets: `useNote` polls each capture
+that is non-terminal (`useInFlightCaptures`, `capturePollInterval`), the `FilingBanner` shows the newest
 one moving, and the ⋮ item reads "Regenerating…" and is off until the last
 lands; the body refreshes as each paragraph is replaced. No note-level
 `regenerate_state` was added: it would have been a second copy of what the

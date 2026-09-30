@@ -16,9 +16,12 @@ import type { CaptureModel } from './machine.ts';
  * watched there; it now returns to whichever tab the person left, and this
  * banner is what says the recording is still coming: the upload's own bar
  * while this device is sending, then the same four stage segments the
- * library's filing row draws, until the capture appends. Then, for a few
- * seconds, "Added at the end · Show": the body has refreshed, but in a long
- * note the paragraph is far from where the person is reading. A capture
+ * library's filing row draws, until the capture appends. The stages come
+ * from the capture's own poll (`useInFlightCaptures`); a terminal status
+ * never does — it arrives with the refetched note, so the append is learnt
+ * with the body that carries it. Then, for a few seconds, "Added at the end ·
+ * Show": the body has refreshed, but in a long note the paragraph is far
+ * from where the person is reading. A capture
  * that stopped short keeps the row's Retry and Dismiss, so the failure is
  * met where the recording was made rather than found later on Home.
  *

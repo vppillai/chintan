@@ -531,6 +531,18 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
      * sees is the same: a shorter body, a bumped version, one row fewer.
      */
     const captureMatch = /^\/v1\/captures\/([^/]+)$/.exec(path);
+    // One capture, as the open note's filing poll asks after it.
+    if (captureMatch && method === 'GET') {
+      const id = captureMatch[1] ?? '';
+      const capture =
+        findCapture(state, id)?.capture ?? state.captures.find((item) => item.id === id);
+      if (!capture) {
+        await problem(route, 404, { title: 'Not found' });
+        return;
+      }
+      await json(route, capture);
+      return;
+    }
     if (captureMatch && method === 'DELETE') {
       const found = findCapture(state, captureMatch[1] ?? '');
       if (!found) {

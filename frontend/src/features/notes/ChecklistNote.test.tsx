@@ -105,6 +105,10 @@ function server(initial: NoteDetailWire) {
       return json({ retention_days: 0, theme: 'ink' });
     }
     if (url.pathname.endsWith(`/v1/notes/${state.note.id}`)) return json(state.note);
+    // The open note's filing poll asks after each moving capture on its own.
+    const capture = /\/v1\/captures\/([^/]+)$/.exec(url.pathname);
+    const held = capture && state.note.captures?.find((item) => item.id === capture[1]);
+    if (held) return json(held);
     return json({ items: [] });
   });
   const router = createMemoryRouter([{ path: '/notes/:id', Component: NoteDetailScreen }], {
