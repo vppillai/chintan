@@ -329,6 +329,70 @@ test('a recording into a long note returns to the place, and Show points at what
 });
 
 /**
+ * Show leaves the whole added paragraph above the tab bar, on a desktop and
+ * on a phone, in both themes. The live QA pass read 785–802 px against a bar
+ * top of 707 at 1280×800 and took it for a mark stuck under Home / Record /
+ * You; it had measured on the first frame the mark entered the window, while
+ * Show's smooth scroll was still travelling, and the scroll settles at
+ * 648–665. `toBeInViewport` above cannot tell the two apart, since the bar is
+ * inside the viewport, so this measures against the bar itself.
+ */
+for (const viewport of [
+  { name: 'desktop', width: 1280, height: 800 },
+  { name: 'phone', width: 390, height: 844 },
+] as const) {
+  for (const theme of ['ink', 'nocturne'] as const) {
+    test(`Show brings the added paragraph above the tab bar · ${viewport.name} · ${theme}`, async ({
+      page,
+      api,
+    }) => {
+      await page.addInitScript((value) => {
+        localStorage.setItem('chintan.theme', value);
+      }, theme);
+      api.notes['roof-repair']!.body = Array.from(
+        { length: 40 },
+        (_, index) => `Paragraph ${String(index + 1)}. The flashing around the chimney needs replacing.`,
+      ).join('\n\n');
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto('/notes/roof-repair');
+      await expect(page.getByRole('textbox', { name: 'Note body' })).toBeVisible();
+      await page.locator('.app__main').evaluate((element) => {
+        element.scrollTop = 800;
+        element.dispatchEvent(new Event('scroll'));
+      });
+
+      await page.getByRole('button', { name: 'Record into this note', exact: true }).click();
+      await expect(page.locator('.capture__timer')).toHaveText('00:01');
+      await page.getByRole('button', { name: 'Stop' }).click();
+      await page.getByRole('button', { name: 'Send' }).click();
+      await expect(page).toHaveURL(/\/notes\/roof-repair$/);
+
+      await expect.poll(() => api.captures.length).toBe(1);
+      api.captures[0]!.status = 'appended';
+      api.notes['roof-repair']!.body += '\n\nThe gutter is leaking again.';
+      api.notes['roof-repair']!.version += 1;
+      const banner = page.getByRole('region', { name: 'Filing a recording' });
+      await expect(banner).toContainText('Added at the end', { timeout: 10_000 });
+      await banner.getByRole('button', { name: 'Show' }).click();
+
+      const mark = page.locator('mark.note-flash');
+      await expect(mark).toHaveText('The gutter is leaking again.');
+      const clearance = () =>
+        page.evaluate(() => {
+          const markBox = document.querySelector('mark.note-flash')?.getBoundingClientRect();
+          const barBox = document.querySelector('.tab-bar')?.getBoundingClientRect();
+          const mainBox = document.querySelector('.app__main')?.getBoundingClientRect();
+          if (!markBox || !barBox || !mainBox) return Number.NaN;
+          // Below the bar's top edge, or above the region's own top.
+          return Math.min(barBox.top - markBox.bottom, markBox.top - mainBox.top);
+        });
+      // Polled, so a smooth scroll still under way is given time to arrive.
+      await expect.poll(clearance, { timeout: 1_500 }).toBeGreaterThanOrEqual(0);
+    });
+  }
+}
+
+/**
  * Send while recording: one tap where there were two.
  *
  * The real recorder hands over its last chunk after `stop()` returns, so the
