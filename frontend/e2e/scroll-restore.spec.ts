@@ -98,3 +98,26 @@ test("a note returned to by Forward is at its own place", async ({ page, api }) 
   await expect.poll(() => mainTop(page)).toBeGreaterThan(before - 4);
   expect(Math.abs((await mainTop(page)) - before)).toBeLessThanOrEqual(4);
 });
+
+test('a scroll of the person\'s own during the restore is never pulled back', async ({ page, api }) => {
+  manyNotes(api);
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: /^Filler 30\b/ }).first()).toBeVisible();
+  const homeKey = await page.evaluate(() => (history.state as { key: string }).key);
+  await page.getByRole('button', { name: /^Filler 3\b/ }).first().click();
+  await expect(page.getByRole('textbox', { name: 'Note title' })).toBeVisible();
+  // An offset the list can never reach keeps the restore retrying for its
+  // whole second, which is the window a person's scroll must win in.
+  await page.evaluate((key) => {
+    sessionStorage.setItem(`chintan.scroll.${key}`, '999999');
+  }, homeKey);
+
+  await page.goBack();
+  await expect(page.getByRole('button', { name: /^Filler 30\b/ }).first()).toBeVisible();
+  await page.locator('.app__main').evaluate((main) => {
+    main.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
+    main.scrollTop = 100;
+  });
+  await page.waitForTimeout(400);
+  expect(await mainTop(page)).toBe(100);
+});

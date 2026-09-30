@@ -16,13 +16,31 @@ function read(key: string): number {
   }
 }
 
+/** How many places are kept: a session's worth of Backs, not every screen ever seen. */
+const KEEP = 50;
+
+/** The kept keys, oldest first, so the oldest can be dropped. */
+const INDEX = `${PREFIX}index`;
+
 function write(key: string, top: number): void {
   try {
+    const raw: unknown = JSON.parse(sessionStorage.getItem(INDEX) ?? '[]');
+    const keys = (Array.isArray(raw) ? raw : []).filter(
+      (kept): kept is string => typeof kept === 'string' && kept !== key,
+    );
+    keys.push(key);
+    for (const dropped of keys.splice(0, Math.max(0, keys.length - KEEP))) {
+      sessionStorage.removeItem(PREFIX + dropped);
+    }
+    sessionStorage.setItem(INDEX, JSON.stringify(keys));
     sessionStorage.setItem(PREFIX + key, String(Math.round(top)));
   } catch {
-    /* Storage denied. */
+    /* Storage denied, or an index that is not ours: the place is not kept. */
   }
 }
+
+/** A person taking the scroll over: the restore stops rather than pull against them. */
+const TAKEOVER_EVENTS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
 
 /**
  * Navigation state asking for the offset the path was last left at, for a
@@ -49,7 +67,9 @@ function asksToRestore(state: unknown): boolean {
  * The rows are not there on the first frame (the screen may be lazy, and the
  * cached pages mount a frame or two later), so a restore is retried each
  * frame until the region is tall enough to hold the offset or a second has
- * gone by.
+ * gone by — or until the person scrolls themselves: any wheel, touch,
+ * pointer or key on the region, or an offset that is no longer the one the
+ * restore last set, ends it, so it never drags the page back under a finger.
  */
 export function useScrollRestore(main: RefObject<HTMLElement | null>): void {
   const location = useLocation();
@@ -74,27 +94,45 @@ export function useScrollRestore(main: RefObject<HTMLElement | null>): void {
 
   useLayoutEffect(() => {
     const key = location.key;
-    const path = `path:${location.pathname}`;
+    // With the query: Home and the archive are one path and two lists.
+    const path = `path:${location.pathname}${location.search}`;
     let frame = 0;
     const target =
       navigationType === 'POP' ? read(key) : asksToRestore(location.state) ? read(path) : 0;
     position.current = main.current?.scrollTop ?? 0;
 
-    const restore = (attempt: number) => {
-      const region = main.current;
+    const region = main.current;
+    const stop = (): void => {
+      cancelAnimationFrame(frame);
+      for (const type of TAKEOVER_EVENTS) region?.removeEventListener(type, stop);
+    };
+    // What the region held after the restore's last write, clamped to its
+    // height then. Anything else by the next frame is someone else's scroll.
+    let set: number | null = null;
+    const restore = (attempt: number): void => {
       if (!region) return;
+      if (set !== null && Math.abs(region.scrollTop - set) > 1) {
+        stop();
+        return;
+      }
       region.scrollTop = target;
-      position.current = region.scrollTop;
-      if (Math.abs(region.scrollTop - target) > 1 && attempt < RESTORE_FRAMES) {
+      set = region.scrollTop;
+      position.current = set;
+      if (Math.abs(set - target) > 1 && attempt < RESTORE_FRAMES) {
         frame = requestAnimationFrame(() => {
           restore(attempt + 1);
         });
+      } else {
+        stop();
       }
     };
-    if (target > 0) restore(0);
+    if (target > 0 && region) {
+      for (const type of TAKEOVER_EVENTS) region.addEventListener(type, stop, { passive: true });
+      restore(0);
+    }
 
     return () => {
-      cancelAnimationFrame(frame);
+      stop();
       write(key, position.current);
       write(path, position.current);
     };
