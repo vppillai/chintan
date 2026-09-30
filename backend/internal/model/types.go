@@ -7,6 +7,7 @@ package model
 import (
 	"strings"
 	"time"
+	"unicode"
 )
 
 // TimeLayout stores timestamps with fixed-width fractional seconds.
@@ -570,22 +571,67 @@ const ExcerptRunes = 90
 
 // CaptureExcerpt is the first ExcerptRunes characters of text with its
 // whitespace collapsed, cut back to a word boundary when one is near and
-// marked with an ellipsis when anything was cut.
+// marked with an ellipsis when anything was cut. A cut inside a word never
+// splits what a reader sees as one character (see splitsCluster).
 func CaptureExcerpt(text string) string {
 	flat := []rune(strings.Join(strings.Fields(text), " "))
 	if len(flat) <= ExcerptRunes {
 		return string(flat)
 	}
-	cut := flat[:ExcerptRunes]
+	n := ExcerptRunes
 	// Back to the last space when it is in the final third, so the excerpt
 	// does not end mid-word; a single long word is cut where it stands.
-	for i := len(cut) - 1; i >= ExcerptRunes*2/3; i-- {
-		if cut[i] == ' ' {
-			cut = cut[:i]
+	for i := n - 1; i >= ExcerptRunes*2/3; i-- {
+		if flat[i] == ' ' {
+			n = i
 			break
 		}
 	}
-	return strings.TrimRight(string(cut), " ,.;:") + "…"
+	for n > 0 && splitsCluster(flat, n) {
+		n--
+	}
+	return strings.TrimRight(string(flat[:n]), " ,.;:") + "…"
+}
+
+// splitsCluster reports whether cutting before flat[n] would break a
+// grapheme cluster: a vowel sign or virama from its consonant ("കി",
+// "ക്ഷ"), a joined emoji from its partner ("👨‍👩‍👧"), a variation selector
+// or skin tone from its base, or one half of a flag ("🇮🇳"). It is the few
+// rules a ninety-character excerpt meets, not the whole of UAX #29; the
+// standard library has no segmenter and one line is not worth a dependency.
+func splitsCluster(flat []rune, n int) bool {
+	next, prev := flat[n], flat[n-1]
+	switch {
+	case unicode.In(next, unicode.Mn, unicode.Mc, unicode.Me),
+		next == zwj, next == 0xFE0E, next == 0xFE0F,
+		next >= 0x1F3FB && next <= 0x1F3FF:
+		return true
+	case prev == zwj || isVirama(prev):
+		return true
+	case isRegionalIndicator(next) && isRegionalIndicator(prev):
+		// Flags are pairs: the cut splits one when an odd number of
+		// indicators run up to it.
+		run := 0
+		for i := n - 1; i >= 0 && isRegionalIndicator(flat[i]); i-- {
+			run++
+		}
+		return run%2 == 1
+	}
+	return false
+}
+
+const zwj = 0x200D
+
+func isRegionalIndicator(r rune) bool { return r >= 0x1F1E6 && r <= 0x1F1FF }
+
+// isVirama is the vowel-killer of the Brahmic scripts the app transcribes;
+// a consonant after one belongs to the same conjunct.
+func isVirama(r rune) bool {
+	switch r {
+	case 0x094D, 0x09CD, 0x0A4D, 0x0ACD, 0x0B4D, 0x0BCD, 0x0C4D, 0x0CCD, 0x0D4D, 0x0DCA:
+		return true
+	}
+	return false
 }
 
 // StageEntered records at as the moment status was first written, and

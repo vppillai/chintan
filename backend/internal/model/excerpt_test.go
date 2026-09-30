@@ -35,4 +35,19 @@ func TestCaptureExcerpt(t *testing.T) {
 		t.Errorf("one long word = %d runes (valid %v), want %d cut where it stands plus the ellipsis",
 			utf8.RuneCountInString(got), utf8.ValidString(got), model.ExcerptRunes+1)
 	}
+
+	// Never half a character a reader sees as one (review of #182).
+	for _, tc := range []struct {
+		name, text string
+		xs         int
+	}{
+		{"vowel sign", strings.Repeat("x", 89) + "കി" + "yyy", 89},
+		{"conjunct", strings.Repeat("x", 88) + "ക്ഷ" + "yyy", 88},
+		{"joined emoji", strings.Repeat("x", 87) + "👨‍👩‍👧" + "yyy", 87},
+		{"flag", strings.Repeat("x", 89) + "🇮🇳" + "yyy", 89},
+	} {
+		if got, want := model.CaptureExcerpt(tc.text), strings.Repeat("x", tc.xs)+"…"; got != want {
+			t.Errorf("%s: excerpt ends %q, want the cut before the cluster", tc.name, string([]rune(got)[max(0, utf8.RuneCountInString(got)-4):]))
+		}
+	}
 }
