@@ -203,12 +203,39 @@ export function ChecklistEditor({
   const save = onSave;
 
   const toggle = (index: number, item: ChecklistItem): void => {
+    const previous = body;
     const next = toggleItem(body, index);
     // Every row the tick flipped is held with the one tapped — a parent's
     // sub-items, a reopened sub-item's parent — so a block moves to Done, or
     // back, together. Indices match line for line: a tick adds no line.
     const after = parseChecklist(next);
     const flipped = items.flatMap((was, i) => (was.done === after[i]?.done ? [] : [i]));
+    /*
+     * A tick moves the row out of sight into Done, so a mistaken one gets an
+     * Undo, as Delete done does and with the same guard (R7-13). Shorter
+     * than that toast: a tick is small, and the next tick replaces it. The
+     * toast goes before the write for the same reason as Delete done's: in
+     * Split up the write is the adoption, whose own toast must land last.
+     * Undo writes the whole body back, so the row returns to its place.
+     */
+    if (!item.done) {
+      showToast({
+        message: `${item.text.trim() || 'Item'} done`,
+        ms: TICK_TOAST_MS,
+        action: {
+          label: 'Undo',
+          onSelect: () => {
+            if (currentBody() !== lastWritten.current) {
+              showToast({ message: UNDO_STALE });
+              return;
+            }
+            write(previous);
+            setAnnouncement('Reopened');
+            save();
+          },
+        },
+      });
+    }
     write(next, undefined, flipped);
     setAnnouncement(item.done ? 'Reopened' : 'Marked done');
     save();
@@ -576,6 +603,9 @@ export function ChecklistEditor({
 
 /** The add row, as a focus target. Never an item index. */
 const ADD_ROW = -1;
+
+/** How long a tick's Undo stands: long enough to read a short line and reach the button. */
+const TICK_TOAST_MS = 4000;
 
 /** What an Undo says instead of writing over a list that changed under it. */
 export const UNDO_STALE = 'The list changed since — nothing undone.';

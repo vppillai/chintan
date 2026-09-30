@@ -822,11 +822,49 @@ describe('the Done section', () => {
     const user = userEvent.setup();
     const { log, body } = mount('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
     await user.click(screen.getByRole('button', { name: 'Delete done' }));
-    await user.click(screen.getByRole('checkbox', { name: 'Bread' }));
-    expect(body()).toBe('- [x] Bread');
+    // Not a tick: a tick offers its own Undo, which replaces this one.
+    await user.type(screen.getByRole('textbox', { name: 'Add an item' }), 'Jam{Enter}');
+    expect(body()).toBe('- [ ] Bread\n- [ ] Jam');
     await user.click(screen.getByRole('button', { name: 'Undo' }));
     expect(body()).toBe('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
     expect(log.saves).toBe(3);
+  });
+
+  it('a tick says "<item> done" with Undo, and Undo puts the row back where it was', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount('- [ ] Milk\n- [ ] Eggs\n- [ ] Bread');
+    await user.click(screen.getByRole('checkbox', { name: 'Eggs' }));
+    expect(body()).toBe('- [ ] Milk\n- [x] Eggs\n- [ ] Bread');
+    expect(screen.getByText('Eggs done', { selector: '.toast__text' })).toBeInTheDocument();
+    // The live region still says it, as before the toast.
+    expect(screen.getByText('Marked done', { selector: '[aria-live]' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(body()).toBe('- [ ] Milk\n- [ ] Eggs\n- [ ] Bread');
+    expect(log.saves).toBe(2);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+    expect(openValues()).toEqual(['Milk', 'Eggs', 'Bread', '']);
+  });
+
+  it('a tick\'s Undo refuses when the list changed under it meanwhile', async () => {
+    const user = userEvent.setup();
+    const { log } = mount('- [ ] Milk\n- [ ] Bread');
+    await user.click(screen.getByRole('checkbox', { name: 'Milk' }));
+    act(() => {
+      log.setBody('- [x] Milk\n- [ ] Bread\n- [ ] Jam');
+    });
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(log.bodies).toEqual(['- [x] Milk\n- [ ] Bread']);
+    expect(screen.getByText('The list changed since — nothing undone.', { selector: '.toast__text' })).toBeInTheDocument();
+  });
+
+  it('reopening a done item offers no Undo', async () => {
+    const user = userEvent.setup();
+    mount(LIST);
+    await user.click(within(doneSection()).getByRole('checkbox', { name: 'Eggs' }));
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
   });
 
   it('says "1 done item" for one', async () => {

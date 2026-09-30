@@ -33,6 +33,8 @@ export const TOAST_MS = 6000;
 export interface ToastNotice {
   message: string;
   action?: { label: string; onSelect: () => void };
+  /** How long it stands, when not `TOAST_MS`. */
+  ms?: number;
 }
 
 let current: ToastNotice | null = null;
@@ -101,7 +103,7 @@ function Card({ notice }: { notice: ToastNotice }) {
 
   useEffect(() => {
     if (attended) return;
-    const timer = setTimeout(dismissToast, TOAST_MS);
+    const timer = setTimeout(dismissToast, notice.ms ?? TOAST_MS);
     return () => {
       clearTimeout(timer);
     };
