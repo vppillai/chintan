@@ -149,12 +149,13 @@ func TestCompleteCaptureAppendsToSpokenNote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get note body: %v", err)
 	}
-	// The fake LLM in faithful mode lowercases whatever it is given, so the body
-	// shows which text reached cleanup: the routing instruction must be gone.
-	if !strings.Contains(string(body), "the gutter is also leaking") {
+	// The body shows which text reached cleanup — lowercased by the fake LLM,
+	// or tidied for a dictation this short (R7-15), so it is compared without
+	// case: the routing instruction must be gone.
+	if !strings.Contains(strings.ToLower(string(body)), "the gutter is also leaking") {
 		t.Errorf("note body missing dictated text: %q", body)
 	}
-	if strings.Contains(string(body), "add this to my roof repair note") {
+	if strings.Contains(strings.ToLower(string(body)), "add this to my roof repair note") {
 		t.Errorf("routing instruction leaked into note body: %q", body)
 	}
 	if !strings.Contains(string(body), "existing line") {
@@ -187,7 +188,7 @@ func TestCompleteCaptureDerivesContentFromInstructionSpans(t *testing.T) {
 		t.Errorf("routed text = %q, want the instruction span removed", routed)
 	}
 	body, _ := f.objects.Get(ctx, "tenants/user1/notes/n1/note.md")
-	if strings.Contains(string(body), "add this to my roof repair note") {
+	if strings.Contains(strings.ToLower(string(body)), "add this to my roof repair note") {
 		t.Errorf("routing instruction leaked into note body: %q", body)
 	}
 }
@@ -257,7 +258,7 @@ func TestSetCaptureTargetConfirmsSuggestion(t *testing.T) {
 	}
 
 	body, _ := f.objects.Get(ctx, "tenants/user1/notes/n1/note.md")
-	if !strings.Contains(string(body), "the gutter is also leaking") {
+	if !strings.Contains(strings.ToLower(string(body)), "the gutter is also leaking") {
 		t.Errorf("note body missing dictated text: %q", body)
 	}
 }
@@ -451,7 +452,7 @@ func TestCompleteCaptureSavesNoteWhenRouterFails(t *testing.T) {
 	}
 
 	body, _ := f.objects.Get(ctx, mustGetNote(t, f.store, f.userID, capture.NoteID).S3MarkdownKey)
-	if !strings.Contains(string(body), "some dictated words") {
+	if !strings.Contains(strings.ToLower(string(body)), "some dictated words") {
 		t.Errorf("note body missing dictated text: %q", body)
 	}
 }
@@ -508,7 +509,7 @@ func TestANewNoteTitledLikeAnExistingNoteIsAppendedToItInstead(t *testing.T) {
 				t.Fatalf("created titles = %v; a second note with the same title was started", titles)
 			}
 			body, _ := f.objects.Get(ctx, "tenants/user1/notes/n1/note.md")
-			if !strings.Contains(string(body), "more about the roof") {
+			if !strings.Contains(strings.ToLower(string(body)), "more about the roof") {
 				t.Errorf("n1 body = %q, want the dictation appended", body)
 			}
 		})

@@ -221,8 +221,18 @@ README's "nothing derived from speech reaches a log" holds.
 ### Cleanup
 
 Runs for every non-verbatim capture into a plain note (`Pipeline.clean`,
-`pipeline/clean.go`); a verbatim note bypasses it
-(`CaptureCleanupBypassed`). One mode, faithful: fix STT garbling, punctuation
+`pipeline/clean.go`) of at least twelve words; a verbatim note bypasses it
+(`CaptureCleanupBypassed`). A shorter dictation makes no call
+(`shortDictationWords`, R7-15; `CaptureCleanupTidied`): `tidyDictation`
+collapses the whitespace, capitalises the first letter where the script
+has case, and adds a full stop when no sentence mark ends it, and that is
+stored as the clean text. In the week to 2026-09-30, 59% of cleanup calls
+returned 15 output tokens or fewer and the median transcript was 11 words,
+for 818 ms p50 and 3 s p95 of waiting; a misheard word in so short a
+dictation stays as Whisper heard it, which the owner accepted. A script
+written without spaces (Han, kana, Thai, Lao, Khmer, Myanmar) is never
+counted short. A checklist never reaches this: its items come from the
+extraction below. One mode, faithful: fix STT garbling, punctuation
 and obvious grammar, keep the speaker's wording, phrasing and vocabulary. The
 per-tenant Faithful/Polished setting went on 2026-09-27 (PR-D5): the API
 accepts `cleanup_mode` on PUT /v1/settings for a client cached from before

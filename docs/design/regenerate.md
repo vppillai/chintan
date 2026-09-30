@@ -21,6 +21,9 @@ cleanup prompt (`Pipeline.clean`) from the transcript the pipeline kept — the
 routed one, with the words spoken to the app already removed, when the router
 or the instruction strip left one; the raw one otherwise — and replaced under
 its marker by the same path a retranscription uses (`replaceCaptureParagraph`).
+A recording under twelve words is tidied rather than sent to the model, as it
+is on first filing (`shortDictationWords`, `tidyDictation`), so regenerating
+it makes no call and changes it only if the tidy's own rules have.
 Text the person edited inside that paragraph is overwritten, and the confirm
 says so. For a checklist each recording's items are extracted again with the
 current items prompt (`Pipeline.extractItems`) and swapped for the items it

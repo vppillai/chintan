@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"unicode"
 
 	"github.com/vppillai/chintan/backend/internal/breaker"
 	"github.com/vppillai/chintan/backend/internal/cleanup"
@@ -29,6 +30,9 @@ import (
 // switch: the verifier seeded a verbatim note and counted one paid cleanup
 // call (review T11). Pointing CleanKey at the source key, rather than copying
 // the text, keeps every reader of CleanKey working and costs no write.
+//
+// A dictation under shortDictationWords words is tidied instead of sent to
+// the model (tidyDictation).
 //
 // Cleaned is not written on its own: both callers of cleanForNote go straight
 // to the append, whose setStatus writes CleanKey with it (deferPersist).
@@ -57,6 +61,25 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 	if verbatim {
 		obs.Count(ctx, "CaptureCleanupBypassed", map[string]string{"Stage": string(service.StatusCleaning)})
 		capture.CleanKey = sourceKey
+		capture.Status = model.StatusCleaned
+		capture.Error = ""
+		return p.deferPersist(capture)
+	}
+	if isShortDictation(source) {
+		// No model call: the dictation is too short for the rewrite to be
+		// worth its wait (shortDictationWords). The tidy is stored as the
+		// clean text, so the append and every reader of CleanKey see it as
+		// they see the model's; the usage meter simply has no cleanup call
+		// to record.
+		obs.Count(ctx, "CaptureCleanupTidied", nil)
+		cleanKey, err := keys.CaptureClean(tenantID, capture.ID)
+		if err != nil {
+			return fmt.Errorf("pipeline: clean key: %w", err)
+		}
+		if err := p.cfg.Objects.Put(ctx, cleanKey, []byte(tidyDictation(source)), "text/plain"); err != nil {
+			return fmt.Errorf("pipeline: store clean text: %w", err)
+		}
+		capture.CleanKey = cleanKey
 		capture.Status = model.StatusCleaned
 		capture.Error = ""
 		return p.deferPersist(capture)
@@ -101,6 +124,89 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 	capture.Status = model.StatusCleaned
 	capture.Error = ""
 	return p.deferPersist(capture)
+}
+
+// shortDictationWords is the length under which a dictation skips the
+// cleanup model and gets tidyDictation instead. In the seven days to
+// 2026-09-30, 59% of cleanup calls returned 15 output tokens or fewer, the
+// median transcript was 11 words, and the call took 818 ms at p50 and 3 s at
+// p95: most recordings waited up to three seconds for a capital letter and a
+// full stop. Twelve words keeps that median case off the model. The owner
+// accepted the cost: a misheard word in a dictation this short is kept as
+// Whisper heard it.
+const shortDictationWords = 12
+
+// isShortDictation reports whether text is under shortDictationWords words.
+// A script written without spaces between words (Han, kana, Thai, Lao,
+// Khmer, Myanmar) is never short by this count, since a whole sentence of it
+// is one field; it goes to the model as before.
+func isShortDictation(text string) bool {
+	for _, r := range text {
+		if unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Thai, unicode.Lao, unicode.Khmer, unicode.Myanmar) {
+			return false
+		}
+	}
+	return len(strings.Fields(text)) < shortDictationWords
+}
+
+// tidyDictation is the deterministic cleanup of a short dictation, and
+// nothing more: whitespace collapsed to single spaces, the first word
+// capitalised when it is an ordinary lowercase word, and a full stop added
+// when the text does not already end a sentence.
+//
+// Capitalising is deliberately narrow, because a wrong capital is a
+// corruption the model would never have made: "3 eggs", "7pm", a URL,
+// "iPhone" and "eBay" are left as they are (capitalFirstWord). A closing
+// quote or bracket after the sentence's own mark counts as ending it, and a
+// trailing URL gets no full stop, which would read as part of the address.
+func tidyDictation(text string) string {
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return ""
+	}
+	words[0] = capitalFirstWord(words[0])
+	text = strings.Join(words, " ")
+	if lastWord := words[len(words)-1]; strings.Contains(lastWord, "://") || strings.HasPrefix(strings.ToLower(lastWord), "www.") {
+		return text
+	}
+	runes := []rune(text)
+	last := len(runes) - 1
+	for last >= 0 && (unicode.In(runes[last], unicode.Pe, unicode.Pf) || runes[last] == '"' || runes[last] == '\'') {
+		last--
+	}
+	if last >= 0 && (unicode.Is(unicode.Sentence_Terminal, runes[last]) || runes[last] == '…') {
+		return text
+	}
+	return text + "."
+}
+
+// capitalFirstWord capitalises word when, after any opening quote or
+// bracket, it is lowercase letters only — an apostrophe or hyphen inside,
+// and trailing , ; ! ? aside. A word with a digit, an uppercase letter, or
+// one of / : @ . is a number, a name, an address or an abbreviation, and is
+// returned as it is. Georgian is treated as a script without case: its
+// letters are lowercase to Unicode, but a capitalised Georgian word is not
+// how Georgian is written.
+func capitalFirstWord(word string) string {
+	runes := []rune(word)
+	start := 0
+	for start < len(runes) && (unicode.In(runes[start], unicode.Ps, unicode.Pi) || runes[start] == '"' || runes[start] == '\'') {
+		start++
+	}
+	body := strings.TrimRight(string(runes[start:]), ",;!?")
+	if body == "" {
+		return word
+	}
+	for i, r := range []rune(body) {
+		switch {
+		case unicode.IsLower(r) && !unicode.Is(unicode.Georgian, r):
+		case i > 0 && (r == '\'' || r == '’' || r == '-'):
+		default:
+			return word
+		}
+	}
+	runes[start] = unicode.ToUpper(runes[start])
+	return string(runes)
 }
 
 // extractItems is clean for a checklist: one model call over the RAW
