@@ -245,12 +245,22 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	// a crash between CreateNote and persist left an empty note the retry
 	// did not know was its own, and a failed follow-up PutNote left a plain
 	// note titled like a list that the retry then filed items into as prose.
-	//
-	// ponytail: a retry after the owner archived the half-made note files
-	// into that archived note; add a fresh-id fallback if that is ever seen.
 	note, err := p.cfg.Notes.CreateNoteOnce(ctx, tenantID, spec)
 	if err != nil {
 		return fmt.Errorf("pipeline: create note for capture: %w", err)
+	}
+	if !service.NoteIsActive(note) {
+		// The note is this capture's own, from an attempt that crashed, and
+		// the owner archived it before the retry. Filing into it would fail
+		// the capture; making another would undo the archive. The capture
+		// asks instead, with the title it would have had, as run() does for
+		// a destination purged mid-flight.
+		obs.Log(ctx).Info("this capture's own note was archived before the retry; asking for a destination",
+			slog.String("capture_id", capture.ID),
+			slog.String("note_id", note.ID))
+		capture.SuggestedTitle = title
+		capture.Status = model.StatusNeedsTarget
+		return finish(outcomeNeedsTarget)
 	}
 	// One count per new note says how often the model answers "checklist"
 	// in production, which the eval battery only samples.

@@ -57,13 +57,11 @@ func (s *failAfterNoteCreate) PutCapture(ctx context.Context, c model.CaptureInd
 	return s.Store.PutCapture(ctx, c)
 }
 
-// R7-21: a routed capture that starts a checklist, and a worker that dies
-// right after the note is created. The retry asks the model again, which
-// may title the note differently; it must still end with one note, a
-// checklist, holding the item. Before the fix the create and the kind were
-// two writes under a random id, so the retry either made a second note or
-// filed the item as prose into a plain note titled like a list.
-func TestARoutedCreateInterruptedByACrashLeavesOneNoteOfTheRightKind(t *testing.T) {
+// crashAfterCreate is a pipeline whose first routed create is followed by
+// an induced crash, over a real NotesService, with capture c_1 uploaded and
+// the router answering a new checklist.
+func crashAfterCreate(t *testing.T) (*Pipeline, *repository.DynamoStore, repository.Objects, *fake.Router) {
+	t.Helper()
 	ctx := context.Background()
 	base := dynamofake.NewStore()
 	objects := memory.NewObjects()
@@ -94,7 +92,18 @@ func TestARoutedCreateInterruptedByACrashLeavesOneNoteOfTheRightKind(t *testing.
 	}); err != nil {
 		t.Fatal(err)
 	}
+	return p, base, objects, router
+}
 
+// R7-21: a routed capture that starts a checklist, and a worker that dies
+// right after the note is created. The retry asks the model again, which
+// may title the note differently; it must still end with one note, a
+// checklist, holding the item. Before the fix the create and the kind were
+// two writes under a random id, so the retry either made a second note or
+// filed the item as prose into a plain note titled like a list.
+func TestARoutedCreateInterruptedByACrashLeavesOneNoteOfTheRightKind(t *testing.T) {
+	ctx := context.Background()
+	p, base, objects, router := crashAfterCreate(t)
 	if _, err := p.Run(ctx, "user1", "c_1"); !errors.Is(err, errInducedCrash) {
 		t.Fatalf("first run = %v, want the induced crash", err)
 	}
@@ -121,5 +130,37 @@ func TestARoutedCreateInterruptedByACrashLeavesOneNoteOfTheRightKind(t *testing.
 	}
 	if !strings.HasSuffix(string(body), "\n- [ ] Milk") || strings.Count(string(body), "Milk") != 1 {
 		t.Errorf("body = %q, want the one item", body)
+	}
+}
+
+// The same crash, and then the owner archives the empty note it left before
+// the retry. The retry must neither file into the archived note, which
+// would fail the capture, nor start another, which would undo the archive:
+// the capture asks, with the title it would have had.
+func TestARetryAfterTheOwnerArchivedTheHalfMadeNoteAsksForADestination(t *testing.T) {
+	ctx := context.Background()
+	p, base, _, router := crashAfterCreate(t)
+	if _, err := p.Run(ctx, "user1", "c_1"); !errors.Is(err, errInducedCrash) {
+		t.Fatalf("first run = %v, want the induced crash", err)
+	}
+	made, err := base.GetNote(ctx, "user1", routedNoteID("c_1"))
+	if err != nil {
+		t.Fatalf("the crashed attempt's note: %v", err)
+	}
+	made.DeletedAt = model.Now()
+	if _, err := base.PutNote(ctx, "user1", made); err != nil {
+		t.Fatal(err)
+	}
+
+	router.Decision.Title = "Shopping for the week"
+	capture, err := p.Run(ctx, "user1", "c_1")
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if capture.Status != model.StatusNeedsTarget || capture.NoteID != "" || capture.SuggestedTitle == "" {
+		t.Fatalf("capture %s in %q suggesting %q; want needs_target with a suggested title", capture.Status, capture.NoteID, capture.SuggestedTitle)
+	}
+	if notes, _, err := base.DrainNotes(ctx, "user1", repository.DrainOptions{}); err != nil || len(notes) != 0 {
+		t.Fatalf("active notes = %d (%v), want none: the archive stands and nothing new was made", len(notes), err)
 	}
 }
