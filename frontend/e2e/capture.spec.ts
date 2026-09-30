@@ -306,15 +306,26 @@ test('a recording into a long note returns to the place, and Show points at what
   const banner = page.getByRole('region', { name: 'Filing a recording' });
   await expect(banner).toContainText('Added at the end', { timeout: 10_000 });
 
-  await banner.getByRole('button', { name: 'Show' }).click();
+  // From the keyboard: focus goes with Show, onto the marked text, and the
+  // banner's button leaving takes nothing with it.
+  await banner.getByRole('button', { name: 'Show' }).focus();
+  await page.keyboard.press('Enter');
   const mark = page.locator('mark.note-flash');
   await expect(mark).toHaveText('The gutter is leaking again.');
   await expect(mark).toBeInViewport();
-  // Then it gives the textarea back, with the text intact.
+  await expect(page.locator('section.note-body-mirror')).toBeFocused();
+  await expect(page.getByRole('status').filter({ hasText: 'Added text shown' })).toHaveCount(1);
+  // Then it gives the textarea back, with the text intact and the caret at
+  // the start of the added paragraph.
   await expect(mark).toHaveCount(0, { timeout: 5_000 });
-  await expect(page.getByRole('textbox', { name: 'Note body' })).toHaveValue(
-    /The gutter is leaking again\.$/,
-  );
+  const textarea = page.getByRole('textbox', { name: 'Note body' });
+  await expect(textarea).toHaveValue(/The gutter is leaking again\.$/);
+  await expect(textarea).toBeFocused();
+  const caret = await textarea.evaluate((element) => {
+    const field = element as HTMLTextAreaElement;
+    return { at: field.selectionStart, want: field.value.lastIndexOf('The gutter is leaking again.') };
+  });
+  expect(caret.at).toBe(caret.want);
 });
 
 /**

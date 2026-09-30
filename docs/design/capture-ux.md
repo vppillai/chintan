@@ -77,7 +77,10 @@ where the person was reading, so for six seconds the banner says "Added at the
 end · Show" ("Added to the list" on a checklist); Show scrolls to the
 recording's addition and marks it in the selection wash for two seconds — the
 paragraph, drawn in the find mirror's box, or the rows it added — without
-motion under reduced motion (R7-6b). The note itself comes back at the offset
+motion under reduced motion (R7-6b). Focus goes with Show — onto the marked
+paragraph, then into the textarea with the caret at its start; on a checklist
+into the first added row's field — and "Added text shown" is said politely,
+so the keyboard and a screen reader land there too. The note itself comes back at the offset
 it was left at (`RESTORE_SCROLL`, `useScrollRestore`), not at its title. A
 failed or stuck capture keeps the row's Retry and Dismiss; a dismissal is per
 device (`dismissed.ts`), so it does not return with the note. The banner is

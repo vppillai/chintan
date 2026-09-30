@@ -44,7 +44,7 @@ export function FilingBanner({
   // away here must not come back the next time the note is opened.
   const [dismissed, setDismissed] = useState(loadDismissed);
   const capture = bannerCapture(note.captures ?? [], dismissed);
-  const landed = useLanded(note, capture?.id ?? localUpload?.serverCaptureId ?? null, Boolean(localUpload || capture));
+  const [landed, clearLanded] = useLanded(note, capture?.id ?? localUpload?.serverCaptureId ?? null, Boolean(localUpload || capture));
 
   if (!localUpload && !capture) {
     if (!landed || !onShow) return null;
@@ -62,6 +62,9 @@ export function FilingBanner({
             type="button"
             className="filing-landed__show"
             onClick={() => {
+              // Its job is done: the text now points at itself, and focus
+              // goes with it (the Text panel moves it there).
+              clearLanded();
               onShow(landed.before);
             }}
           >
@@ -129,7 +132,7 @@ function useLanded(
   note: NoteDetailWire,
   watching: string | null,
   busy: boolean,
-): { id: string; before: string } | null {
+): [{ id: string; before: string } | null, () => void] {
   const watched = useRef<{ id: string | null; before: string } | null>(null);
   const [landed, setLanded] = useState<{ id: string; before: string } | null>(null);
 
@@ -158,5 +161,10 @@ function useLanded(
     };
   }, [landed]);
 
-  return landed;
+  return [
+    landed,
+    () => {
+      setLanded(null);
+    },
+  ];
 }

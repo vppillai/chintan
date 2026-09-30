@@ -475,6 +475,10 @@ function NoteViews({
           }}
         />
       )}
+      {/* Always mounted, so the sentence is announced when it appears. */}
+      <p className="visually-hidden" role="status" aria-live="polite">
+        {flash ? 'Added text shown' : ''}
+      </p>
       {/* The hook writes `--tab-swipe-x` on this element itself; only
           `dragging` comes through React, so a move re-renders nothing. */}
       <div
@@ -659,11 +663,33 @@ function TextPanel({
     () => (flashing && checklist ? addedItems(flash.before, body) : null),
     [flashing, checklist, flash, body],
   );
+  /*
+   * Focus follows Show, so a keyboard or a screen reader lands on the
+   * addition too, and nothing drops to <body> when the banner's button goes:
+   * onto the mirror while it stands, then into the textarea with the caret at
+   * the paragraph's start; on a checklist, into the first added row's field
+   * at once, since the rows stay.
+   */
+  const flashMirrorRef = useRef<HTMLElement>(null);
+  const caretAfterFlash = useRef<number | null>(null);
   useLayoutEffect(() => {
     if (!flashing) return;
     const target = document.querySelector<HTMLElement>('[data-flash]');
     if (target && typeof target.scrollIntoView === 'function') {
       target.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
+    }
+    // With nothing to mark (every added item was already on the list, or a
+    // body with no text) focus still lands in the text, never on <body>.
+    if (checklist) {
+      const field =
+        target?.querySelector<HTMLTextAreaElement>('textarea') ??
+        document.querySelector<HTMLTextAreaElement>('.checklist textarea');
+      field?.focus({ preventScroll: true });
+    } else if (flashRange) {
+      caretAfterFlash.current = flashRange.start;
+      flashMirrorRef.current?.focus({ preventScroll: true });
+    } else {
+      bodyRef.current?.focus({ preventScroll: true });
     }
     const timer = setTimeout(onFlashDone, FLASH_MS);
     return () => {
@@ -672,10 +698,25 @@ function TextPanel({
     // A new Show (`n`) is a new flash; the body settling under it is not.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flashing, flash?.n]);
+  useEffect(() => {
+    if (flashing) return;
+    const at = caretAfterFlash.current;
+    caretAfterFlash.current = null;
+    const textarea = bodyRef.current;
+    if (at === null || !textarea) return;
+    textarea.focus({ preventScroll: true });
+    try {
+      textarea.setSelectionRange(at, at);
+    } catch {
+      /* A browser that will not place the caret still has the focus. */
+    }
+  }, [flashing]);
 
   if (flashRange) {
     return (
       <section
+        ref={flashMirrorRef}
+        tabIndex={-1}
         className="note-body-mirror prose"
         lang={lang}
         aria-label="Note body"

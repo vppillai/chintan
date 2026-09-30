@@ -515,3 +515,33 @@ for (const viewport of SHOT_VIEWPORTS) {
     });
   }
 }
+
+test('Show after a recording lands in a list puts focus on the row it added', async ({ page, api }) => {
+  seedShopping(api);
+  const note = api.notes['shopping']!;
+  note.captures = [
+    {
+      id: 'cap-into-list',
+      note_id: 'shopping',
+      status: 'transcribing',
+      created_at: new Date().toISOString(),
+      version: 1,
+      targeted: true,
+    },
+  ];
+  await page.goto('/notes/shopping');
+  const banner = page.getByRole('region', { name: 'Filing a recording' });
+  await expect(banner).toContainText('Transcribing');
+
+  note.captures[0]!.status = 'appended';
+  note.body += '\n- [ ] Jam';
+  note.version += 1;
+  await expect(banner).toContainText('Added to the list', { timeout: 10_000 });
+  await banner.getByRole('button', { name: 'Show' }).focus();
+  await page.keyboard.press('Enter');
+
+  const jam = page.getByRole('list', { name: 'Items' }).locator('li[data-flash]');
+  await expect(jam).toHaveCount(1);
+  await expect(jam.getByRole('textbox')).toBeFocused();
+  await expect(jam.getByRole('textbox')).toHaveValue('Jam');
+});
