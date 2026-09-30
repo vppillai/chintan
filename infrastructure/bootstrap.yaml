@@ -859,6 +859,17 @@ Resources:
                   - lambda:ListVersionsByFunction
                 Resource:
                   - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-*'
+              # scripts/deploy.sh's worker smoke: one synchronous invoke of the
+              # worker's live alias with a task name it ignores, right after the
+              # alias moves, so a worker that cannot start is rolled back like
+              # an API that cannot. The live alias of the worker only: the API
+              # function is smoked through the gateway, and nothing here needs
+              # to run $LATEST or an unpublished version.
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-worker-*:live'
 
               # Event source mappings are named by service-generated UUID, so the
               # scope has to come from the function they attach to.
