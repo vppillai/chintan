@@ -272,6 +272,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	}
 	obs.Count(ctx, "RouterNewNoteKind", map[string]string{"Kind": kind})
 	capture.NoteID = note.ID
+	capture.CreatedNote = true
 	capture.TargetSource = model.TargetSourceRouter
 	capture.Status = model.StatusTranscribed
 	return finish(outcome)

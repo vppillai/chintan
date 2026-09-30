@@ -280,3 +280,27 @@ func TestListCapturesByNoteKeepsLastProgressAt(t *testing.T) {
 		t.Errorf("c_old last_progress_at = %q, want empty (a row from before 2026-09-05 reads as created_at)", got["c_old"])
 	}
 }
+
+// The note's filing banner says a recording's excerpt and whether it started
+// its note, as the library's row does (R7-7b, R7-7c). gsi1 projects neither,
+// so without the overlay a note's page would carry null and false.
+func TestListCapturesByNoteKeepsExcerptAndCreatedNote(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := t.Context()
+	if _, err := store.PutCapture(ctx, model.CaptureIndex{
+		ID: "c_new", UserID: owner, NoteID: "note_1", Status: model.StatusFailed, CreatedAt: model.Now(),
+		Excerpt: "call the plumber", CreatedNote: true,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	page, err := store.ListCapturesByNote(ctx, owner, "note_1", repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListCapturesByNote: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("got %d captures, want 1", len(page.Items))
+	}
+	if c := page.Items[0]; c.Excerpt != "call the plumber" || !c.CreatedNote {
+		t.Errorf("on the note's page excerpt = %q, created_note = %v; want the stored values", c.Excerpt, c.CreatedNote)
+	}
+}

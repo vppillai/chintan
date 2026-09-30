@@ -156,6 +156,9 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	obs.Count(ctx, "TranscribedLanguage", map[string]string{"Outcome": languageOutcome(sent, result.Language)})
 
 	capture.RawKey = rawKey
+	// The cleaned text replaces this at the clean; until then the transcript
+	// is what the row can show of the recording.
+	capture.Excerpt = model.CaptureExcerpt(result.Text)
 	capture.Language = language
 	capture.LanguageDetected = result.Language
 	if segmentsKey != "" {

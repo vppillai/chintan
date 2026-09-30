@@ -111,20 +111,6 @@ export function describe(capture: CaptureWire, stuck: boolean, recordedHere = tr
   }
 }
 
-/**
- * How many receipts are drawn as rows before the rest fold behind a summary.
- *
- * A receipt stays for a day or until the user acts on it (`isFilingRelevant`),
- * and on a device that has dismissed none — a second phone, cleared storage,
- * a ring's day of recordings — that is every capture appended in the last day
- * among the newest twenty. One row per note keeps thirteen ring recordings
- * into one note to one line; three notes is enough to say "your last
- * recordings landed, here they are", and the rest are folded, not gone. Rows
- * that still need something — moving, failed, asking for a target — are never
- * grouped and never folded.
- */
-export const FILED_ROWS_MAX = 3;
-
 /** The appended captures that landed in one note, as one receipt. */
 export interface ReceiptGroup {
   noteId: string;
@@ -134,6 +120,14 @@ export interface ReceiptGroup {
   newestId: string;
   /** The latest landing in the group: the greatest `appended_at ?? created_at`, which orders the groups. */
   latestAt: string;
+  /**
+   * One of the captures made the note (`created_note`), so the receipt says
+   * "Started" rather than "Filed into" and a misroute into a fresh note is
+   * visible (R7-7c).
+   */
+  createdNote: boolean;
+  /** The newest capture's `excerpt`, the receipt's muted second line (R7-7b). */
+  excerpt: string | null;
 }
 
 /**
@@ -154,15 +148,36 @@ export function groupReceipts(captures: readonly CaptureWire[]): ReceiptGroup[] 
         captureIds: [capture.id],
         newestId: capture.id,
         latestAt: at,
+        createdNote: capture.created_note === true,
+        excerpt: capture.excerpt ?? null,
       });
       continue;
     }
     group.captureIds.push(capture.id);
+    if (capture.created_note) group.createdNote = true;
     if (Date.parse(at) > Date.parse(group.latestAt)) group.latestAt = at;
   }
   return Array.from(byNote.values()).sort(
     (a, b) => Date.parse(b.latestAt) - Date.parse(a.latestAt),
   );
+}
+
+/**
+ * "now", "2 min", "3 h", "4 d": how long ago a receipt's last recording
+ * landed, in the few characters a one-line receipt on a 390 px phone has
+ * beside its title (R7-7a). `describeAgo`'s "12 minutes ago" took a third of
+ * the row and wrapped the title to three lines. The row adds " ago" for a
+ * screen reader.
+ */
+export function describeAgoShort(iso: string, now: number): string {
+  const at = Date.parse(iso);
+  if (Number.isNaN(at)) return '';
+  const minutes = Math.round(Math.max(0, now - at) / 60_000);
+  if (minutes < 1) return 'now';
+  if (minutes < 60) return `${String(minutes)} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${String(hours)} h`;
+  return `${String(Math.round(hours / 24))} d`;
 }
 
 /**

@@ -30,13 +30,6 @@
   box-shadow: var(--shadow-xs);
 }
 
-/* The receipts past the cap, as one quiet line rather than more cards. */
-.filing__more {
-  padding-inline: var(--space-4);
-  font-size: var(--font-size-sm);
-  color: var(--color-muted);
-}
-
 .filing-row[data-status='failed'],
 .filing-row[data-status='spend_capped'],
 .filing-row[data-status='upload-failed'],
@@ -543,13 +536,51 @@
    Filing row additions — the receipt; the rest of the row is above
    -------------------------------------------------------------------------- */
 
-/* Title, chevron, ×: one control wide, with the × in its own column. */
+/*
+ * One line (R7-7a): the title cut with an ellipsis, "· 2 min" right after it,
+ * then the chevron; the excerpt, when there is one, is a muted second line
+ * under them. The × takes a column only where it can be seen.
+ */
 .filing-row--receipt {
   position: relative;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
+  column-gap: 0;
+  row-gap: 0;
   padding-block: var(--space-1);
   padding-inline-end: var(--space-1);
+}
+
+.filing-row--receipt > .filing-row__head {
+  grid-column: 1;
+  justify-content: flex-start;
+  gap: var(--space-1);
+  min-inline-size: 0;
+}
+
+.filing-row--receipt .filing-row__title {
+  overflow: hidden;
+  min-inline-size: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filing-row--receipt > .filing-row__excerpt {
+  grid-column: 1;
+  -webkit-line-clamp: 1;
+}
+
+.filing-row--receipt > .filing-row__receipt,
+.filing-row--receipt > .filing-row__dismiss {
+  grid-row: 1 / span 2;
+}
+
+/* "Started" wears the plus, so a note made for this recording reads apart from an append. */
+.filing-row__started-icon {
+  display: inline-block;
+  margin-inline-end: var(--space-1);
+  vertical-align: -0.15em;
+  color: var(--color-accent-strong);
 }
 
 /*
@@ -584,43 +615,87 @@
 }
 
 /*
- * The receipts past the third note fold behind a native <details>, so the
- * busiest note is never the invisible one. The summary is a real control at
- * the row's height; open, the block lays its rows out as the section does.
- * The rest of the filing block (.filing, .filing-row, .filing__more's type)
- * lives in shell.css until wave 2 re-homes it here.
+ * The × on the hovered or focused receipt only. Under a mouse it keeps its
+ * column and fades in, so nothing moves under the pointer. Under a finger it
+ * takes no room — the swipe tray and "Clear all" put a receipt away — and
+ * is still a real button that a keyboard or screen reader reaches, drawn
+ * over the chevron's place once it has focus.
  */
-.filing__more {
-  padding-inline: 0;
+@media (hover: hover) and (pointer: fine) {
+  .filing-row--receipt:not(:hover, :focus-within) > .filing-row__dismiss {
+    opacity: 0;
+  }
 }
 
-.filing__more > summary {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-block-size: var(--layout-touch-target-min);
-  padding-inline: var(--space-4);
-  cursor: pointer;
+@media not ((hover: hover) and (pointer: fine)) {
+  .filing-row--receipt > .filing-row__dismiss {
+    position: absolute;
+    inset-block-start: 50%;
+    inset-inline-end: var(--space-1);
+    translate: 0 -50%;
+    background-color: var(--color-raised);
+  }
+
+  .filing-row--receipt:not(:focus-within) > .filing-row__dismiss {
+    clip-path: inset(50%);
+    opacity: 0;
+  }
 }
 
-.filing__more[open] {
+/* What was said: a muted line under the title (R7-7b), two lines at most on the rows that ask. */
+.filing-row__excerpt {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+}
+
+/* The swipe wrapper takes the card's corners, so the tray behind it does too. */
+.filing-swipe {
+  border-radius: var(--radius-lg);
+}
+
+/*
+ * Two or more receipts fold into one summary row that expands in place. The
+ * sentence and its chevron are one button; "Clear all" is the row's other
+ * control.
+ */
+.filing-fold,
+.filing-fold__rows {
   display: grid;
   gap: var(--space-2);
 }
 
-/*
- * The summary's flex layout replaces the UA's list-item marker, so this is
- * the disclosure cue in its place (a touch screen never shows the pointer).
- * The motion token is 1 ms under reduced motion.
- */
-.filing__more-chevron {
+.filing-row--fold {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  padding-block: var(--space-1);
+  padding-inline-end: var(--space-1);
+}
+
+.filing-fold__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-block-size: var(--layout-touch-target-min);
+  min-inline-size: 0;
+  text-align: start;
+}
+
+.filing-fold__chevron {
   flex-shrink: 0;
   color: var(--color-faint);
   transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-.filing__more[open] .filing__more-chevron {
+.filing-fold[data-expanded] .filing-fold__chevron {
   transform: rotate(90deg);
+}
+
+.filing-fold__clear {
+  justify-self: end;
 }
 
 /* --------------------------------------------------------------------------

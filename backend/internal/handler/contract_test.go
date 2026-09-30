@@ -323,12 +323,21 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		ID: "c_needs_target_note", UserID: contractUser, Status: model.StatusNeedsTarget,
 		CreatedAt: model.Now(), SuggestedNoteID: suggestedNote.ID, RouteConfidence: 0.62,
 		AudioKey: "tenants/user1/captures/c_needs_target_note/audio.webm",
+		Excerpt:  "The tiles for the backsplash should match the counter, so bring a sample to the store.",
 	})
 	failed := h.putCapture(t, model.CaptureIndex{
 		ID: "c_failed", UserID: contractUser, NoteID: note.ID,
 		Status: model.StatusFailed, CreatedAt: model.Now(),
 		Error:    "the speech provider returned 503",
 		AudioKey: "tenants/user1/captures/c_failed/audio.webm",
+	})
+	// The router answered "new": the receipt says "Started" of it, and the
+	// excerpt is the cleaned text's opening.
+	started := h.putCapture(t, model.CaptureIndex{
+		ID: "c_started", UserID: contractUser, NoteID: note.ID,
+		Status: model.StatusAppended, CreatedAt: model.Now(), AppendedAt: time.Now().Unix(),
+		AudioKey: "tenants/user1/captures/c_started/audio.webm", TargetSource: model.TargetSourceRouter,
+		CreatedNote: true, Excerpt: "Call the plumber about the kitchen sink before Friday.",
 	})
 	// A capture that arrived as text through the inbox: no audio key, so no
 	// player, and a source naming the device rather than the app.
@@ -349,6 +358,10 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 	add("captureFailed", "CaptureWire",
 		"GET /v1/captures/{captureId} → 200 for a failed capture. `error` is the text the progress card renders.",
 		h.do(t, http.MethodGet, "/v1/captures/"+failed.ID, contractUser, nil))
+	add("captureStarted", "CaptureWire",
+		"GET /v1/captures/{captureId} → 200 for a capture whose note was created for it: `created_note` is true, "+
+			"so the receipt says \"Started\", and `excerpt` is the opening of what was said.",
+		h.do(t, http.MethodGet, "/v1/captures/"+started.ID, contractUser, nil))
 	add("captureDownload", "PresignedDownloadWire", "GET /v1/captures/{captureId}/download?kind=audio → 200",
 		h.do(t, http.MethodGet, "/v1/captures/"+failed.ID+"/download?kind=audio", contractUser, nil))
 	add("captureFromDevice", "CaptureWire",

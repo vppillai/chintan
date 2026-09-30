@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -685,11 +685,11 @@ describe('the screen says which language the recording will be transcribed in', 
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /into roof repair/i }));
-    await user.click(screen.getByRole('button', { name: 'New note' }));
+    await user.click(screen.getByRole('button', { name: 'Chintan decides' }));
     expect(await screen.findByText('Language detected per recording')).toBeInTheDocument();
 
     // A note that inherits the default says the default.
-    await user.click(screen.getByRole('button', { name: /into new note/i }));
+    await user.click(screen.getByRole('button', { name: 'Chintan decides' }));
     await user.click(screen.getByRole('button', { name: /^Reading list/ }));
     expect(await screen.findByText('Language detected per recording')).toBeInTheDocument();
   });
@@ -701,13 +701,13 @@ describe('the screen says which language the recording will be transcribed in', 
 });
 
 describe('the target chooser', () => {
-  it('files into a new note by default', async () => {
+  it('leaves the note to Chintan by default, and says so (R7-14)', async () => {
     mount();
     await waitFor(() => {
       expect(useCaptureStore.getState().model.state).toBe('recording');
     });
     expect(useCaptureStore.getState().model.noteId).toBeNull();
-    expect(screen.getByRole('button', { name: /into new note/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Chintan decides' })).toBeInTheDocument();
   });
 
   it('files into the note named by ?note=, and says so by title', async () => {
@@ -726,7 +726,7 @@ describe('the target chooser', () => {
       expect(useCaptureStore.getState().model.state).toBe('recording');
     });
 
-    await user.click(screen.getByRole('button', { name: /into new note/i }));
+    await user.click(screen.getByRole('button', { name: 'Chintan decides' }));
     const option = await screen.findByRole('button', { name: /^Reading list/ });
     // The line that tells two same-titled notes apart: date, then the first
     // forty characters of the snippet.
@@ -740,7 +740,7 @@ describe('the target chooser', () => {
     expect(useCaptureStore.getState().model.state).toBe('recording');
 
     await user.click(screen.getByRole('button', { name: /into reading list/i }));
-    await user.click(screen.getByRole('button', { name: 'New note' }));
+    await user.click(screen.getByRole('button', { name: 'Chintan decides' }));
     expect(useCaptureStore.getState().model.noteId).toBeNull();
   });
 
@@ -752,18 +752,18 @@ describe('the target chooser', () => {
     });
     const sheet = () => screen.queryByRole('group', { name: 'Where this recording goes' });
 
-    await user.click(screen.getByRole('button', { name: /into new note/i }));
+    await user.click(screen.getByRole('button', { name: 'Chintan decides' }));
     expect(sheet()).not.toBeNull();
     await user.click(document.body);
     expect(sheet()).toBeNull();
 
-    const pill = screen.getByRole('button', { name: /into new note/i });
+    const pill = screen.getByRole('button', { name: 'Chintan decides' });
     await user.click(pill);
     expect(sheet()).not.toBeNull();
     // Tabbed into the list, as a keyboard user is when Escape unmounts the
     // option under focus: focus comes back to the pill, not the body.
     await user.tab();
-    expect(screen.getByRole('button', { name: 'New note' })).toHaveFocus();
+    expect(within(sheet() as HTMLElement).getByRole('button', { name: 'Chintan decides' })).toHaveFocus();
     await user.keyboard('{Escape}');
     expect(sheet()).toBeNull();
     expect(pill).toHaveFocus();

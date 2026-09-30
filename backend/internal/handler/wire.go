@@ -289,6 +289,17 @@ type Capture struct {
 	// there is no recording to play, download or transcribe again, and the
 	// row shows the transcript alone.
 	HasAudio bool `json:"has_audio"`
+	// Excerpt is the opening of what was said, about ninety characters of
+	// the cleaned text or of the transcript before the clean
+	// (model.CaptureExcerpt), and null until the capture is transcribed.
+	// The filing rows show it under "Which note should this go in?", a
+	// failure and a receipt, so a recording from hours ago can be placed by
+	// its words (R7-7b).
+	Excerpt *string `json:"excerpt"`
+	// CreatedNote is true when the note this capture is in was made for it,
+	// so the receipt says "Started “X”" rather than "Filed into “X”" and a
+	// misroute into a fresh note is visible (R7-7c).
+	CreatedNote bool `json:"created_note"`
 }
 
 // wireCaptureSourceApp is the wire spelling of a capture the app made, which
@@ -316,6 +327,7 @@ func captureOf(c model.CaptureIndex) Capture {
 		Targeted:    c.TargetSource.Targeted(),
 		Source:      c.Source,
 		HasAudio:    c.AudioKey != "",
+		CreatedNote: c.CreatedNote,
 	}
 	if out.Source == "" {
 		out.Source = wireCaptureSourceApp
@@ -355,6 +367,10 @@ func captureOf(c model.CaptureIndex) Capture {
 	if c.LanguageDetected != "" {
 		v := c.LanguageDetected
 		out.LanguageDetected = &v
+	}
+	if c.Excerpt != "" {
+		v := c.Excerpt
+		out.Excerpt = &v
 	}
 	return out
 }

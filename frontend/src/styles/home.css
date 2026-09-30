@@ -525,6 +525,14 @@
   margin-block-end: var(--space-3);
 }
 
+/* The server-failed caption carries its Retry on the same line when it fits (R7-12). */
+.screen__count--retry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 /* ==========================================================================
    You — one sentence per footnote, the rest behind More; a figure on a row
    ========================================================================== */

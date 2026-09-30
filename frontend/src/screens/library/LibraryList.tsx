@@ -82,7 +82,28 @@ export function LibraryList({
         </p>
       )}
 
-      {showingCached && (
+      {/*
+        A server failure while the device is online — a 5xx, a timeout, a
+        429 — is not "offline": the rows are the device's copy because the
+        server failed, the list may be missing
+        what another device added, and the way back is a retry, not a
+        connection (R7-12). A network failure keeps the offline sentence.
+      */}
+      {showingCached && serverFailed(list.error, online, paused) && (
+        <div className="screen__count screen__count--retry" role="status">
+          <p>Chintan&rsquo;s server didn&rsquo;t answer — showing notes saved on this device.</p>
+          <button
+            type="button"
+            className="screen__action"
+            onClick={() => void list.refetch()}
+            disabled={list.isFetching}
+          >
+            {list.isFetching ? 'Trying…' : 'Retry'}
+          </button>
+        </div>
+      )}
+
+      {showingCached && !serverFailed(list.error, online, paused) && (
         <p className="screen__count" role="status">
           Saved on this device. Recordings and transcripts need a connection.
         </p>
@@ -273,4 +294,21 @@ function noteForHit(hit: MergedHit, notes: readonly NoteWire[]): NoteWire {
 function failureMessage(error: unknown): string {
   if (error instanceof ApiError) return error.userMessage;
   return 'Your notes could not be loaded.';
+}
+
+/**
+ * The list failed while the device is online for a reason a connection
+ * would not fix: a 5xx, a timeout, a 429 or another refusal. Only a network
+ * failure or a cancelled request is "offline"; a 401 has its own way back
+ * (signing in), which the shell's session handling takes.
+ */
+export function serverFailed(error: unknown, online: boolean, paused: boolean): boolean {
+  return (
+    online &&
+    !paused &&
+    error instanceof ApiError &&
+    error.kind !== 'network' &&
+    error.kind !== 'cancelled' &&
+    error.status !== 401
+  );
 }

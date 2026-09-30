@@ -504,6 +504,7 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 			slog.String("note_id", capture.NoteID))
 		obs.Count(ctx, "CaptureDestinationPurged", nil)
 		capture.NoteID = ""
+		capture.CreatedNote = false
 		capture.TargetSource = ""
 		capture.Status = model.StatusNeedsTarget
 		capture.Error = ""

@@ -61,7 +61,13 @@ C in `docs/reviews/2026-09-21/morning-queue.md`.
 ## Recording into a note, and coming back
 
 `?note=` seeds the target at `start`; the chooser pill can move it until Send
-reads it, and a retarget is written to the capture record so a recording
+reads it. With no note chosen the pill reads "Chintan decides", and so does
+the first option of its list, above the recent notes (R7-14, owner
+2026-09-30): no target means the router files it, possibly into a note that
+exists — the hint under it says "add this to my roof note" — and the old
+"Into New note" promised the opposite. A chosen note reads "Into ⟨title⟩".
+There is no option that forces a new note; that is an owner follow-up in the
+backlog (R7-14a). A retarget is written to the capture record so a recording
 resumed after a reload goes where it was last aimed. `captureReturnPath(
 noteId)` is where every exit goes: the note when there is a target, else
 Home. Send used to force the Recordings tab so the upload could be watched
@@ -151,23 +157,43 @@ The top of the library is where a recording's filing is watched and where
 its landing is confirmed. `FilingRow` draws four tiers, in this order: this
 device's own upload (`useLocalUpload`, `LocalUploadItem`); rows still moving
 (the four stage segments); rows that need the person — failed, capped,
-asking "which note?", stuck past ten minutes — never grouped and never
-hidden; then the receipts, one row per note the rest landed in, newest
-landing first: "Filed into “Roof repair”", or "3 filed into “Kitchen
-rebuild”" with how long ago the last one landed where a moving row shows the
-recording's length (the note's Recordings tab has the lengths). The first
-three notes are rows; the fourth onward fold behind a native `<details>`
-whose summary reads "and 4 more filed into 2 notes" behind a chevron that
-turns as it opens (the summary's flex layout drops the native marker, and a
-touch screen shows no pointer), so nothing is
-unreachable and the busiest note is never the invisible one — with one card
-per capture and a three-card cap, live on prod with 4 + 2 + 1 filings, the
-two Kitchen-rebuild receipts showed twice while all four Shopping-list
-receipts were the hidden ones. Grouping is `groupReceipts` in
-`filing/model.ts`; the receipt is a branch of `FilingItem` rather than a
-component of its own, and its React key is the group's newest capture id, so
-the row that was just moving keeps its DOM node and its `role="status"` live
-region announces the landing (a fresh node would mount silent).
+asking "which note?", stuck past ten minutes — never grouped, never folded
+and always above the fold; then the receipts, one per note the rest landed
+in, newest landing first.
+
+A receipt is one line, plus an excerpt line when there is one (R7-7a,
+owner 2026-09-30): the title cut with an
+ellipsis — "Filed into “Roof repair”", "3 filed into “Kitchen rebuild”", or
+"Started “Plumber”" with the plus glyph when the capture's `created_note`
+says the note was made for it (R7-7c), so a misroute into a fresh note is
+visible — then "· 2 min" (`describeAgoShort`: now, min, h, d; a screen
+reader hears "ago"), then the chevron. Before this the time, chevron and ×
+columns squeezed the title to three lines, and three receipts left room for
+about one note at 390 × 844. The × shows only on the hovered or focused
+row: under a mouse it fades in in its own column; under a finger it takes no
+room, and the row's swipe tray (Dismiss) and "Clear all" put a receipt away.
+It stays a real 44 px button that a keyboard or screen reader reaches, and
+appears once it has focus. One receipt is a row. Two or more fold into one
+summary row, "3 filed into 2 notes ›" — a button with `aria-expanded` that
+opens the receipts in place — beside a "Clear all" that dismisses every one
+of them. Rows inside the fold carry no live region of their own; a landing
+that makes or grows the fold is spoken by one visually hidden polite region
+`FilingRow` keeps mounted whatever it shows ("Filed into “Kitchen”. 2 filed
+into 2 notes"), and only a growing count speaks, so a dismissal or the
+receipts already there when Home opens are silent. Dismissing one of two
+receipts from the open fold puts focus on the survivor's ×. Grouping is `groupReceipts` in `filing/model.ts`, which
+also carries the group's `createdNote` and its newest capture's excerpt. The
+receipt is a branch of `FilingItem` rather than a component of its own,
+both branches sit in one `SwipeRow` (which keeps one tree whether or not its
+tray is on), and the React key is the group's newest capture id, so the row
+that was just moving keeps its DOM node and its `role="status"` live region
+announces the landing (a fresh node would mount silent).
+
+What was said is on the row (R7-7b): the capture's `excerpt` — about ninety
+characters of the cleaned text, or of the transcript before the clean, null
+until the capture is transcribed — is a muted second line under "Which note
+should this go in?", under a failed, capped or stuck row (the note's banner
+included), and under a receipt, in the fold's expanded view too.
 
 Opening a receipt — the chevron, or the row, which the chevron's `::after`
 stretches over — refreshes the note, dismisses every capture in the group
