@@ -159,6 +159,18 @@
   cursor: text;
 }
 
+/*
+ * The mirror carries `.prose` for its type, and `.prose` is a grid with a gap
+ * that `notes.css` declares after this file. At equal specificity the grid
+ * won: every match and every run of text between matches became its own row,
+ * and the active match a full-width bar. Two classes outrank one, so the
+ * mirror stays one block of flowing text with the textarea's padding.
+ */
+.note-body-mirror.prose {
+  display: block;
+  padding: var(--space-3);
+}
+
 /* An inline fact in the meta line that opens the Details panel. The line is
    thirteen pixels tall; the target is not — the padding reaches the 44 px
    minimum and the negative margin gives the line its height back. */
