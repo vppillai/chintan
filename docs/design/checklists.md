@@ -253,7 +253,12 @@ marker, in the recording's order. Three rules:
 - matching folds case, punctuation and whitespace (`llm.FoldWords`, the one
   fold every reader uses; a combining mark such as an Indic vowel sign or
   virama is part of its word, so പാൽ and പുൽ, or दाल and दिल, are two
-  items) and never reads indent; a marker line or a blank
+  items; a chillu spelled consonant + virama + joiner and its atomic
+  letter, or a stray zero-width joiner, are folded by `llm.FoldScript`
+  (D7, 2026-10-01), so a dictated and a typed Malayalam item are one item
+  — accepted with it, two stored lines that differ only by that spelling
+  compare equal, and a recording naming either dedupes against or reopens
+  the first) and never reads indent; a marker line or a blank
   line is left where it stands and an insertion never crosses a marker; a
   merge never ticks a line the list has, only ever flips `[x]` → `[ ]` (an
   item that arrives done is a tick a regeneration carried, written as it
@@ -364,7 +369,7 @@ The answer is checked against the body rather than trusted
   usable` and the previous view is kept;
 - an item whose words are not the body's words, in order
   (`llm.VerifySubsequence`; a group's name — Walmart, Party — is a body
-  word), is dropped and `TasksItemsDropped` counts it, a dropped parent's
+  word), is dropped (the warning log carries the count), a dropped parent's
   children lifted to its level; the rest of the answer is stored. This
   is what catches `Make a list` — the model inventing an antecedent for
   "it" — while keeping the split beside it. A reply with nothing left is
