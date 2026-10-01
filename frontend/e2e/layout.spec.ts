@@ -24,6 +24,8 @@ interface Viewport {
   name: string;
   width: number;
   height: number;
+  /** The one phone WebKit sweeps; the rest of the matrix is Chromium's (playwright.config.ts). */
+  webkit?: true;
 }
 
 /**
@@ -34,7 +36,7 @@ interface Viewport {
 const VIEWPORTS: readonly Viewport[] = [
   { name: '320x568 iphone-se', width: 320, height: 568 },
   { name: '375x667 iphone-8', width: 375, height: 667 },
-  { name: '390x844 iphone-14', width: 390, height: 844 },
+  { name: '390x844 iphone-14', width: 390, height: 844, webkit: true },
   { name: '393x873 pixel', width: 393, height: 873 },
   { name: '412x915 pixel-7', width: 412, height: 915 },
   { name: '844x390 phone-landscape', width: 844, height: 390 },
@@ -361,6 +363,12 @@ for (const theme of THEMES) {
   for (const viewport of VIEWPORTS) {
     test.describe(`${viewport.name} · ${theme}`, () => {
       test.use({ viewport: { width: viewport.width, height: viewport.height } });
+      // Marked here rather than by a copy of the names in the config: a
+      // viewport added to the list is Chromium's unless it says otherwise.
+      test.skip(
+        ({ browserName }) => browserName === 'webkit' && !(viewport.webkit && theme === 'ink'),
+        'one phone in one theme covers WebKit',
+      );
 
       test('every screen fits the viewport and leaves the chrome alone', async ({
         page,
@@ -428,6 +436,7 @@ for (const theme of THEMES) {
   for (const device of NOTICE_DEVICES) {
     test.describe(`filing tray · ${device.name} · ${theme}`, () => {
       test.use(device.use);
+      test.skip(({ browserName }) => browserName === 'webkit' && theme !== 'ink', 'WebKit sweeps one theme');
 
       test('the × of a receipt and of a failed row sits on the title line, 44 px', async ({
         page,
@@ -590,6 +599,7 @@ for (const theme of THEMES) {
   for (const viewport of VIEWPORTS) {
     test.describe(`capture · ${viewport.name} · ${theme}`, () => {
       test.use({ viewport: { width: viewport.width, height: viewport.height } });
+      test.skip(({ browserName }) => browserName !== 'chromium', 'the fake microphone is Chromium only');
 
       test('the live waveform stays inside its panel', async ({ page }) => {
         await withoutServiceWorker(page);
@@ -654,7 +664,8 @@ for (const theme of THEMES) {
  * to offer.
  */
 for (const theme of THEMES) {
-  test(`the update prompt does not cover the tab bar · ${theme}`, async ({ page }) => {
+  test(`the update prompt does not cover the tab bar · ${theme}`, async ({ page, browserName }) => {
+    test.skip(browserName === 'webkit' && theme !== 'ink', 'WebKit sweeps one theme');
     await page.setViewportSize({ width: 390, height: 844 });
     await withoutServiceWorker(page);
     await useTheme(page, theme);
@@ -770,7 +781,11 @@ for (const viewport of [
   test(`the record button is 76px and the last row clears the tab bar at ${viewport.name}`, async ({
     page,
     api,
+    browserName,
   }) => {
+    // Chromium-only since the config's regex kept it so (#28); whether WebKit
+    // should measure it too is part of the matrix decision (FE-10).
+    test.skip(browserName === 'webkit', 'measured on Chromium');
     // Enough notes that the library scrolls at any phone height.
     for (let index = 0; index < 30; index += 1) {
       const id = `filler-${String(index)}`;
