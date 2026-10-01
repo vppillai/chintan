@@ -749,8 +749,14 @@
   transform: rotate(90deg);
 }
 
+/*
+ * Inset so the pill ends where the ×'s glyph does in the rows around it:
+ * the × is centred in its 44 px target, so its visible edge sits about this
+ * far inside the row's padding, and the pill's border used to sit on it.
+ */
 .filing-fold__clear {
   justify-self: end;
+  margin-inline-end: var(--space-3);
 }
 
 /* --------------------------------------------------------------------------
