@@ -199,7 +199,7 @@ func (s *NotesService) CreateNoteWithTags(ctx context.Context, userID, title str
 // CreateNoteOnce creates spec — its ID, Title, Kind and Language — unless a
 // note with that id already exists, and then returns that note as it is. It
 // is the worker's create for a routed capture, whose id is derived from the
-// capture's (pipeline.routedNoteID): a retry after a crash finds the note the
+// capture's (RoutedNoteID): a retry after a crash finds the note the
 // first attempt made instead of making a second, and kind and language are
 // on the row from its one write. The existing note's body is never
 // rewritten, since another recording may already be in it.
