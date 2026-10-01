@@ -34,10 +34,11 @@ import {
  * `AXIS_SLOP_PX` px of travel decide which: more sideways than up and down and
  * the row keeps its slot while every indent step right or left (`levelPx`:
  * `--space-6` in the page's own pixels) is one level in or out
- * (`draftShift`, clamped to one level either way, for the caller to
- * preview); otherwise it is the reorder above. Release on the sideways axis
- * calls `onShift` with the levels, or nothing when the pointer came back
- * under a step. Locked once decided, so a vertical drag that drifts sideways
+ * (`draftShift`, for the caller to preview); otherwise it is the reorder
+ * above. The levels are not clamped here: the hook knows no depths, so the
+ * caller clamps them to where its row may go, and one release can move
+ * several levels. Release on the sideways axis calls `onShift` with the
+ * levels, or nothing when the pointer came back under a step. Locked once decided, so a vertical drag that drifts sideways
  * never changes the level and a sideways one never re-sorts; and a drag past
  * the slop on either axis is no longer a tap, so a wobble on the handle does
  * not open its menu. Without `onShift` or an origin — the pinned group —
@@ -71,8 +72,6 @@ function levelPx(): number {
   return value.endsWith('rem') ? n * (Number.parseFloat(root.fontSize) || 16) : n;
 }
 
-type Levels = -1 | 0 | 1;
-
 interface Drag<T> {
   pointerId: number;
   id: T;
@@ -80,7 +79,7 @@ interface Drag<T> {
   /** Where the pointer went down, when the caller said; the axis is decided from here. */
   origin: { x: number; y: number } | null;
   axis: 'undecided' | 'x' | 'y';
-  levels: Levels;
+  levels: number;
   /** One level's worth of sideways travel, as the sheet had it at the lift. */
   levelPx: number;
   /** The order when the row was lifted; a release that leaves it commits nothing. */
@@ -101,7 +100,7 @@ export interface DragReorder<T extends string> {
   /** The order while a row is lifted; null when none is. */
   draft: readonly T[] | null;
   /** The level change a sideways drag would make on release; null when none is on. */
-  draftShift: { id: T; levels: Levels } | null;
+  draftShift: { id: T; levels: number } | null;
   draggingId: T | null;
   /**
    * Lifts the row `id` under this pointer. A second lift while one is on is
@@ -129,11 +128,11 @@ export function useDragReorder<T extends string>({
   onCommit: (next: T[], moved: T) => void;
   /** A lift that ended where it began: the pointer tapped the handle of row `id`. */
   onTap?: (id: T) => void;
-  /** A sideways drag released one level right (1) or left (-1) of where it began. */
-  onShift?: (id: T, levels: -1 | 1) => void;
+  /** A sideways drag released `levels` indent steps right (positive) or left (negative) of where it began. */
+  onShift?: (id: T, levels: number) => void;
 }): DragReorder<T> {
   const [draft, setDraft] = useState<T[] | null>(null);
-  const [draftShift, setDraftShift] = useState<{ id: T; levels: Levels } | null>(null);
+  const [draftShift, setDraftShift] = useState<{ id: T; levels: number } | null>(null);
   const [draggingId, setDraggingId] = useState<T | null>(null);
   const drag = useRef<Drag<T> | null>(null);
   const live = useRef<T[]>([]);
@@ -224,7 +223,7 @@ export function useDragReorder<T extends string>({
       }
       if (current.axis === 'x') {
         // `|| 0` folds the -0 a small leftward trunc gives into plain 0.
-        const levels = (Math.max(-1, Math.min(1, Math.trunc(dx / current.levelPx))) || 0) as Levels;
+        const levels = Math.trunc(dx / current.levelPx) || 0;
         if (levels === current.levels) return;
         current.levels = levels;
         setDraftShift({ id: current.id, levels });

@@ -43,7 +43,9 @@
 
 /* A sub-item is set in by one step per level, its grip and box after it:
    the indent alone says "part of the row above", as Keep's does, and the box
-   is the same drawn box. Three levels (`MAX_DEPTH` in checklist.ts). */
+   is the same drawn box. Three levels (`MAX_DEPTH` in checklist.ts). No
+   narrower step on a small phone: at 320 px the third level still leaves
+   118 px of text, which wraps downward with its box on the first line. */
 .checklist__row[data-depth='1'] {
   padding-inline-start: var(--space-6);
 }
@@ -280,21 +282,28 @@ textarea.checklist__text {
   }
 }
 
-/* The sideways drag's preview: the lifted row steps in, or out, to the level
-   it would take on release — the same step a sub-item is set in by — and a
+/* The sideways drag's preview: the lifted row is drawn at the depth it would
+   take on release — the same step per level a sub-item is set in by — and a
    bar in the accent at its start says it is the level, not the slot, that is
-   changing. The row is already `position: relative` while lifted. The
-   `data-nest-preview` selectors outrank `[data-depth='1']` by one attribute,
-   so a sub-item drawn a level out really does lose its indent. */
-.checklist__row[data-dragging][data-nest-preview='1'] {
-  padding-inline-start: var(--space-6);
-}
-
-.checklist__row[data-dragging][data-nest-preview='-1'] {
+   changing. The row is already `position: relative` while lifted, and its
+   padding transition animates the step (one frame under reduced motion,
+   where the motion tokens collapse). The depth is absolute, one rule per
+   level, and each outranks every `[data-depth]` rule by one attribute: a
+   relative "one out" set to zero drew a third-level row dragged one level
+   out at the top level, not the second. */
+.checklist__row[data-dragging][data-preview-depth='0'] {
   padding-inline-start: 0;
 }
 
-.checklist__row[data-dragging][data-nest-preview]::before {
+.checklist__row[data-dragging][data-preview-depth='1'] {
+  padding-inline-start: var(--space-6);
+}
+
+.checklist__row[data-dragging][data-preview-depth='2'] {
+  padding-inline-start: calc(2 * var(--space-6));
+}
+
+.checklist__row[data-dragging][data-preview-depth]::before {
   position: absolute;
   inset-block: var(--space-1);
   inset-inline-start: 0;

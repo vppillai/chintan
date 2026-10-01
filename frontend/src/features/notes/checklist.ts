@@ -189,7 +189,7 @@ export function blockOf(items: readonly ChecklistItem[], index: number): number[
 }
 
 /** The index of the item `index` is nested under, or null at the top level. */
-function parentOf(items: readonly ChecklistItem[], index: number): number | null {
+export function parentOf(items: readonly ChecklistItem[], index: number): number | null {
   const depth = items[index]?.depth ?? 0;
   for (let i = index - 1; i >= 0; i -= 1) if ((items[i]?.depth ?? 0) < depth) return i;
   return null;
@@ -266,10 +266,7 @@ export function shiftLevel(body: string, index: number, by: number, above: numbe
   });
 }
 
-/**
- * One level in under `under`: `shiftLevel` by one, kept for the editor's
- * Tab and grip until it calls `shiftLevel` itself.
- */
+/** One level in under `under`: `shiftLevel` by one, kept as the tests' shorthand. */
 export function nestUnder(body: string, index: number, under: number): string {
   return shiftLevel(body, index, 1, under);
 }
