@@ -24,9 +24,10 @@ DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 CLOSED = ("done", "declined", "dropped", "closed", "not reproduced", "answer")
 OWNER = ("owner", "asked", "gated", "question")
 # A done row owes a gate when its Status names the owner or a `gate:`, or its Notes say a
-# check is owed. Bare "Pixel"/"iPhone" is not enough: most done rows cite a Pixel 7 e2e profile.
+# check is owed. Bare "Pixel"/"iPhone" is not enough: most done rows cite a Pixel 7 e2e profile;
+# and `gate:` in the Notes is usually a CI gate the row added (CH-4), so only the Status cell counts.
 GATE_IN_STATUS = ("gate:", "owner")
-GATE_IN_NOTES = re.compile(r"gate:|\*\*owner\*\*|\bowed\b|left to the owner|device check|without the live eval")
+GATE_IN_NOTES = re.compile(r"\*\*owner\*\*|\bowed\b|left to the owner|device check|without the live eval")
 ITEM_WIDTH = 110
 
 
@@ -54,7 +55,8 @@ def classify(row):
     status, notes, item = row["status"].lower(), row["notes"].lower(), row["item"].lower()
     if any(w in status for w in ("reverted", "reversed", "superseded")) or item.startswith(("reverted:", "superseded by")):
         return "reverted"
-    if status.startswith(CLOSED):
+    # `answer / next` is an answered question that still has work agreed: open.
+    if status.startswith(CLOSED) and "next" not in status:
         owed = any(p in status for p in GATE_IN_STATUS) or GATE_IN_NOTES.search(notes)
         return "gate" if owed else None
     return "owner" if any(w in status for w in OWNER) else "unowned"
@@ -64,8 +66,8 @@ def render(text):
     last = {}
     for row in parse(text):
         last[row["id"]] = row
-    dates = [datetime.date.fromisoformat(d) for d in DATE.findall(text)]
-    asof = max(dates)
+    # The ledger's own clock: the newest dated `##` heading, so the output never depends on today.
+    asof = max(d for d in (r["date"] for r in last.values()) if d)
     buckets = {"owner": [], "unowned": [], "gate": [], "reverted": []}
     for row in last.values():
         kind = classify(row)
@@ -115,6 +117,8 @@ def self_test():
 | A2 | second | **done** | iPhone check still owed. |
 | A3 | third | **done** (frontend) | shipped on a Pixel 7 profile; the swallowed click |
 | A4 | fourth | next | |
+| A6 | sixth | **answer** / next | |
+| A7 | seventh | **done** | Gate: a deadcode step in CI. |
 | A5 | Reverted: fifth | **done** | |
 ## Round 2 — 2026-10-02
 | Id | Finding | Status | What changed |
@@ -123,9 +127,10 @@ def self_test():
 | A4 (follow-up) | still open | open (owner: 2026-09-20) | |
 """
     text, counts = render(ledger)
-    assert counts == {"owner": 1, "unowned": 0, "gate": 1, "reverted": 1}, counts
-    assert "A4 · Round 2 — 2026-10-02 · L13 · asked 2026-09-20 (12 d)" in text, text
-    assert "- A2 · Round 1" in text and "A3" not in text and "A1" not in text, text
+    assert counts == {"owner": 1, "unowned": 1, "gate": 1, "reverted": 1}, counts
+    assert "A4 · Round 2 — 2026-10-02 · L15 · asked 2026-09-20 (12 d)" in text, text
+    assert "- A2 · Round 1" in text and "- A6 · Round 1" in text, text
+    assert "A3" not in text and "A1" not in text and "A7" not in text, text
     assert render(ledger.replace("2026-09-05", "2026-08-01"))[1]["reverted"] == 0  # A5 falls out of the 30-day window
 
 

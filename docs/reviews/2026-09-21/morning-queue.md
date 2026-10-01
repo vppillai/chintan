@@ -352,6 +352,6 @@ The docs lens (`docs/reviews/2026-10-01/lenses/report-docs-process.md`, DOC-10) 
 - **Round-3 §4 item 2** (per-recording language control): the one-shot re-transcription shipped as T2 and no wrong-language transcript has been reported since; no control added.
 - **Item 5** (legacy data): the repair ran that night (T33, T29); the two August notes are Decision A above and remain yours.
 - **Item 6** (the dead `AWS_ROLE_ARN` and `AWS_REGION` repository secrets): the decision is taken — delete both (T65) — but as of 1 Oct both secrets still exist (`gh secret list`), so the two `gh secret delete` commands are an owner task, not an open decision.
-- **Item 9** (About's privacy wording): shipped as T28 with your sign-off.
+- **Item 9** (About's privacy wording): shipped as T28; it was a read-once ask, nothing pending.
 - **Item 12** (the app icon): folded into the logo-mark decision R5-BR-L1, which is still open and listed in `docs/backlog-open.md`.
 - **Item 13** (CloudTrail cost): leave it, as recommended; no change was made and none is planned (T61 in the round-3 report).
