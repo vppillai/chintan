@@ -433,12 +433,34 @@ function NoteViews({
   const tabIndex = tabs.findIndex((entry) => entry.id === tab);
   const swipe = useHorizontalSwipe({
     ref: viewsRef,
+    at: tabIndex,
     canGo: (direction) => (direction === 'left' ? tabIndex < tabs.length - 1 : tabIndex > 0),
     onSwipe: (direction) => {
       const next = tabs[tabIndex + (direction === 'left' ? 1 : -1)];
       if (next) setTab(next.id);
     },
   });
+
+  /*
+   * A new tab starts at its top. The scroll offset is the page's, not the
+   * panel's, so from deep in Text a step used to land mid-Cleaned, or at its
+   * foot. When the strip is stuck — the region's top is above the scroll
+   * region's — the page is moved so the new panel starts just under it; with
+   * the note's head still on screen nothing moves. A layout effect, so it
+   * lands before paint and before the shell's `useScrollRestore` (a parent,
+   * whose layout effect runs after this one) reads the offset for the new
+   * history entry. Every tab change, by a swipe, a tap or a key.
+   */
+  const shownTab = useRef(tab);
+  useLayoutEffect(() => {
+    if (shownTab.current === tab) return;
+    shownTab.current = tab;
+    const views = viewsRef.current;
+    const main = views?.closest('.app__main');
+    if (!views || !main) return;
+    const above = views.getBoundingClientRect().top - main.getBoundingClientRect().top;
+    if (above < 0) main.scrollTop += above;
+  }, [tab]);
 
   /*
    * What the open panel is asked to find. Nothing, unless the bar is open with
@@ -493,7 +515,7 @@ function NoteViews({
       <p className="visually-hidden" role="status" aria-live="polite">
         {flash ? 'Added text shown' : ''}
       </p>
-      {/* The hook writes `--tab-swipe-x` on this element itself; only
+      {/* The hook moves the panel and the strip's pill itself; only
           `dragging` comes through React, so a move re-renders nothing. */}
       <div
         ref={viewsRef}
@@ -572,6 +594,7 @@ function NotePanel({
       id={noteTabPanelId(noteId, tab)}
       aria-labelledby={noteTabId(noteId, tab)}
       className="note-tabpanel"
+      data-swipe-panel
     >
       {children}
     </div>

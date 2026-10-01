@@ -1,4 +1,4 @@
-import { devices, type Page } from '@playwright/test';
+import { devices, type CDPSession, type Page } from '@playwright/test';
 
 import { expect, test, type ApiState } from './fixtures.ts';
 
@@ -120,4 +120,77 @@ test('a scroll of the person\'s own during the restore is never pulled back', as
   });
   await page.waitForTimeout(400);
   expect(await mainTop(page)).toBe(100);
+});
+
+test.describe('a swipe between a note\'s tabs', () => {
+  const { defaultBrowserType: _browser, ...pixel } = devices['Pixel 7']!;
+  test.use({ ...pixel, hasTouch: true, isMobile: true });
+
+  /** A left finger drag of 180 px across the note's panel (as `note-tabs.spec.ts`). */
+  async function swipeLeft(page: Page, cdp: CDPSession): Promise<void> {
+    const y = 600;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 300, y }] });
+    for (let i = 1; i <= 12; i += 1) {
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ x: 300 - (180 * i) / 12, y }],
+      });
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await expect(page.getByRole('tab', { name: 'Cleaned' })).toHaveAttribute('aria-selected', 'true');
+  }
+
+  test('Back after a swipe still returns Home to where the list was', async ({ page, api }) => {
+    manyNotes(api);
+    await page.goto('/');
+    const before = await scrollRowIntoView(page, /^Filler 30\b/);
+    await page.getByRole('button', { name: /^Filler 30\b/ }).first().click();
+    await expect(page.getByRole('textbox', { name: 'Note title' })).toBeVisible();
+    await swipeLeft(page, await page.context().newCDPSession(page));
+    await page.goBack();
+    await expect(page.getByRole('button', { name: /^Filler 30\b/ }).first()).toBeVisible();
+    await expect.poll(() => mainTop(page)).toBeGreaterThan(before - 4);
+    expect(Math.abs((await mainTop(page)) - before)).toBeLessThanOrEqual(4);
+  });
+
+  test('from deep in a note a swipe starts the new tab under the strip, and Back then Forward keeps it', async ({
+    page,
+    api,
+  }) => {
+    const long = Array.from(
+      { length: 80 },
+      (_, index) => `Paragraph ${String(index + 1)}. The flashing around the chimney needs replacing.`,
+    ).join('\n\n');
+    const note = api.notes['roof-repair']!;
+    note.body = long;
+    // Cleaned as long, so the line under the strip is reachable, not clamped.
+    note.cleaned = { body: long, mode: 'structured', generated_at: new Date().toISOString(), stale: false };
+    await page.goto('/');
+    await page.getByRole('button', { name: /roof repair/i }).click();
+    await expect(page.getByRole('textbox', { name: 'Note body' })).toBeVisible();
+    await page.locator('.app__main').evaluate((main) => {
+      main.scrollTop = 1_500;
+      main.dispatchEvent(new Event('scroll'));
+    });
+    await swipeLeft(page, await page.context().newCDPSession(page));
+    // The region's top is the scroll region's: the strip sits where it was
+    // stuck and the panel starts under it, at its own top.
+    const gap = () =>
+      page.evaluate(
+        () =>
+          document.querySelector('.note-views')!.getBoundingClientRect().top -
+          document.querySelector('.app__main')!.getBoundingClientRect().top,
+      );
+    expect(Math.abs(await gap())).toBeLessThanOrEqual(1);
+    const line = await mainTop(page);
+    expect(line).toBeGreaterThan(0);
+    expect(line).toBeLessThan(1_500);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+    await page.goForward();
+    await expect(page.getByRole('tab', { name: 'Cleaned' })).toHaveAttribute('aria-selected', 'true');
+    await expect.poll(() => mainTop(page)).toBeGreaterThan(line - 4);
+    expect(Math.abs((await mainTop(page)) - line)).toBeLessThanOrEqual(4);
+  });
 });

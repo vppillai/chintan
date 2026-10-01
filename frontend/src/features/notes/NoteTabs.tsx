@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { useSearchParams } from 'react-router';
 
 /**
@@ -128,6 +128,13 @@ export function noteTabPanelId(noteId: string, tab: NoteTab): string {
  * Right move between the segments and select as they go; Home and End jump.
  * Only the selected tab is in the Tab order, as the pattern prescribes, so a
  * keyboard user reaches the panel's content in one press rather than three.
+ *
+ * The selected segment's raised face is one pill under the buttons rather
+ * than each button's background, so it slides to the new tab on a tap or a
+ * key and follows the finger during a swipe (`data-swipe-indicator`, which
+ * `useHorizontalSwipe` moves). It is placed by `--tab-index` and sized by
+ * `--tab-count`, so it fits a strip of any number of tabs. Decoration only:
+ * `aria-selected` is what says which tab is chosen.
  */
 export function NoteTabList({
   noteId,
@@ -172,9 +179,29 @@ export function NoteTabList({
     if (target) moveTo(target.id);
   };
 
+  const position = {
+    '--tab-index': Math.max(0, tabs.findIndex((tab) => tab.id === value)),
+    '--tab-count': tabs.length,
+  } as CSSProperties;
+
   return (
     <div className="note-tabs">
-      <div className="note-tabs__list" role="tablist" aria-label="Note views" onKeyDown={onKeyDown}>
+      <div
+        className="note-tabs__list"
+        role="tablist"
+        aria-label="Note views"
+        style={position}
+        onKeyDown={onKeyDown}
+      >
+        {/* Keyed on the count: a strip that gains or loses a tab (a note
+            turned into a checklist) gets a new pill at its place rather than
+            one that slides across from the old geometry. */}
+        <span
+          key={tabs.length}
+          className="note-tabs__indicator"
+          data-swipe-indicator
+          aria-hidden="true"
+        />
         {tabs.map((tab) => {
           const selected = tab.id === value;
           return (
