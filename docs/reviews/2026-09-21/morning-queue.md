@@ -334,3 +334,24 @@ You asked for a deep review before more features go in. Four blind lenses (front
 8. **Still waiting from before:** checklist depth (3 default, 4 offered), DB6-9, the phone checks, the routing replay recording, the Tidy live eval. The full fifty-row inventory, with ages, is §4 of the review; twenty of them are already settled and only need closing.
 
 **Not done tonight, planned for the next round** (all in §6 of the review): the size ceilings for functions and components, the routing bounds table, the live-region consolidation, fake timers in ten test files, the axe fixtures for round 7–8 surfaces, the docs truth fixes (six false design-doc claims, eight README details, the reviews index), and the backlog view generator.
+
+## 1 Oct — decisions already settled, closing
+
+The docs lens (`docs/reviews/2026-10-01/lenses/report-docs-process.md`, DOC-10) counted fifty open owner decisions in nine places and found that twenty of them were settled after they were asked and never closed here. Closing them now, each with what settled it. Nothing in this list needs an answer. From here the live decisions are not kept in this file: `docs/backlog-open.md` ("Needs the owner", generated from the backlog, with the date each was asked and its age) is the one list, and the "Needs you" paragraphs above are history.
+
+- **R5-RC-D1, R5-RC-D2** (build Web Push; where the permission is asked): built in #133 (27 Sept); the VAPID step that kept it dormant was removed by #207 (30 Sept), which installs the pair by default.
+- **VAPID keys** (the 27 Sept "run `scripts/vapid-keys.sh`" step and 30 Sept's R8-VAPID-1): #207; the pair is installed by `setup.sh` and `bootstrap.sh`, and the notification copy no longer asks for it.
+- **DB6-7** (where a regenerated recording's fresh items land when its old lines all became shared parents): fixed by the review of #191 (the R8-F1a review row, 30 Sept — "a regenerate whose every old line stayed as a shared parent dropped its new words").
+- **DB6-10** (Split up's open-wins exemption for sub-sequences): moot; Split up was replaced by Tidy up list in #195.
+- **DB6-11** (a done parent that gains an open child): one shape since the three-level merge in #191 (R8-F1a).
+- **PR-D1–PR-D5** (tags to the router; all active notes as candidates; the router with no cue; drop Split up; Faithful per capture): decided 27 Sept, built in #134; PR-D4 was reversed by you on 29 Sept and the reversal shipped as R8-F8 (#195). A `Correction:` row closes the composite backlog row.
+- **PR-2, PR-4** (the routing rewrite and the items prompt, gated on the battery): shipped in #134, battery run 28 Sept (17 of 22 rows three of three). A `Correction:` row closes the backlog row.
+- **CL-D1, CL-D2** (nesting depth; the tick's move to Done): decided 27 Sept and built in #130; CL-D1 was re-decided by your round-8 feedback F1 and shipped as three levels in #191 and #194.
+- **WH-A, WH-B** (device-key expiry; last-used neighbourhood): built in #132. **WH-C, WH-E** (revoke-all; per-device cost): declined 27 Sept, option (b) each. WH-D (the Pebble "Recording only" experiment) stays yours.
+- **CH-O2** (one repository test double): #131. **CH-O3** (the 7.3 MB of QA screenshots): #128.
+- **Round-3 §4 item 2** (per-recording language control): the one-shot re-transcription shipped as T2 and no wrong-language transcript has been reported since; no control added.
+- **Item 5** (legacy data): the repair ran that night (T33, T29); the two August notes are Decision A above and remain yours.
+- **Item 6** (the dead `AWS_ROLE_ARN` and `AWS_REGION` repository secrets): the decision is taken — delete both (T65) — but as of 1 Oct both secrets still exist (`gh secret list`), so the two `gh secret delete` commands are an owner task, not an open decision.
+- **Item 9** (About's privacy wording): shipped as T28 with your sign-off.
+- **Item 12** (the app icon): folded into the logo-mark decision R5-BR-L1, which is still open and listed in `docs/backlog-open.md`.
+- **Item 13** (CloudTrail cost): leave it, as recommended; no change was made and none is planned (T61 in the round-3 report).
