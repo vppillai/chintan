@@ -24,6 +24,8 @@ name: CI
 # skips reports no checks at all, which is fine while nothing requires them;
 # the day a ruleset on main does, these patterns need a companion workflow that
 # reports the same check names as passed (GitHub's documented pattern).
+# The one Markdown check, that docs/backlog-open.md matches docs/backlog.md, is
+# backlog-view.yaml, which runs only when those files change.
 on:
   pull_request:
     paths-ignore:
