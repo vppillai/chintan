@@ -284,6 +284,39 @@ test.describe('reordering by the grip', () => {
       await expect(page.getByText('1 of 3 done')).toBeVisible();
     });
 
+    test('a touch the browser takes back mid-drag drops the row where it was and writes nothing', async ({
+      page,
+      api,
+    }) => {
+      // A call, a system gesture, a palm: the touch ends in `pointercancel`,
+      // not a lift, and the draft under the finger is not the list's order
+      // (review 2026-10-01, FE-21).
+      seedShopping(api);
+      await page.goto('/notes/shopping');
+      const items = page.getByRole('list', { name: 'Items' });
+      await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
+
+      const cdp = await page.context().newCDPSession(page);
+      const grip = (await page.getByRole('button', { name: 'Move Milk' }).boundingBox())!;
+      const below = (await items.locator('li').nth(1).boundingBox())!;
+      const x = grip.x + grip.width / 2;
+      const y = grip.y + grip.height / 2;
+      const toY = below.y + below.height - 2;
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+      for (let i = 1; i <= 10; i += 1) {
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [{ x, y: y + ((toY - y) * i) / 10 }],
+        });
+      }
+      await expect.poll(() => values(items)).toEqual(['Bread and butter', 'Milk', '']);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
+
+      await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
+      expect(saves(api)).toBe(0);
+      await expect(page.getByRole('menu')).toHaveCount(0);
+    });
+
     test('a touch drag sideways on a grip makes the row a sub-item, previewed in place and kept across a reload', async ({
       page,
       api,

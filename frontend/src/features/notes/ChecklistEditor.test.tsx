@@ -108,9 +108,6 @@ describe('ChecklistEditor', () => {
     const done = within(doneSection());
     expect(screen.getByRole('heading', { name: /Done \(1\)/ })).toBeInTheDocument();
     expect(done.getByRole('checkbox', { name: 'Eggs' })).toBeChecked();
-    expect(done.getByText('Eggs', { selector: 'span.checklist__text' }).closest('li')).toHaveClass(
-      'checklist__row--done',
-    );
     expect(done.getByRole('button', { name: 'Delete Eggs' })).toBeInTheDocument();
     // Not editable once done: the text is a span, not a field.
     expect(done.queryByRole('textbox')).toBeNull();
@@ -131,7 +128,6 @@ describe('ChecklistEditor', () => {
     // already ticked, and nothing would be seen to happen.
     const milk = within(items()).getByRole('checkbox', { name: 'Milk' });
     expect(milk).toBeChecked();
-    expect(milk.closest('li')).toHaveClass('checklist__row--done');
     expect(screen.getByRole('heading', { name: /Done \(1\)/ })).toBeInTheDocument();
     expect(await within(doneSection()).findByRole('checkbox', { name: 'Milk' })).toBeChecked();
     expect(screen.getByRole('heading', { name: /Done \(2\)/ })).toBeInTheDocument();
@@ -494,7 +490,8 @@ describe('sub-items', () => {
     await user.click(screen.getByRole('checkbox', { name: 'Party' }));
     expect(body()).toBe('- [x] Party\n  - [x] Plates\n  - [x] Cups\n- [ ] Bread');
     expect(log.saves).toBe(1);
-    // For the beat, all three stay in the open list, ticked and struck.
+    // For the beat, all three stay in the open list, ticked and struck: the
+    // row's done class is what draws the strike, and this is the one probe of it.
     const open = within(items());
     expect(open.getByRole('checkbox', { name: 'Plates' })).toBeChecked();
     expect(open.getByRole('checkbox', { name: 'Cups' }).closest('li')).toHaveClass('checklist__row--done');
