@@ -329,13 +329,13 @@ The checklist's mode (Tidy up list; the Split up tab before round 8), the same c
 (`Pipeline.CleanNote`) with its own prompt, user prompt and cap. **Sent:**
 "the list as it stands → the list it was meant to be": the body's format
 (one item a line, `- [ ] ` / `- [x] `, a sub-item two spaces in, two more for
-each level, at most three levels), the shared `checklistItemRules` above,
+each level, at most four levels), the shared `checklistItemRules` above,
 and four rules a whole list needs — every
 line's meaning kept (a line already one thing word for word, a line holding
 several things one item each, a sentence spoken to the app the things it
 named); the list's groups kept and an item put under an existing group when
 its words say so ("chicken from Costco" under Costco), two lines naming one
-thing one item; every item kept at its level, up to three, and no level
+thing one item; every item kept at its level, up to four, and no level
 added that the list does not have; done stays done, an open line never marked done, a
 duplicate merged into an open item if either was open — then the reply
 shape and one worked example, the owner's live case beside an existing
@@ -347,8 +347,8 @@ body. **Reply:** `{"items":[{"text":"…","done":false,"children":[…]},…]}` 
 the list's order, `done` and `children` left out when false or empty.
 **Cap:** 3× the input, floor 512 (`TasksMaxTokens`): a JSON object per
 line. **Guards** (`cleanup.SplitOutput`): `ParseItems`' shape at most 500
-counting sub-items (`MaxChecklistItems`), nested at most three levels, a
-deeper item flattened into the third after its parent; an item whose words are not the
+counting sub-items (`MaxChecklistItems`), nested at most four levels, a
+deeper item flattened into the fourth after its parent; an item whose words are not the
 body's words in order (`llm.VerifySubsequence`) is dropped and logged as
 a count, a dropped parent's children lifted — "- [x] Make a
 list." was the model inventing an antecedent (owner feedback 2026-09-26);
