@@ -283,7 +283,7 @@ describe('a row swiped aside', () => {
     fireEvent.pointerMove(row, { ...touch, clientX: 280, clientY: 10 });
     fireEvent.pointerMove(row, { ...touch, clientX: 160, clientY: 10 });
     fireEvent.pointerUp(row, { ...touch, clientX: 160, clientY: 10 });
-    fireEvent.click(summary); // the lifted finger's click, swallowed
+    fireEvent.click(summary, { detail: 1 }); // the lifted finger's click, swallowed
     return row;
   }
 

@@ -206,7 +206,7 @@ export function RecordingRow({
               // The click that follows the long press which started this mode
               // lands on this label; letting it through would toggle the
               // checkbox straight back off. See `NoteRow`.
-              if (longPress.consumeClick()) event.preventDefault();
+              if (longPress.consumeClick(event)) event.preventDefault();
             }}
           >
             <span className="recording__check">
@@ -268,8 +268,8 @@ export function RecordingRow({
             className="recording__summary"
             aria-expanded={expanded}
             aria-controls={bodyId}
-            onClick={() => {
-              if (longPress.consumeClick()) return;
+            onClick={(event) => {
+              if (longPress.consumeClick(event)) return;
               onToggle();
             }}
             {...longPress.handlers}

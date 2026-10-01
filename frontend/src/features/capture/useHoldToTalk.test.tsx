@@ -111,8 +111,8 @@ describe('the click a long press leaves behind', () => {
     fireEvent.pointerUp(button, touch);
     await expectSent();
 
-    // Chromium's click after the long press: not a tap.
-    fireEvent.click(button);
+    // Chromium's click after the long press (`detail` 1): not a tap.
+    fireEvent.click(button, { detail: 1 });
     expect(where()).toBe('/');
 
     // A fresh tap inside the window is the user's own, and opens the screen.

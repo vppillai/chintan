@@ -7,6 +7,9 @@ import {
   type RefObject,
 } from 'react';
 
+import { GESTURE_SLOP_PX } from './gesture.ts';
+import { useSwallowNextClick } from './swallowNextClick.ts';
+
 /**
  * A drag that reorders the rows of one list, held as a draft until the
  * pointer lifts, then handed to the caller as one new order.
@@ -31,7 +34,7 @@ import {
  *
  * A caller whose rows have levels — the checklist — passes `onShift` and the
  * pointer's origin to `start`, and the drag then has two axes. The first
- * `AXIS_SLOP_PX` px of travel decide which: more sideways than up and down and
+ * `GESTURE_SLOP_PX` px of travel decide which: more sideways than up and down and
  * the row keeps its slot while every indent step right or left (`levelPx`:
  * `--space-6` in the page's own pixels) is one level in or out
  * (`draftShift`, for the caller to preview); otherwise it is the reorder
@@ -49,14 +52,12 @@ import {
  * while a row is lifted — before that, a finger that moves is scrolling. And
  * the click the browser fires when the pointer lifts after a lift, moved or
  * not, would activate whatever is under it — open the note, tick the box —
- * so the list swallows exactly that one. A lift that never moved is a tap
+ * so the list swallows exactly that one (`useSwallowNextClick`). A lift that never moved is a tap
  * on the handle, and the caller hears of it as `onTap` (the grip's menu);
  * it cannot use the browser's click for that, because once the list holds
  * the capture that click is targeted at the list, not at the handle.
  */
 
-/** Travel before a two-axis drag decides its axis: `useSwipeActions`'s own slop. */
-const AXIS_SLOP_PX = 10;
 /**
  * Sideways travel per level: the indent step `--space-6` (checklist.css
  * draws it) in CSS pixels, read when the row is lifted. The token is in rem,
@@ -139,7 +140,7 @@ export function useDragReorder<T extends string>({
   const [draggingId, setDraggingId] = useState<T | null>(null);
   const drag = useRef<Drag<T> | null>(null);
   const live = useRef<T[]>([]);
-  const swallowClick = useRef(false);
+  const swallow = useSwallowNextClick();
 
   const start = (pointerId: number, id: T, origin?: { x: number; y: number }): void => {
     if (drag.current) return;
@@ -181,7 +182,7 @@ export function useDragReorder<T extends string>({
     if (!cancelled && !current.moved) onTap?.(current.id);
     // Whether it moved or not, the pointer lifting after a lifted row is not
     // a tap on what is under it.
-    swallowClick.current = true;
+    swallow.arm();
     if (cancelled || !current.moved) return;
     if (current.axis === 'x') {
       if (current.levels !== 0) onShift?.(current.id, current.levels);
@@ -210,16 +211,14 @@ export function useDragReorder<T extends string>({
 
   const listHandlers: DragReorderHandlers = {
     // A new press clears a swallow no click ever consumed (a cancelled drag).
-    onPointerDownCapture: () => {
-      swallowClick.current = false;
-    },
+    onPointerDownCapture: swallow.reset,
     onPointerMove: (event) => {
       const current = drag.current;
       if (!current || current.pointerId !== event.pointerId) return;
       const dx = current.origin ? event.clientX - current.origin.x : 0;
       const dy = current.origin ? event.clientY - current.origin.y : 0;
       if (current.axis === 'undecided') {
-        if (Math.hypot(dx, dy) <= AXIS_SLOP_PX) return;
+        if (Math.hypot(dx, dy) <= GESTURE_SLOP_PX) return;
         current.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
         // Decided is moved: past the slop on either axis, the lift is no tap.
         current.moved = true;
@@ -265,8 +264,7 @@ export function useDragReorder<T extends string>({
       if (event.target === event.currentTarget) finish(event.pointerId, true);
     },
     onClickCapture: (event) => {
-      if (!swallowClick.current) return;
-      swallowClick.current = false;
+      if (!swallow.take(event)) return;
       event.preventDefault();
       event.stopPropagation();
     },

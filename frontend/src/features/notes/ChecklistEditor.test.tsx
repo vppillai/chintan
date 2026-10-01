@@ -260,8 +260,8 @@ describe('reordering by the grip', () => {
     expect(body()).toBe('- [x] Eggs\n- [ ] Bread\n- [ ] Milk');
     expect(log.saves).toBe(1);
     expect(openValues()).toEqual(['Bread', 'Milk', '']);
-    // The click the browser fires as the mouse lifts is not a tap on the grip.
-    fireEvent.click(screen.getByRole('button', { name: 'Move Milk' }));
+    // The click the browser fires as the mouse lifts (`detail` 1) is not a tap on the grip.
+    fireEvent.click(screen.getByRole('button', { name: 'Move Milk' }), { detail: 1 });
     expect(screen.queryByRole('menu')).toBeNull();
   });
 

@@ -11,6 +11,7 @@ import { useNavigate } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { ROUTES } from '@/app/routes.ts';
+import { useSwallowNextClick } from '@/hooks/swallowNextClick.ts';
 
 import { cancelFeedback, errorFeedback, lockFeedback } from './feedback.ts';
 import {
@@ -61,7 +62,7 @@ export interface HoldHandlers {
   onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
   onKeyUp: (event: ReactKeyboardEvent<HTMLElement>) => void;
   onContextMenu: (event: { preventDefault: () => void }) => void;
-  onClick: () => void;
+  onClick: (event: { detail: number }) => void;
 }
 
 export interface HoldToTalk {
@@ -145,7 +146,7 @@ export function useHoldToTalk({
   const [notice, setNotice] = useState<HoldNotice | null>(null);
   const current = useRef<Gesture>(IDLE_GESTURE);
   const pointerId = useRef<number | null>(null);
-  const suppressUntil = useRef(0);
+  const swallow = useSwallowNextClick(CLICK_SUPPRESS_MS);
   const timers = useRef({
     arm: undefined as ReturnType<typeof setTimeout> | undefined,
     notice: undefined as ReturnType<typeof setTimeout> | undefined,
@@ -220,11 +221,11 @@ export function useHoldToTalk({
           errorFeedback();
           return;
         case 'suppressClick':
-          suppressUntil.current = Date.now() + CLICK_SUPPRESS_MS;
+          swallow.arm();
           return;
       }
     },
-    [api, openCapture, onSent],
+    [api, openCapture, onSent, swallow],
   );
 
   const dispatch = useCallback(
@@ -342,7 +343,7 @@ export function useHoldToTalk({
   const handlers: HoldHandlers = {
     onPointerDown: (event) => {
       // The click after a hold is swallowed only until the next press.
-      suppressUntil.current = 0;
+      swallow.reset();
       // The primary button of the first finger only; a second finger is ignored.
       if (event.button !== 0 || pointerId.current !== null) return;
       if (current.current.phase !== 'idle') return;
@@ -403,8 +404,8 @@ export function useHoldToTalk({
      * send only a click. The click Chromium sends after a long press is
      * swallowed (QA B-1, 2026-09-27).
      */
-    onClick: () => {
-      if (Date.now() < suppressUntil.current) return;
+    onClick: (event) => {
+      if (swallow.take(event)) return;
       if (current.current.phase !== 'idle') return;
       void navigate(target.current ? ROUTES.captureInto(target.current) : ROUTES.capture);
     },

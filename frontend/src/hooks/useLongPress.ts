@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent 
 
 import { vibrate } from '@/features/capture/feedback.ts';
 
+import { GESTURE_SLOP_PX } from './gesture.ts';
+import { useSwallowNextClick } from './swallowNextClick.ts';
+
 /**
  * Press and hold to select a recording row, the gesture every phone list
  * already teaches.
@@ -11,13 +14,13 @@ import { vibrate } from '@/features/capture/feedback.ts';
  * on every pointer, so nobody has to learn two. Only the primary button: a
  * right-click is the context menu's, and arming on it would suppress that
  * menu below. The press is cancelled the moment the pointer travels more
- * than `LONG_PRESS_TOLERANCE_PX`, which is what keeps a scroll that happens
+ * than `GESTURE_SLOP_PX`, which is what keeps a scroll that happens
  * to start on a row from selecting it, and on release, leave or cancel.
  *
  * A long press that fires is followed by the browser's own `click` when the
  * finger lifts; the row would take it for a tap on the row it had just
- * selected. `consumeClick` reports and clears that, so the row's click
- * handler can return early once.
+ * selected. `consumeClick` reports and clears that (`useSwallowNextClick`),
+ * so the row's click handler can return early once.
  * The context menu that Android raises for the same hold is suppressed while
  * a press is armed — that event is also where the platform's text selection
  * begins, so cancelling it is what keeps a held row from turning into a
@@ -34,7 +37,6 @@ import { vibrate } from '@/features/capture/feedback.ts';
  */
 
 export const LONG_PRESS_MS = 500;
-export const LONG_PRESS_TOLERANCE_PX = 10;
 
 export interface LongPressHandlers {
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -48,13 +50,13 @@ export interface LongPressHandlers {
 export interface LongPress {
   handlers: LongPressHandlers;
   /** True exactly once after a press fired: the click that follows is not a tap. */
-  consumeClick: () => boolean;
+  consumeClick: (event: { detail: number }) => boolean;
 }
 
 export function useLongPress(onLongPress: (() => void) | null, ms: number = LONG_PRESS_MS): LongPress {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const origin = useRef<{ x: number; y: number } | null>(null);
-  const fired = useRef(false);
+  const swallow = useSwallowNextClick();
   // The latest handler, read when the timer fires rather than when the press
   // began, so a row whose props changed mid-hold acts on the current ones.
   const callback = useRef(onLongPress);
@@ -74,17 +76,17 @@ export function useLongPress(onLongPress: (() => void) | null, ms: number = LONG
     (event: ReactPointerEvent<HTMLElement>) => {
       if (!callback.current || event.button !== 0) return;
       clear();
-      fired.current = false;
+      swallow.reset();
       origin.current = { x: event.clientX, y: event.clientY };
       timer.current = setTimeout(() => {
         timer.current = null;
         origin.current = null;
-        fired.current = true;
+        swallow.arm();
         vibrate(10);
         callback.current?.();
       }, ms);
     },
-    [clear, ms],
+    [clear, ms, swallow],
   );
 
   const onPointerMove = useCallback(
@@ -92,20 +94,17 @@ export function useLongPress(onLongPress: (() => void) | null, ms: number = LONG
       const start = origin.current;
       if (!start) return;
       const travelled = Math.hypot(event.clientX - start.x, event.clientY - start.y);
-      if (travelled > LONG_PRESS_TOLERANCE_PX) clear();
+      if (travelled > GESTURE_SLOP_PX) clear();
     },
     [clear],
   );
 
-  const onContextMenu = useCallback((event: { preventDefault: () => void }) => {
-    if (origin.current || fired.current) event.preventDefault();
-  }, []);
-
-  const consumeClick = useCallback(() => {
-    const was = fired.current;
-    fired.current = false;
-    return was;
-  }, []);
+  const onContextMenu = useCallback(
+    (event: { preventDefault: () => void }) => {
+      if (origin.current || swallow.armed()) event.preventDefault();
+    },
+    [swallow],
+  );
 
   return {
     handlers: {
@@ -116,6 +115,6 @@ export function useLongPress(onLongPress: (() => void) | null, ms: number = LONG
       onPointerLeave: clear,
       onContextMenu,
     },
-    consumeClick,
+    consumeClick: swallow.take,
   };
 }

@@ -14,7 +14,8 @@ import { NoteRow } from '@/components/NoteRow.tsx';
 import { FINE_POINTER_QUERY } from '@/components/SwipeRow.tsx';
 import { vibrate } from '@/features/capture/feedback.ts';
 import { useDragReorder } from '@/hooks/useDragReorder.ts';
-import { LONG_PRESS_MS, LONG_PRESS_TOLERANCE_PX } from '@/hooks/useLongPress.ts';
+import { GESTURE_SLOP_PX } from '@/hooks/gesture.ts';
+import { LONG_PRESS_MS } from '@/hooks/useLongPress.ts';
 import { useMediaQuery } from '@/hooks/useMediaQuery.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 
@@ -164,7 +165,7 @@ export function PinnedGroup({
     if (
       armed &&
       armed.pointerId === event.pointerId &&
-      Math.hypot(event.clientX - armed.x, event.clientY - armed.y) > LONG_PRESS_TOLERANCE_PX
+      Math.hypot(event.clientX - armed.x, event.clientY - armed.y) > GESTURE_SLOP_PX
     ) {
       cancelHold();
     }
