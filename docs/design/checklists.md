@@ -78,9 +78,11 @@ editor drops blanks), so a marker between a parent and the sub-item a later
 recording merged under it does not cut them apart. A prose line does: the
 editor shows it as a top-level item, so the item after it is at most a
 sub-item to every reader (the fixture's "prose between items" case).
-`ItemsFromLines` differs on one thing only: it reads an *indented* prose
-line at its indent's level (it also reads the clean artefact's box-less
-lines), where the editor shows it at the top level.
+`ItemsFromLines` skips markers and blanks the same way (until R9 PR9-28 it
+read a marker as an item and took the sub-item after it as its child) and
+differs on one thing only: it reads an *indented* prose line at its indent's
+level (it also reads the clean artefact's box-less lines), where the editor
+shows it at the top level.
 `cleanup.ParseLine` alone returns the indent's raw level. Every body from
 before three levels is at depth 0 or 1 and reads exactly as it did; the one
 change in meaning is a line indented four or more columns under a sub-item,

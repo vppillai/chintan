@@ -53,6 +53,9 @@ export interface ChecklistItem {
  * in another editor keeps its sub-items instead of reading as prose. The Go
  * readers apply the same rule (backend `cleanup.ParseLine`), and both test
  * suites assert it against backend/internal/cleanup/testdata/checklist-lines.json.
+ * A line starting with `<!--` is not an item to any reader: the API strips
+ * the worker's capture markers before the body reaches the editor, and one
+ * typed by hand is dropped on the next write.
  */
 const ITEM = /^([ \t]*)- \[( |x|X)\] ?(.*)$/;
 
@@ -90,8 +93,12 @@ export function parseChecklist(body: string): ChecklistItem[] {
       items.push({ text: match[3] ?? '', done: match[2] !== ' ', depth });
       continue;
     }
-    // A prose line: kept as an open item, normalised on the next write.
-    if (line.trim() !== '') items.push({ text: line, done: false, depth: 0 });
+    // A prose line: kept as an open item, normalised on the next write. A
+    // capture marker (an HTML comment on its own line) is not one; the API
+    // strips them before the body reaches the editor, and the Go readers
+    // skip them, so the shared fixture has a case for it.
+    const trimmed = line.trim();
+    if (trimmed !== '' && !trimmed.startsWith('<!--')) items.push({ text: line, done: false, depth: 0 });
   }
   return items;
 }
