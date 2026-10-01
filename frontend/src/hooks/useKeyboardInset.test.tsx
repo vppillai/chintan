@@ -1,7 +1,12 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { KEYBOARD_ATTRIBUTE, KEYBOARD_INSET_PROPERTY, useKeyboardInset } from './useKeyboardInset.ts';
+import {
+  EDITING_ATTRIBUTE,
+  KEYBOARD_ATTRIBUTE,
+  KEYBOARD_INSET_PROPERTY,
+  useKeyboardInset,
+} from './useKeyboardInset.ts';
 
 /**
  * jsdom has no `visualViewport`; this stands one in — an EventTarget with the
@@ -101,5 +106,46 @@ describe('useKeyboardInset', () => {
     install(undefined);
     renderHook(() => useKeyboardInset());
     expect(inset()).toBe('');
+  });
+
+  it('marks the note as being typed into while one of its fields has focus, not Find or a button', () => {
+    install(undefined);
+    const editing = (): boolean => document.documentElement.hasAttribute(EDITING_ATTRIBUTE);
+    const title = document.createElement('input');
+    title.className = 'note-title-input';
+    const editor = document.createElement('div');
+    editor.className = 'checklist-editor';
+    const row = document.createElement('textarea');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    editor.append(row, box);
+    const button = document.createElement('button');
+    const find = document.createElement('input');
+    find.type = 'search';
+    document.body.append(title, editor, button, find);
+    const { unmount } = renderHook(() => useKeyboardInset());
+    expect(editing()).toBe(false);
+
+    act(() => title.focus());
+    expect(editing()).toBe(true);
+    // Focus moving straight to a button: the keyboard goes down with it.
+    act(() => button.focus());
+    expect(editing()).toBe(false);
+    act(() => row.focus());
+    expect(editing()).toBe(true);
+    // A checklist row's box is one of the note's fields, as the old selector had it.
+    act(() => box.focus());
+    expect(editing()).toBe(true);
+    // Find's box is typed into, but the mic records into the note, not into it.
+    act(() => find.focus());
+    expect(editing()).toBe(false);
+    act(() => row.focus());
+    act(() => row.blur());
+    expect(editing()).toBe(false);
+
+    act(() => row.focus());
+    unmount();
+    expect(editing()).toBe(false);
+    for (const element of [title, editor, button, find]) element.remove();
   });
 });

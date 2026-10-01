@@ -1,0 +1,189 @@
+/*
+ * Push-to-talk on the tab bar (R8, F5; `components/HoldChrome.tsx`).
+ *
+ * The bar itself — the grid, the tabs, the disc's cell — is `shell.css`. This
+ * sheet is what the hold draws on it: the clock pill on the bar's top edge,
+ * "‹ Slide to cancel" in the Home slot, the live level in the You slot, the
+ * lock pill above the disc, and the disc following the finger. Held, each
+ * sits in its tab's grid cell over the hidden tab, so the bar keeps its
+ * height and nothing above it moves. Only the disc wears the accent; the
+ * pills are ink and ground.
+ *
+ * Tokens only — no literal colour or font size lives here.
+ */
+
+/* --------------------------------------------------------------------------
+   Record button — "Into this note" while a note is open
+   -------------------------------------------------------------------------- */
+
+/*
+ * The caption is a small pill riding the bar's top edge above the disc, so
+ * the bar keeps its height and the mic stays the one record control on the
+ * screen. A child of the bar itself, centred on it, which centres it on the
+ * disc: the bar's middle column is the disc's. Not inside the disc or its
+ * cell, because the layout sweep reads an overflowing child as a container
+ * that scrolls, and the hold's clock, its notices and the first-run coach
+ * are wider than the cell. The cell keeps its width on every screen so the
+ * bar's geometry does not change with the route, and anchors the lock pill.
+ */
+.tab-bar__record {
+  position: relative;
+  min-inline-size: 7.5rem;
+}
+
+.tab-bar__into {
+  position: absolute;
+  inset-block-start: -0.75rem;
+  inset-inline-start: 50%;
+  padding: var(--space-1) var(--space-2);
+  background-color: var(--color-ink);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-normal);
+  color: var(--color-ground);
+  white-space: nowrap;
+  pointer-events: none;
+  translate: -50% 0;
+  /* The hold's clock wears a dot or a padlock before it. */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.tab-bar__slot--start {
+  grid-area: 1 / 1;
+}
+
+.tab-bar__slot--end {
+  grid-area: 1 / 3;
+}
+
+.tab-bar[data-hold] > a.tab-bar__tab {
+  visibility: hidden;
+}
+
+/* The disc follows the finger, a size up, ringed as a held control is. */
+.tab-bar[data-hold='holding'] .record-button {
+  transform: translate(var(--hold-dx), var(--hold-dy)) scale(1.2);
+  box-shadow:
+    0 0 0 var(--space-3) var(--color-accent-soft),
+    var(--shadow-lg);
+  transition: box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/*
+ * "‹ Slide to cancel": drifts with half the finger's travel and fades toward
+ * the line, but never closer than the gutter to the screen's left edge.
+ * `--cancel-rest-left` is its resting left edge, set by TabBar; unset, the
+ * floor is far enough away to change nothing.
+ */
+.tab-bar__cancel {
+  display: flex;
+  align-items: center;
+  justify-self: center;
+  gap: var(--space-1);
+  max-inline-size: 100%;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
+  color: var(--color-muted);
+  opacity: calc(1 - 0.6 * var(--hold-cancel));
+  translate: max(calc(var(--hold-dx) * 0.5), calc(var(--space-4) - var(--cancel-rest-left, 100vw))) 0;
+}
+
+/* Close to the line it turns destructive and shows the bin. */
+.tab-bar__cancel[data-near] {
+  color: var(--color-destructive);
+}
+
+.tab-bar__cancel-glyph {
+  flex: none;
+  display: none;
+}
+
+.tab-bar__cancel[data-near] .tab-bar__cancel-glyph {
+  display: block;
+}
+
+.tab-bar__level {
+  display: grid;
+  justify-self: center;
+  inline-size: 4rem;
+  block-size: 1.75rem;
+}
+
+.tab-bar__level .waveform {
+  color: var(--color-muted);
+}
+
+/* The lock pill above the disc: an open padlock over a chevron that bobs. */
+.tab-bar__lock {
+  position: absolute;
+  inset-block-end: calc(100% + 2 * var(--space-2) + 0.75rem);
+  inset-inline-start: 50%;
+  display: grid;
+  justify-items: center;
+  align-content: space-between;
+  inline-size: var(--layout-touch-target-min);
+  block-size: calc(var(--layout-touch-target-min) * 2.25);
+  padding-block: var(--space-3);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-md);
+  color: var(--color-ink);
+  pointer-events: none;
+  translate: -50% 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.tab-bar__lock[data-leaning='cancel'] {
+  opacity: 0.4;
+}
+
+/* The padlock comes down to meet the finger as it nears the line. */
+.tab-bar__padlock {
+  translate: 0 calc(var(--hold-lock) * 2.5rem);
+}
+
+.tab-bar__chevrons {
+  animation: tab-bar-bob 1.2s var(--motion-ease-standard) infinite;
+}
+
+@keyframes tab-bar-bob {
+  50% {
+    translate: 0 calc(-1 * var(--space-1));
+  }
+}
+
+.tab-bar__dot {
+  inline-size: 0.25rem;
+  block-size: 0.25rem;
+  border-radius: var(--radius-full);
+  background-color: var(--color-ground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-bar[data-hold='holding'] .record-button {
+    transform: none;
+  }
+
+  .tab-bar__cancel,
+  .tab-bar__padlock {
+    translate: none;
+  }
+
+  /* No continuous fade: one step, with the colour, at 60 % of the way. */
+  .tab-bar__cancel {
+    opacity: 1;
+  }
+
+  .tab-bar__cancel[data-near] {
+    opacity: 0.7;
+  }
+
+  .tab-bar__chevrons {
+    animation: none;
+  }
+}

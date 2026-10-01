@@ -402,3 +402,149 @@ export function openItemsText(items: readonly ChecklistItem[]): string {
     .map((item) => item.text)
     .join(' · ');
 }
+
+/*
+ * The editor's level planner: pure readings over the items and the open rows
+ * as shown, so what the Items tab previews is what it writes; the rules are
+ * pinned by `checklist.plan.test.ts` without a render and by the editor's
+ * own tests through it. `rows` is the open list in its shown
+ * order — a row held for the tick's beat is still in it — and `position` is
+ * a place in it; `index` is a place in the body.
+ */
+
+/** An item and its index in the body: one row as the editor shows it. */
+export interface Entry {
+  item: ChecklistItem;
+  index: number;
+}
+
+/**
+ * Where `by` levels would take the open row at `position` among `rows`: its
+ * new depth, or the fixed sentence that says why it cannot go. "Above" is the
+ * open row shown directly above, never the body's previous line, which may be
+ * a done one sitting in Done. One reading for Tab, the grip's arrows and
+ * menu, the drag's preview and its release.
+ */
+export function planLevel(
+  items: readonly ChecklistItem[],
+  rows: readonly Entry[],
+  position: number,
+  by: number,
+): { depth: number } | { refusal: string } {
+  const entry = rows[position];
+  if (!entry || by === 0) return { refusal: '' };
+  const depth = entry.item.depth;
+  if (by < 0) return depth === 0 ? { refusal: 'Already a top-level item' } : { depth: Math.max(0, depth + by) };
+  const above = rows[position - 1];
+  if (!above) return { refusal: 'Nothing above to nest under' };
+  if (canNest(items, entry.index, above.index, by)) {
+    return { depth: Math.min(depth + by, above.item.depth + 1, MAX_DEPTH) };
+  }
+  // Why `canNest` said no, in the order a person would look: a done row
+  // above (the one just ticked, held for the beat, or one it stands
+  // under), then no level left under the row above, then the row's own
+  // sub-items, which would go past the third level.
+  for (let i: number | null = above.index; i !== null; i = parentOf(items, i)) {
+    if (items[i]?.done) return { refusal: 'Cannot nest under a done item' };
+  }
+  if (Math.min(above.item.depth + 1, MAX_DEPTH) <= depth) {
+    return { refusal: depth >= MAX_DEPTH ? 'Already three levels deep' : 'Already a sub-item' };
+  }
+  return { refusal: 'Its sub-items are already three levels deep' };
+}
+
+/** The open-list positions of the block at body index `index`: the row and its open sub-items. */
+export function openBlock(items: readonly ChecklistItem[], rows: readonly Entry[], index: number): number[] {
+  const block = blockOf(items, index);
+  return rows.flatMap((entry, position) => (block.includes(entry.index) ? [position] : []));
+}
+
+/**
+ * A drag's levels, cut down to the largest move that fits: out to the top,
+ * in to one under the row shown above it, never past `MAX_DEPTH`
+ * ([−d, maxIn − d]), and no further than the row's own sub-items allow — a
+ * drag is placed by eye, so asking for one level too many moves as far as
+ * it can, where Tab and the arrows, one level a press, refuse. When not
+ * even one level fits it stays one, so the release is refused and said
+ * rather than dropped silently.
+ */
+export function clampLevels(
+  items: readonly ChecklistItem[],
+  rows: readonly Entry[],
+  position: number,
+  levels: number,
+): number {
+  const depth = rows[position]?.item.depth ?? 0;
+  const above = rows[position - 1];
+  if (levels < 0) return depth === 0 ? levels : Math.max(levels, -depth);
+  if (levels === 0 || !above) return levels;
+  let by = Math.max(1, Math.min(levels, Math.min(above.item.depth + 1, MAX_DEPTH) - depth));
+  while (by > 1 && 'refusal' in planLevel(items, rows, position, by)) by -= 1;
+  return by;
+}
+
+/**
+ * Putting the open item at body index `index` — with its sub-items — in the
+ * slot of the open item at `position`: the body to write, the open position
+ * the moved row's grip lands on, and what to say when the slot's level became
+ * the row's, since no path here asked for that; or the refusal, when nothing
+ * would move (the arrow keys at either end). A step down from a parent would
+ * land on its own first child, so the target moves past the block to the
+ * first row outside it.
+ */
+export function planMove(
+  body: string,
+  items: readonly ChecklistItem[],
+  rows: readonly Entry[],
+  index: number,
+  position: number,
+): { refusal: string } | { next: string; gripAt: number; said: string | null } {
+  const block = openBlock(items, rows, index);
+  const current = block[0] ?? -1;
+  let at = position;
+  while (at > current && block.includes(at)) at += 1;
+  const target = rows[at];
+  if (!target || target.index === index) {
+    return { refusal: position < current ? 'Already at the top' : 'Already at the bottom' };
+  }
+  const next = moveItem(body, index, target.index);
+  // Moving down, the block's own rows have left the list above the slot.
+  const gripAt = at > current ? at - (block.length - 1) : at;
+  const landed = target.index > index ? target.index - (blockOf(items, index).length - 1) : target.index;
+  const depth = parseChecklist(next)[landed]?.depth ?? 0;
+  const was = items[index]?.depth ?? 0;
+  const said = depth === was ? null : depth > was ? 'Now a sub-item' : 'Now a top-level item';
+  return { next, gripAt, said };
+}
+
+/**
+ * The depth every open row would take if the sideways drag `draft` let go
+ * now, by body index, for the rows whose depth would change: the lifted row
+ * and the sub-items it carries, so the preview shows the whole block where
+ * release will put it. Read from the very write release makes
+ * (`shiftLevel`), so the two cannot disagree. Empty when no sideways drag is
+ * on or it asks for what the release would refuse.
+ */
+export function previewDepths(
+  body: string,
+  items: readonly ChecklistItem[],
+  rows: readonly Entry[],
+  draft: { id: string; levels: number } | null,
+): ReadonlyMap<number, number> {
+  const position = draft ? rows.findIndex((entry) => String(entry.index) === draft.id) : -1;
+  const entry = rows[position];
+  if (!draft || !entry) return new Map();
+  const by = clampLevels(items, rows, position, draft.levels);
+  if ('refusal' in planLevel(items, rows, position, by)) return new Map();
+  const after = parseChecklist(shiftLevel(body, entry.index, by, rows[position - 1]?.index ?? entry.index));
+  // Open rows keep their order through a level change; done lines may
+  // slip past them in the body, so rows are matched by open position.
+  const shown = (item: ChecklistItem, i: number): number[] => (item.done ? [] : [i]);
+  const afterOpen = after.flatMap(shown);
+  const depths = new Map<number, number>();
+  items.flatMap(shown).forEach((index, k) => {
+    const depth = after[afterOpen[k] ?? -1]?.depth;
+    if (depth !== undefined && depth !== items[index]?.depth) depths.set(index, depth);
+  });
+  return depths;
+}

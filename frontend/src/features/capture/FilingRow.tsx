@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { refreshAppendedNote, useRetryCapture, usePendingCaptures } from '@/api/queries.ts';
-import { isTerminalStatus } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { formatDurationShort } from '@/features/notes/groups.ts';
@@ -14,12 +13,7 @@ import { useCachedNotes } from '@/offline/useNotesCache.ts';
 import { UNSENT_CAPTURES_KEY } from './ResumePrompt.tsx';
 import { dismissCapture, dismissCaptures, loadDismissed } from './dismissed.ts';
 import { FilingItem, NoticeGlyph, receiptTitle } from './filing/FilingItem.tsx';
-import {
-  groupReceipts,
-  isStuck,
-  retryMessage,
-  type ReceiptGroup,
-} from './filing/model.ts';
+import { retryMessage, tierCaptures, type ReceiptGroup } from './filing/model.ts';
 import { useLocalUpload } from './filing/useLocalUpload.ts';
 import { canRetryUpload, type CaptureModel } from './machine.ts';
 import { useCaptureStore } from './store.ts';
@@ -53,7 +47,7 @@ export { useLocalUpload } from './filing/useLocalUpload.ts';
  * room for about one note below them. A ring's day of thirteen recordings
  * into one note is still one line.
  *
- * What a row says, and the four stage segments, are `filing/model.ts`; one
+ * What a row says, the tiers and the four stage segments are `filing/model.ts`; one
  * row is `filing/FilingItem.tsx`; this device's own upload is
  * `filing/useLocalUpload.ts` and `LocalUploadItem` below.
  */
@@ -134,17 +128,7 @@ export function FilingRow() {
     [cached.data],
   );
 
-  // The tiers. A stuck capture is non-terminal but needs the person, so it
-  // sits with the failed ones rather than among the rows still moving.
-  const moving = captures.filter((capture) => !isTerminalStatus(capture.status) && !isStuck(capture));
-  const needsYou = captures.filter(
-    (capture) =>
-      (isTerminalStatus(capture.status) && capture.status !== 'appended') || isStuck(capture),
-  );
-  const groups = groupReceipts(captures);
-  // One receipt is shown as itself; two or more are the fold's.
-  const shown = groups.length === 1 ? groups : [];
-  const folded = groups.length > 1 ? groups : [];
+  const { moving, needsYou, groups, shown, folded } = tierCaptures(captures);
   const foldedCaptures = folded.reduce((sum, group) => sum + group.captureIds.length, 0);
   const [expanded, setExpanded] = useState(false);
   const sectionRef = useRef<HTMLElement>(null);

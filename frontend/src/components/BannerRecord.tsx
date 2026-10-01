@@ -10,8 +10,9 @@ import { useRecordTarget } from './useRecordTarget.ts';
  * moment the keyboard covers the tab bar and its disc.
  *
  * Rendered on the note screen whenever the note takes recordings, and shown
- * by CSS alone (`shell.css` `.banner-record`) only while one of the note's
- * fields has focus and `useKeyboardInset` has marked the keyboard up. The
+ * by CSS alone (`shell.css` `.banner-record`) only while `useKeyboardInset`
+ * has marked the keyboard up and one of the note's fields as focused
+ * (`data-keyboard` and `data-editing` on `<html>`). The
  * banner is its own grid row, so the mic can never cover a character of the
  * note, and the row does not change height.
  *

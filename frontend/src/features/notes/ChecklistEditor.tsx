@@ -10,11 +10,14 @@ import { ChecklistRow, ItemField } from './ChecklistRow.tsx';
 import {
   blockOf,
   canNest,
+  clampLevels,
   insertItemAfter,
-  moveItem,
-  MAX_DEPTH,
+  openBlock,
   parentOf,
   parseChecklist,
+  planLevel,
+  planMove,
+  previewDepths,
   removeDone,
   removeItem,
   setItemText,
@@ -22,6 +25,7 @@ import {
   toggleItem,
   uncheckAll,
   type ChecklistItem,
+  type Entry,
 } from './checklist.ts';
 import { useTidying } from './useTidyList.ts';
 
@@ -73,7 +77,7 @@ import { useTidying } from './useTidyList.ts';
  * can change nothing — the first row, a row as deep as the row above allows,
  * a row whose own sub-items would go past the third level — is left to the
  * browser, so the list is never a keyboard trap; from the grip the same
- * refusal is said (`plan`). Ticking a parent ticks its sub-items and the whole block
+ * refusal is said (`planLevel`). Ticking a parent ticks its sub-items and the whole block
  * is held for the beat and moves to Done together; reopening a sub-item
  * reopens its parent with it (`toggleItem`). A parent's block moves as one
  * from the grip: Move down steps past its own children, and a block that
@@ -157,6 +161,17 @@ export function ChecklistEditor({
       clearTimeout(timer);
     };
   }, [held]);
+
+  // The held rows are grouped by what they were, not by what they now are.
+  // Memoised so the drag's preview is remade only when the rows are.
+  const { open, done } = useMemo(() => {
+    const isHeld = (index: number): boolean => held?.includes(index) ?? false;
+    const entries: Entry[] = items.map((item, index) => ({ item, index }));
+    return {
+      open: entries.filter(({ item, index }) => (isHeld(index) ? item.done : !item.done)),
+      done: entries.filter(({ item, index }) => (isHeld(index) ? !item.done : item.done)),
+    };
+  }, [items, held]);
 
   /*
    * Where focus goes after a write that moved it: the index of the item
@@ -254,37 +269,6 @@ export function ChecklistEditor({
   };
 
   /**
-   * Where `by` levels would take the open row at `position` among `rows`
-   * (the open rows as shown): its new depth, or the fixed sentence that says
-   * why it cannot go. "Above" is the open row shown directly above, never
-   * the body's previous line, which may be a done one sitting in Done. One
-   * reading for Tab, the grip's arrows and menu, the drag's preview and its
-   * release, so what is previewed is what is written.
-   */
-  const plan = (rows: readonly Entry[], position: number, by: number): { depth: number } | { refusal: string } => {
-    const entry = rows[position];
-    if (!entry || by === 0) return { refusal: '' };
-    const depth = entry.item.depth;
-    if (by < 0) return depth === 0 ? { refusal: 'Already a top-level item' } : { depth: Math.max(0, depth + by) };
-    const above = rows[position - 1];
-    if (!above) return { refusal: 'Nothing above to nest under' };
-    if (canNest(items, entry.index, above.index, by)) {
-      return { depth: Math.min(depth + by, above.item.depth + 1, MAX_DEPTH) };
-    }
-    // Why `canNest` said no, in the order a person would look: a done row
-    // above (the one just ticked, held for the beat, or one it stands
-    // under), then no level left under the row above, then the row's own
-    // sub-items, which would go past the third level.
-    for (let i: number | null = above.index; i !== null; i = parentOf(items, i)) {
-      if (items[i]?.done) return { refusal: 'Cannot nest under a done item' };
-    }
-    if (Math.min(above.item.depth + 1, MAX_DEPTH) <= depth) {
-      return { refusal: depth >= MAX_DEPTH ? 'Already three levels deep' : 'Already a sub-item' };
-    }
-    return { refusal: 'Its sub-items are already three levels deep' };
-  };
-
-  /**
    * Moves the open row at `position` `by` levels — one from Tab, the arrows
    * and the menu, any number from a drag, which the caller has clamped to
    * where the row may go: one write, saved at once, or false when there is
@@ -297,7 +281,7 @@ export function ChecklistEditor({
   const shift = (position: number, by: number, focus: 'field' | 'grip'): boolean => {
     const entry = open[position];
     if (!entry) return false;
-    const target = plan(open, position, by);
+    const target = planLevel(items, open, position, by);
     if ('refusal' in target) {
       // A refusal is said from the grip, where the key otherwise does
       // nothing a screen reader can tell (DB6-22); from the field the key
@@ -343,65 +327,23 @@ export function ChecklistEditor({
     setAdding('');
   };
 
-  // The held rows are grouped by what they were, not by what they now are.
-  const entries = items.map((item, index) => ({ item, index }));
-  const isHeld = (index: number): boolean => held?.includes(index) ?? false;
-  const open = entries.filter(({ item, index }) => (isHeld(index) ? item.done : !item.done));
-  const done = entries.filter(({ item, index }) => (isHeld(index) ? !item.done : item.done));
-
-  /** The open-list positions of the block at body index `index`: the row and its open sub-items. */
-  const openBlock = (index: number): number[] => {
-    const block = blockOf(items, index);
-    return open.flatMap((entry, position) => (block.includes(entry.index) ? [position] : []));
-  };
-
-  /**
-   * A drag's levels, cut down to the largest move that fits: out to the top,
-   * in to one under the row shown above it, never past `MAX_DEPTH`
-   * ([−d, maxIn − d]), and no further than the row's own sub-items allow — a
-   * drag is placed by eye, so asking for one level too many moves as far as
-   * it can, where Tab and the arrows, one level a press, refuse. When not
-   * even one level fits it stays one, so the release is refused and said
-   * rather than dropped silently.
-   */
-  const clampLevels = (position: number, levels: number): number => {
-    const depth = open[position]?.item.depth ?? 0;
-    const above = open[position - 1];
-    if (levels < 0) return depth === 0 ? levels : Math.max(levels, -depth);
-    if (levels === 0 || !above) return levels;
-    let by = Math.max(1, Math.min(levels, Math.min(above.item.depth + 1, MAX_DEPTH) - depth));
-    while (by > 1 && 'refusal' in plan(open, position, by)) by -= 1;
-    return by;
-  };
-
   /**
    * Puts the open item at body index `index` — with its sub-items — in the
-   * slot of the open item at `position`: one body write, saved at once. A
-   * step down from a parent would land on its own first child, so the
-   * target moves past the block to the first row outside it. `focusGrip`
-   * keeps the keyboard on the moved row after the render.
+   * slot of the open item at `position` (`planMove`): one body write, saved
+   * at once. `focusGrip` keeps the keyboard on the moved row after the render.
    */
   const moveOpen = (index: number, position: number, focusGrip: boolean): void => {
-    const block = openBlock(index);
-    const current = block[0] ?? -1;
-    let at = position;
-    while (at > current && block.includes(at)) at += 1;
-    const target = open[at];
-    if (!target || target.index === index) {
+    const move = planMove(body, items, open, index, position);
+    if ('refusal' in move) {
       // The arrow keys at either end: said, since nothing moved and nothing
       // else says why (the menu disables its items there).
-      if (focusGrip) setAnnouncement(position < current ? 'Already at the top' : 'Already at the bottom');
+      if (focusGrip) setAnnouncement(move.refusal);
       return;
     }
-    const next = moveItem(body, index, target.index);
-    write(next);
-    // Moving down, the block's own rows have left the list above the slot.
-    if (focusGrip) focusGripAfterWrite.current = at > current ? at - (block.length - 1) : at;
+    write(move.next);
+    if (focusGrip) focusGripAfterWrite.current = move.gripAt;
     // The slot's level is the row's now; said, because no path here asked.
-    const landed = target.index > index ? target.index - (blockOf(items, index).length - 1) : target.index;
-    const depth = parseChecklist(next)[landed]?.depth ?? 0;
-    const was = items[index]?.depth ?? 0;
-    if (depth !== was) setAnnouncement(depth > was ? 'Now a sub-item' : 'Now a top-level item');
+    if (move.said !== null) setAnnouncement(move.said);
     save();
   };
 
@@ -417,7 +359,7 @@ export function ChecklistEditor({
       // the draft showed but nothing can mean; dropped there it goes back,
       // rather than past the next row too as the menu's Move down steps.
       const position = next.indexOf(moved);
-      if (openBlock(Number(moved)).includes(position)) return;
+      if (openBlock(items, open, Number(moved)).includes(position)) return;
       moveOpen(Number(moved), position, false);
     },
     // A tap on the grip opens the row's menu: the grip is the menu's own
@@ -429,7 +371,7 @@ export function ChecklistEditor({
     // the menu, which refuse what cannot be and say what they did.
     onShift: (id, levels) => {
       const position = openIds.indexOf(id);
-      shift(position, clampLevels(position, levels), 'grip');
+      shift(position, clampLevels(items, open, position, levels), 'grip');
     },
   });
   const dragging = drag.draggingId !== null;
@@ -445,34 +387,12 @@ export function ChecklistEditor({
       })
     : open;
 
-  /**
-   * The depth every open row would take if the sideways drag let go now, by
-   * body index, for the rows whose depth would change: the lifted row and
-   * the sub-items it carries, so the preview shows the whole block where
-   * release will put it. Read from the very write release makes
-   * (`shiftLevel`), so the two cannot disagree. Empty when no sideways drag
-   * is on or it asks for what `shift` would refuse.
-   */
-  const previewDepths = (): ReadonlyMap<number, number> => {
-    const draft = drag.draftShift;
-    const position = draft ? open.findIndex((entry) => String(entry.index) === draft.id) : -1;
-    const entry = open[position];
-    if (!draft || !entry) return new Map();
-    const by = clampLevels(position, draft.levels);
-    if ('refusal' in plan(open, position, by)) return new Map();
-    const after = parseChecklist(shiftLevel(body, entry.index, by, open[position - 1]?.index ?? entry.index));
-    // Open rows keep their order through a level change; done lines may
-    // slip past them in the body, so rows are matched by open position.
-    const shown = (item: ChecklistItem, i: number): number[] => (item.done ? [] : [i]);
-    const afterOpen = after.flatMap(shown);
-    const depths = new Map<number, number>();
-    items.flatMap(shown).forEach((index, k) => {
-      const depth = after[afterOpen[k] ?? -1]?.depth;
-      if (depth !== undefined && depth !== items[index]?.depth) depths.set(index, depth);
-    });
-    return depths;
-  };
-  const previews = previewDepths();
+  // The depth each row would take if the sideways drag let go now, remade
+  // only when the drag or the rows change, not on every move of the finger.
+  const previews = useMemo(
+    () => previewDepths(body, items, open, drag.draftShift),
+    [body, items, open, drag.draftShift],
+  );
 
   /** The grip's menu: the no-drag path to every place a row can go, its level, then the row's delete. */
   const gripMenu = (index: number, position: number, item: ChecklistItem): OverflowMenuItem[] => {
@@ -671,12 +591,6 @@ export function ChecklistEditor({
       </p>
     </div>
   );
-}
-
-/** An item and its index in the body: one row as the editor sees it. */
-interface Entry {
-  item: ChecklistItem;
-  index: number;
 }
 
 /** The add row, as a focus target. Never an item index. */

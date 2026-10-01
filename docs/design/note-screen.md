@@ -10,14 +10,14 @@ frontend; what the panels show is described elsewhere (`checklists.md` for
 the Items tab, `prompts.md` for the cleaned view, `append-vs-autosave.md`
 for how an edit and a voice append share the body). Code:
 `frontend/src/features/notes/NoteDetailScreen.tsx` (the composition;
-`NoteViews` holds the strip, the swipe and the panel; `TextPanel` the body
-and its mirror), `NoteTabs.tsx` (`useNoteTab`, `NoteTabList`),
+`NoteViews` holds the strip, the swipe and the panel), `TextPanel.tsx` (the
+body, its find mirror and Show's flash), `NoteTabs.tsx` (`useNoteTab`, `NoteTabList`),
 `NoteActions.tsx` (`NoteMenu`), `NoteDrawer.tsx` (`NoteDrawer`), `FindBar.tsx`
 with `find.ts`, `CleanedPanel.tsx`, `Recordings.tsx`, `ChecklistEditor.tsx`,
 `hooks/useHorizontalSwipe.ts`, `hooks/usePullToRefresh.ts`,
 `hooks/useKeyboardInset.ts` (called once in `components/AppShell.tsx`), the
 sheet (`styles/notes.css`; the scroll region's rules in `styles/shell.css`
-`.app__main`).
+`.app__main`; the hold's chrome on the bar in `styles/ptt.css`).
 
 ## Composition
 
@@ -265,7 +265,9 @@ its disc are under it. So `useKeyboardInset` also sets `data-keyboard` on
 is not a keyboard), and the note screen renders `BannerRecord` at the
 banner's right end: a 40 px disc in a 44 px target, raised and lined, never
 in the accent. CSS alone shows it, only while the keyboard is up and the
-title, the body or a checklist field has focus. The banner is its own grid
+title, the body or a checklist field has focus (`data-editing`, which
+`useKeyboardInset` sets from focus events on those fields; Find's box and
+the drawer's fields are not the note). The banner is its own grid
 row and the target takes its height out of the row's padding, so the mic
 cannot cover text and nothing reflows. Its `pointerdown` is prevented so
 the field keeps focus until the click; the click opens

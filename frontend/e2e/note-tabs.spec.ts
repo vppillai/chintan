@@ -678,6 +678,13 @@ test('with the keyboard up, the banner mic records into the note being typed in'
   await body.blur();
   await expect(mic).toBeHidden();
 
+  // Find's box is typed into too, but it is not the note: no mic for it.
+  await page.getByRole('button', { name: 'Find in note' }).click();
+  await expect(page.getByRole('searchbox', { name: 'Find in note' })).toBeFocused();
+  await expect(mic).toBeHidden();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('searchbox', { name: 'Find in note' })).toHaveCount(0);
+
   // Typed words are saved before the recording starts: the editor's
   // debounced save flushes as the note screen unmounts.
   await body.focus();

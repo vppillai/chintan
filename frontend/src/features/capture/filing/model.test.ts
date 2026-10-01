@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { CAPTURE_STATUSES, isTerminalStatus } from '@/api/schema.ts';
 import { STUCK_CREATED_AT, capture } from '@/test/filing.tsx';
 
-import { STAGES, describeAgoShort, groupReceipts, noticeKind, stageIndex } from './model.ts';
+import { STAGES, describeAgoShort, groupReceipts, noticeKind, stageIndex, tierCaptures } from './model.ts';
 
 describe('stageIndex', () => {
   it('lights a segment for every status the pipeline can leave a capture in', () => {
@@ -131,5 +131,26 @@ describe('noticeKind', () => {
     expect(group && noticeKind(group)).toBe('started');
     const [filed] = groupReceipts([capture({ status: 'appended', note_id: 'n1' })]);
     expect(filed && noticeKind(filed)).toBe('filed');
+  });
+});
+
+/** The tray's tiers, as `FilingRow` draws them: moving, needs the person, then the receipts. */
+describe('tierCaptures', () => {
+  it('sorts moving, stuck and failed rows, and shows one receipt as itself but folds two', () => {
+    const moving = capture({ id: 'moving' });
+    const stuck = capture({ id: 'stuck', created_at: STUCK_CREATED_AT });
+    const failed = capture({ id: 'failed', status: 'failed' });
+    const filed = capture({ id: 'filed', status: 'appended', note_id: 'n1' });
+    const one = tierCaptures([moving, stuck, failed, filed]);
+    expect(one.moving.map((row) => row.id)).toEqual(['moving']);
+    // A stuck capture is non-terminal but needs the person, with the failed ones.
+    expect(one.needsYou.map((row) => row.id)).toEqual(['stuck', 'failed']);
+    expect(one.shown.map((group) => group.noteId)).toEqual(['n1']);
+    expect(one.folded).toEqual([]);
+
+    const two = tierCaptures([filed, capture({ id: 'filed-2', status: 'appended', note_id: 'n2' })]);
+    expect(two.shown).toEqual([]);
+    expect(two.folded.map((group) => group.noteId).sort()).toEqual(['n1', 'n2']);
+    expect(two.groups).toBe(two.folded);
   });
 });
