@@ -813,6 +813,18 @@ if [ "$SMOKE" = "1" ] && is_apply; then
     # init failure as FunctionError. stderr is kept apart from the answer so
     # a CLI warning on it cannot read as a failure.
     worker="$(stack_output "$STACK" WorkerFunctionLiveAliasArn)"
+    # FAIL_WORKER_SMOKE=staging fails the worker smoke on purpose, so the
+    # rollback is rehearsed from a workflow_dispatch of Deploy Backend (its
+    # fail_worker_smoke input) instead of waiting for a bad build. Staging
+    # only, checked here as well as in the workflow: a rehearsal must have no
+    # way to reach prod. Above the alias check, and fatal without an alias,
+    # so a stack with no worker cannot turn the rehearsal into a passed smoke.
+    if [ "${FAIL_WORKER_SMOKE:-}" = "staging" ] && [ "$ENVIRONMENT" = "staging" ]; then
+        if [ -z "$worker" ] || [ "$worker" = "None" ]; then
+            die "FAIL_WORKER_SMOKE=staging but $STACK has no WorkerFunctionLiveAliasArn output; there is no worker smoke to fail"
+        fi
+        rollback_and_fail "smoke: the worker smoke failed on request (FAIL_WORKER_SMOKE=staging, a rollback rehearsal)"
+    fi
     if [ -n "$worker" ] && [ "$worker" != "None" ]; then
         info "smoke: invoke ${worker##*:function:} with the smoke task"
         worker_out="$(mktemp)"

@@ -34,6 +34,12 @@ on:
       - 'scripts/list-instances.sh'
       - '.github/workflows/deploy-backend.yaml'
   workflow_dispatch:
+    inputs:
+      fail_worker_smoke:
+        description: 'Rollback rehearsal: "staging" fails the staging worker smoke on purpose, so staging rolls back and prod does not run'
+        type: choice
+        options: ['no', 'staging']
+        default: 'no'
 
 env:
   # One region for the artifact bucket and every stack. infrastructure/bootstrap.yaml
@@ -255,6 +261,10 @@ jobs:
           # When the bootstrap stack exports it, CloudFormation acts under a
           # service role scoped to one stack rather than under the CI role.
           CFN_DEPLOY_ROLE_ARN: ${{ vars.CFN_DEPLOY_ROLE_ARN }}
+          # The rollback rehearsal (D13): set only here, never on the prod
+          # job, and deploy.sh ignores it unless ENVIRONMENT is staging.
+          # Empty on a push.
+          FAIL_WORKER_SMOKE: ${{ inputs.fail_worker_smoke }}
         run: scripts/ci-deploy-stack.sh
 
   # ALARM_EMAIL is passed to production only, below. The budget is account-scoped,
