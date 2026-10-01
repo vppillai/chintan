@@ -12,8 +12,14 @@ decided. Nothing else is.
 |---|---|
 | `2026-09-21/round-3.md` | Round 3: nine lenses on v0.5.16 and two verifiers, reconciled. The findings the 21 September batch worked from. |
 | `2026-09-21/morning-queue.md` | The owner's queue: what shipped, the decisions waiting, the round-4 section. Maintained. |
+| `2026-09-21/smoke-checklist-capture.md` | Smoke test of checklist notes and the capture-screen controls on prod (#64, #65), phone and desktop, both themes: four findings (the "N+" Checklists chip, long items clipped in the Items tab, "Use this list" leaving the Split up tab stale, automation-only console noise) and what worked, with the exact commands. Committed on 1 October from the 21 September checkout. |
+| `2026-09-21/qa-final.md` | The final hands-on pass after round 3 on prod (`v0.5.23`, #74), four parallel streams at two viewports and two themes: fifteen findings led by a language change detaching every recording's marker (High), what worked per round-3 item, the measurements, the sign-out and purge. Committed on 1 October from the 21 September checkout. |
 | `2026-09-24/round-4.md` | Round 4: eight lenses on the ten merges of 24 September, verified live. Ten findings and the seven streams that fix them. |
-| `2026-09-26/round-5-proposals.md` | Round 5: seven lenses on the owner's 26 September feedback. The ten asks answered (§1), the 24 decisions (§2), the eleven streams that shipped as #111–#125 (§3), the async-updates position and the prompt audit. `r5/` holds the decision renders — logo marks, header variants, disc glyphs; 3.7 MB — to be pruned once the decisions are taken. |
+| `2026-09-24/qa-r4-live.md` | The round-4 fixes verified on prod on 26 September (`v0.5.34`, #96–#99), phone and desktop: pins and their grips, the filing banner and stage labels, the hold overlay and its end on page-hide, every row PASS; nine notes and two devices created and purged. |
+| `2026-09-26/round-5-proposals.md` | Round 5: seven lenses on the owner's 26 September feedback. The ten asks answered (§1), the 24 decisions (§2), the eleven streams that shipped as #111–#125 (§3), the async-updates position and the prompt audit. `r5/` holds the decision renders — logo marks, header variants, disc glyphs; 2.7 MB — to be pruned once the three branding decisions (logo mark and brand-row placement, open since 26 September: L10 in `2026-10-01/platform-review.md` §4) are taken; the other 21 of the 24 are. |
+| `2026-09-27/qa-decisions-live.md` | The round-5 decision PRs (#129 branding, #130 nesting, #132 device-key expiry, #133 Notifications card) verified on prod on 27 September: branding 13/13, nesting 30/30, device keys 10/10, console 10/10, the Notifications card 5/5; no product failure. |
+| `2026-09-27/qa-feedback-live.md` | The owner's 27 September feedback (#135 delete-asks-first, #136 PTT scope, #137 Devices fold) verified on prod: 28/28, 13/13 and 7/7 checks pass; the console clean for these PRs with one pre-existing error on You. |
+| `2026-09-27/qa-regenerate-live.md` | "Regenerate from recordings" live on prod (`v0.5.51`, #138): the API battery, the phone UI, `chintanctl regenerate`, and an aged-note check. Three findings: the note listing's captures carry `last_progress_at: null`, so a regeneration of a note older than ten minutes shows as stuck at once (F1); cleanup is weak on filler words (F2, prompt quality); minor (F3). |
 | `2026-09-29/round-6-proposals.md` | Round 6: four lenses (routing, checklist intelligence, one-handed UX, simplify) on the owner's 29 September feedback. The asks answered (§1), the seven decisions (§2), the nine streams that shipped as #142–#162 (§3), the routing numbers (§4), the checklist strategy (§5) and the cleanup plan (§6). |
 | `2026-09-29/prod-battery.md` | The production routing battery three times and the items battery once, on the test tenant after #134 deployed: 17 of 22 routing rows three of three, the five that were not and why, the token cost per call. |
 | `2026-09-29/qa-r6-live.md` | Round 6 wave 1, verified live on 29 September: swipe between segments, the caret above the keyboard, the Details sheet as a nested scroller, checklist nesting and Split up as the editor, no note multi-select, the Note id in Details, delete-asks-first, the console, and a name-first routing probe through the inbox. All pass; five notes, no bug. |
@@ -26,8 +32,9 @@ decided. Nothing else is.
 | `2026-10-01/qa-r8-followups-live.md` | Live QA after the round-8 follow-ups (#203–#207), on the test tenant at 390×844 touch and 1280×800, Ink & Paper and Nocturne: the Details sheet's fixed head, hairline, Close and pull-to-refresh guard; Devices & shortcuts folded with its status line, opened by tap, by About's link and by a minted key; More → Less; a locked hold onto `/capture` with the clock carried over, Send into the right note, the ≥ 10 s Discard confirm; the Notifications switch and the subscription request shape (browser side stubbed); the tray, slide-left cancel, Back and console regressions. One Low bug: Escape has never closed the Details/Share sheet (F1). Tenant cleaned. |
 | `2026-10-01/lenses/` | The four lens reports the ledger is built from (`report-frontend.md` FE-1…22, `report-backend.md` BE-1…13, `report-platform.md` OPS-1…15, `report-docs-process.md` DOC-1…13, each with its "checked and clean" list) and the shared brief. Evidence, not rulings; the review above supersedes them where they disagree. |
 
-The queue names two hands-on passes from 21 September, `qa-final.md` and
-`smoke-checklist-capture.md`; neither was committed, and their outcome is in
-the queue's own QA section. The round-5 section names `qa-w1-live.md`, the 26
-September live pass on prod; it was not committed either, and its outcome is
-in that section.
+The two hands-on passes from 21 September the queue names, `qa-final.md`
+and `smoke-checklist-capture.md`, sat untracked in the owner's checkout until
+1 October and are committed above. The round-5 section names
+`qa-w1-live.md`, the 26 September live pass on prod, and the round-6 section
+`qa-delete-live.md`; neither was committed, and their outcome is in those
+sections.
