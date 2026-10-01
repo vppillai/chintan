@@ -1,12 +1,18 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { RouterProvider, createMemoryRouter, type RouteObject } from 'react-router';
-import { describe, expect, it } from 'vitest';
+import {
+  RouterProvider,
+  createBrowserRouter,
+  createMemoryRouter,
+  type RouteObject,
+} from 'react-router';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { screenForPath } from '@/components/AppShell.tsx';
 import { TestProviders } from '@/test/providers.tsx';
 
 import { routes } from './router.tsx';
+import { historyIndex } from './useTabNavigation.ts';
 
 type Router = ReturnType<typeof createMemoryRouter>;
 
@@ -241,6 +247,140 @@ describe('Back always means back', () => {
     const { router } = mount(['/']);
     await settle();
     expect(router.state.location.key).toBe('default');
+  });
+});
+
+/**
+ * The app's history is a stack with Home at the bottom (R8, F2): You and the
+ * archive only ever sit one above it, and the Home tab goes back down to it
+ * rather than pushing a second Home. These run on jsdom's real `history`,
+ * because the moves read React Router's `history.state.idx`, which a memory
+ * router never writes.
+ */
+describe("an app's stack, not a browser's", () => {
+  // A browser router listens to the window's `popstate` until disposed.
+  const mounted: Router[] = [];
+  afterEach(() => {
+    for (const router of mounted.splice(0)) router.dispose();
+  });
+
+  function mountBrowser(entry = '/') {
+    // A fresh first entry: React Router numbers from whatever state it finds.
+    window.history.replaceState(null, '', entry);
+    const router = createBrowserRouter(routes);
+    mounted.push(router);
+    render(
+      <TestProviders>
+        <RouterProvider router={router} />
+      </TestProviders>,
+    );
+    return router;
+  }
+
+  const at = (router: Router) => ({ url: url(router), idx: historyIndex() });
+  const tab = (name: string) =>
+    screen.getByRole('navigation', { name: 'Main' }).querySelector(`a[href$="${name}"]`)!;
+
+  async function landed(router: Router, expected: { url: string; idx: number }): Promise<void> {
+    await waitFor(() => {
+      expect(at(router)).toEqual(expected);
+    });
+  }
+
+  it('pushes You from Home, and the Home tab goes back down to it', async () => {
+    const user = userEvent.setup();
+    const router = mountBrowser();
+    await user.click(screen.getByRole('link', { name: 'You' }));
+    await landed(router, { url: '/settings', idx: 1 });
+    await user.click(screen.getByRole('link', { name: 'Home' }));
+    await landed(router, { url: '/', idx: 0 });
+    expect(router.state.historyAction).toBe('POP');
+  });
+
+  it('swaps You in for a note opened from Home, so Back from You is Home', async () => {
+    const user = userEvent.setup();
+    const router = mountBrowser();
+    await user.click(await screen.findByRole('button', { name: /roof repair/i }));
+    await landed(router, { url: '/notes/roof-repair', idx: 1 });
+    await user.click(screen.getByRole('link', { name: 'You' }));
+    await landed(router, { url: '/settings', idx: 1 });
+    await goBack(router);
+    await landed(router, { url: '/', idx: 0 });
+  });
+
+  it('goes Home from two deep in one Back: You, About, then Home', async () => {
+    const user = userEvent.setup();
+    const router = mountBrowser();
+    await user.click(screen.getByRole('link', { name: 'You' }));
+    await user.click(await screen.findByRole('link', { name: /About/ }));
+    await landed(router, { url: '/about', idx: 2 });
+    await user.click(screen.getByRole('link', { name: 'Home' }));
+    await landed(router, { url: '/', idx: 0 });
+  });
+
+  it('takes You from deep in the stack by going back to entry 1 and replacing it', async () => {
+    const user = userEvent.setup();
+    const router = mountBrowser();
+    await user.click(await screen.findByRole('button', { name: /roof repair/i }));
+    // A second note opened from the first, as an Ask citation or "Open" does.
+    await act(async () => {
+      await router.navigate('/notes/reading-list');
+    });
+    await landed(router, { url: '/notes/reading-list', idx: 2 });
+    await user.click(screen.getByRole('link', { name: 'You' }));
+    await landed(router, { url: '/settings', idx: 1 });
+    await goBack(router);
+    await landed(router, { url: '/', idx: 0 });
+  });
+
+  it('sends "‹ You" back to You instead of stacking a second one', async () => {
+    const user = userEvent.setup();
+    const router = mountBrowser();
+    await user.click(screen.getByRole('link', { name: 'You' }));
+    await user.click(await screen.findByRole('link', { name: /About/ }));
+    await user.click(await screen.findByRole('link', { name: /back to\s*you/i }, { timeout: 4_000 }));
+    await landed(router, { url: '/settings', idx: 1 });
+  });
+
+  it('puts You in a cold About\'s place under "‹ You", leaving Home then You', async () => {
+    const user = userEvent.setup();
+    const router = mountBrowser('/about');
+    await landed(router, { url: '/about', idx: 1 });
+    await user.click(await screen.findByRole('link', { name: /back to\s*you/i }, { timeout: 4_000 }));
+    await landed(router, { url: '/settings', idx: 1 });
+    await goBack(router);
+    await landed(router, { url: '/', idx: 0 });
+  });
+
+  it('seeds Home beneath a cold start on the archive', async () => {
+    const router = mountBrowser('/?view=archived');
+    await landed(router, { url: '/?view=archived', idx: 1 });
+    await goBack(router);
+    await landed(router, { url: '/', idx: 0 });
+  });
+
+  it('does nothing for the tab that is already open', async () => {
+    const user = userEvent.setup();
+    const router = mountBrowser();
+    await user.click(screen.getByRole('link', { name: 'You' }));
+    await landed(router, { url: '/settings', idx: 1 });
+    const key = router.state.location.key;
+    await user.click(screen.getByRole('link', { name: 'You' }));
+    await settle();
+    expect(router.state.location.key).toBe(key);
+    expect(historyIndex()).toBe(1);
+  });
+
+  it('leaves a modified click on a tab to the browser', async () => {
+    const router = mountBrowser();
+    const you = tab('/settings');
+    expect(you).toHaveAttribute('href', '/settings');
+    // A new tab or window is the browser's; this one stays where it is.
+    fireEvent.click(you, { ctrlKey: true });
+    fireEvent.click(you, { metaKey: true });
+    fireEvent.click(you, { button: 1 });
+    await settle();
+    expect(at(router)).toEqual({ url: '/', idx: 0 });
   });
 });
 

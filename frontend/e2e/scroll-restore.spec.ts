@@ -194,3 +194,20 @@ test.describe('a swipe between a note\'s tabs', () => {
     expect(Math.abs((await mainTop(page)) - line)).toBeLessThanOrEqual(4);
   });
 });
+
+test('the Home tab from a note returns the list to its place, as Back does (R8, F2)', async ({
+  page,
+  api,
+}) => {
+  manyNotes(api);
+  await page.goto('/');
+  const before = await scrollRowIntoView(page, /^Filler 30\b/);
+  await page.getByRole('button', { name: /^Filler 30\b/ }).first().click();
+  await expect(page.getByRole('textbox', { name: 'Note title' })).toBeVisible();
+  // The tab goes back to Home's own entry rather than pushing a new one, so
+  // the place kept under that entry's key comes back with it.
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Home' }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect.poll(() => mainTop(page)).toBeGreaterThan(before - 4);
+  expect(Math.abs((await mainTop(page)) - before)).toBeLessThanOrEqual(4);
+});

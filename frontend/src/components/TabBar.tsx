@@ -2,6 +2,7 @@ import { useCallback, useState, type CSSProperties, type ReactNode } from 'react
 import { Link, useLocation } from 'react-router';
 
 import { ROUTES } from '@/app/routes.ts';
+import { isPlainClick, useTabNavigation } from '@/app/useTabNavigation.ts';
 import { holdProgress, type HoldNotice } from '@/features/capture/holdGesture.ts';
 import { Waveform } from '@/features/capture/Waveform.tsx';
 import { formatElapsed } from '@/features/capture/machine.ts';
@@ -90,8 +91,11 @@ function retireCoach(): void {
  * list and covers the one thing the user scrolled to reach; a bar row in normal
  * flow cannot overlay anything, because the shell reserves the row.
  *
- * Tabs are links, not buttons: each is a navigation to a real URL, which is
- * what makes Back work without any state of its own.
+ * Tabs are links, not buttons: each is a real URL, so a modified click opens
+ * it in a new tab and a screen reader reads a link. A plain click is the
+ * app's own move (`useTabNavigation`, R8 F2): Home goes back down to the
+ * first entry, and You takes the place above it, so Back never walks every
+ * screen visited.
  *
  * The bar is also where push-to-talk is drawn (R8, F5). While the disc is
  * held, the Home slot reads "‹ Slide to cancel", the You slot shows the live
@@ -103,6 +107,7 @@ function retireCoach(): void {
 export function TabBar() {
   const { pathname } = useLocation();
   const [home, you] = TABS as [Tab, Tab];
+  const { goHome, goTab } = useTabNavigation();
   const into = useRecordTarget();
   const [coach, setCoach] = useState(readCoach);
   const onSent = useCallback(() => {
@@ -174,7 +179,13 @@ export function TabBar() {
       data-notice={notice ?? undefined}
       style={style}
     >
-      <TabLink tab={home} current={home.matches(pathname)} slot="start" hidden={active} />
+      <TabLink
+        tab={home}
+        current={home.matches(pathname)}
+        slot="start"
+        hidden={active}
+        onGo={goHome}
+      />
       <div className="tab-bar__record">
         {holding && (
           <span
@@ -194,7 +205,15 @@ export function TabBar() {
           {pill}
         </span>
       )}
-      <TabLink tab={you} current={you.matches(pathname)} slot="end" hidden={active} />
+      <TabLink
+        tab={you}
+        current={you.matches(pathname)}
+        slot="end"
+        hidden={active}
+        onGo={() => {
+          goTab(you.to);
+        }}
+      />
 
       {holding && (
         <span
@@ -256,12 +275,15 @@ function TabLink({
   current,
   slot,
   hidden,
+  onGo,
 }: {
   tab: Tab;
   current: boolean;
   slot: 'start' | 'end';
   /** Held or locked: the slot shows the hold, and the link keeps its box. */
   hidden: boolean;
+  /** The app's own move for a plain click; the `href` serves the rest. */
+  onGo: () => void;
 }) {
   return (
     <Link
@@ -269,6 +291,11 @@ function TabLink({
       className={`tab-bar__tab tab-bar__slot tab-bar__slot--${slot}`}
       aria-current={current ? 'page' : undefined}
       inert={hidden}
+      onClick={(event) => {
+        if (!isPlainClick(event)) return;
+        event.preventDefault();
+        onGo();
+      }}
     >
       <Icon name={tab.icon} size={22} />
       <span className="tab-bar__label">{tab.label}</span>

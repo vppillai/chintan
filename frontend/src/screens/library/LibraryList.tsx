@@ -4,6 +4,7 @@ import { ApiError } from '@/api/problem.ts';
 import type { useNotes } from '@/api/queries.ts';
 import type { NoteWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
+import { isPlainClick, useTabNavigation } from '@/app/useTabNavigation.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { LoadMore } from '@/components/LoadMore.tsx';
 import { NoteRow } from '@/components/NoteRow.tsx';
@@ -70,6 +71,7 @@ export function LibraryList({
   loadMore,
   archived,
 }: LibraryListProps) {
+  const { goTab } = useTabNavigation();
   const nothingToShow = searching
     ? hits.length === 0
     : pinned.length === 0 && groups.every((group) => group.notes.length === 0);
@@ -247,7 +249,16 @@ export function LibraryList({
       {!searching &&
         view === 'active' &&
         (notes.length > 0 || (archived.count ?? 0) > 0) && (
-          <Link to={ROUTES.archive} className="library-archive">
+          <Link
+            to={ROUTES.archive}
+            className="library-archive"
+            onClick={(event) => {
+              // A top-level screen, like You: pushed from Home, never stacked twice.
+              if (!isPlainClick(event)) return;
+              event.preventDefault();
+              goTab(ROUTES.archive);
+            }}
+          >
             <Icon name="archive" size={18} />
             <span>
               Archive

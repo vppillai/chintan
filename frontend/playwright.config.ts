@@ -57,7 +57,8 @@ export default defineConfig({
      * engine are the ones the owner actually uses. Playwright's WebKit has no
      * fake media device and no `microphone` permission, so the capture and
      * offline-recording specs stay on Chromium; sign-in, the library, the
-     * archive, playback, accessibility and one layout viewport run here too.
+     * archive, playback, back navigation, accessibility and one layout viewport
+     * run here too.
      *
      * The layout matrix is eleven viewports by two themes; one phone in one
      * theme is enough to catch a WebKit-only regression, and the rest is
@@ -73,7 +74,7 @@ export default defineConfig({
     {
       name: 'webkit',
       use: { ...devices['Desktop Safari'], serviceWorkers: 'block' },
-      testMatch: /(auth|archive|playback|a11y|manifest|layout|pins)\.spec\.ts/,
+      testMatch: /(auth|archive|playback|a11y|manifest|layout|pins|back-nav)\.spec\.ts/,
       grepInvert:
         /layout\.spec\.ts.*(320x568|375x667|393x873|412x915|844x390|768x1024|1024x768|1280x800|1440x900|1920x1080|2560x1080|nocturne|capture ·|record button)/,
     },

@@ -18,6 +18,7 @@ import { ApiError } from '@/api/problem.ts';
 import { queryKeys, useInFlightCaptures, useNote, useSettings } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
+import { historyIndex } from '@/app/useTabNavigation.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
 import { FilingBanner } from '@/features/capture/FilingBanner.tsx';
@@ -979,7 +980,7 @@ export function effectiveLanguage(
  * Goes back through history when there is history to go back through, so a
  * note opened from a filtered library returns to that filter; only a cold
  * start with nothing beneath it goes to the library directly. React Router
- * numbers its entries in `history.state.idx`, and `useBackGuard` seeds the
+ * numbers its entries (`historyIndex`), and `useBackGuard` seeds the
  * library under any deep link, so the fallback is rarely taken — it is here
  * for the case where it is.
  */
@@ -990,8 +991,7 @@ function BackLink() {
       type="button"
       className="back-link"
       onClick={() => {
-        const index = (window.history.state as { idx?: number } | null)?.idx ?? 0;
-        if (index > 0) void navigate(-1);
+        if (historyIndex() > 0) void navigate(-1);
         else void navigate(ROUTES.notes);
       }}
     >
