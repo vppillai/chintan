@@ -66,6 +66,7 @@
 #
 # Usage:
 #   scripts/bootstrap-agent.sh                 # dry run — prints the plan, changes nothing
+#   scripts/bootstrap-agent.sh --dry-run       # the same, spelled out
 #   scripts/bootstrap-agent.sh --apply         # create or update
 #   scripts/bootstrap-agent.sh --verify        # check what exists, change nothing
 #   scripts/bootstrap-agent.sh --region <r>    # default: us-west-2
@@ -85,6 +86,7 @@ REGION="us-west-2"
 while [ $# -gt 0 ]; do
     case "$1" in
         --apply) APPLY=1 ;;
+        --dry-run) APPLY=0 ;;
         --verify) VERIFY_ONLY=1 ;;
         --json) AS_JSON="--json" ;;
         --region)
