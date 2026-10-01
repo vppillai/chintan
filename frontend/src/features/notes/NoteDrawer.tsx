@@ -97,136 +97,150 @@ export function NoteDrawer({
           </button>
         </div>
 
-        {open === 'details' ? (
-          <>
-            <NoteLanguage
-              id={noteLanguageFieldId(note.id)}
-              value={draft.language ?? ''}
-              onChange={(language) => {
-                editor.edit({ language });
-                void editor.saveNow();
-              }}
-            />
-            <TagEditor
-              label="Tags"
-              values={draft.tags}
-              placeholder="Add a tag"
-              onChange={(tags) => {
-                editor.edit({ tags });
-              }}
-              onCommit={() => void editor.saveNow()}
-            />
-            <TagEditor
-              label="Also called"
-              values={draft.aliases}
-              placeholder="Add another name"
-              maxLength={120}
-              onChange={(aliases) => {
-                editor.edit({ aliases });
-              }}
-              onCommit={() => void editor.saveNow()}
-            />
-            <VerbatimSwitch
-              checked={draft.verbatim ?? note.verbatim ?? false}
-              onChange={(verbatim) => {
-                editor.edit({ verbatim });
-                void editor.saveNow();
-              }}
-            />
-            <ChecklistSwitch
-              checked={(draft.kind ?? note.kind ?? 'note') === 'checklist'}
-              onChange={(checklist) => {
-                // The body is converted with the kind, in the one PATCH: a
-                // checklist whose body is still prose would show every
-                // paragraph as one open item and normalise it on the first
-                // write, which is the conversion done by surprise.
-                const body = checklist ? proseToChecklist(draft.body) : checklistToProse(draft.body);
-                editor.edit({ kind: checklist ? 'checklist' : 'note', body });
-                const saved = editor.saveNow();
-                /*
-                 * Then a tidy, since a dictated paragraph is one long item
-                 * until it is split (R8-F8). Only once the server has the
-                 * checklist — a save that failed would have the worker clean
-                 * the prose — and only when some item is more than a word,
-                 * since a list of single words has nothing to split.
-                 */
-                if (checklist && parseChecklist(body).some((item) => /\S\s+\S/.test(item.text))) {
-                  void saved.then(() => {
-                    const stored = queryClient.getQueryData<NoteDetailWire>(queryKeys.note(note.id));
-                    if (stored?.kind === 'checklist') startTidy(note.id, true);
-                  });
-                }
-              }}
-            />
-            {/*
-              Last, because a note's id is a fact rarely needed: it is what a
-              device's `X-Chintan-Note-Id` header carries to file into this
-              note, and until now the only way to it was the address bar
-              (owner, 2026-09-29). `CopyButton` handles the clipboard fallback
-              and says Copied or failed.
-            */}
-            <section className="language-field">
-              <h2 className="tag-editor__label">Note id</h2>
-              <code className="note-id">{note.id}</code>
-              <CopyButton
-                label="Copy note id"
-                text={() => note.id}
-                className="settings-status__action"
+        {/*
+          Only the body scrolls, so the head is a row of the sheet that never
+          moves and Close is always in reach (QA 2026-09-21, finding 7). The
+          listener marks the sheet scrolled for the head's hairline where the
+          browser has no scroll-driven animation (`notes.css`).
+        */}
+        <div
+          className="note-panel__body"
+          onScroll={(event) => {
+            const body = event.currentTarget;
+            body.parentElement?.toggleAttribute('data-scrolled', body.scrollTop > 0);
+          }}
+        >
+          {open === 'details' ? (
+            <>
+              <NoteLanguage
+                id={noteLanguageFieldId(note.id)}
+                value={draft.language ?? ''}
+                onChange={(language) => {
+                  editor.edit({ language });
+                  void editor.saveNow();
+                }}
               />
-              <p className="language-field__hint">
-                For <code>X-Chintan-Note-Id</code>: a device that sends this header files
-                everything into this note (You → Devices &amp; shortcuts).
-              </p>
-            </section>
-          </>
-        ) : (
-          /*
-           * Title first, then the body: a body pasted somewhere else with no
-           * title loses what it was about, and re-typing that is exactly the
-           * friction this is meant to remove.
-           */
-          <div className="note-copy">
-            <CopyButton
-              label="Copy note"
-              text={() => [draft.title.trim(), draft.body.trim()].filter(Boolean).join('\n\n')}
-            />
-            <DownloadButton
-              label="Download note"
-              filename={() => `${filenameFor(draft.title)}.md`}
-              blob={() =>
-                Promise.resolve(
-                  new Blob([`# ${draft.title.trim()}\n\n${draft.body.trim()}\n`], {
-                    type: 'text/markdown',
-                  }),
-                )
-              }
-            />
-            {/*
-              The worker's rewrite, when there is one, named for what it is: a
-              control called "Copy" next to another called "Copy" would mean
-              neither. Stale or not — the user can see which it is on its tab.
-            */}
-            {cleaned && (
-              <>
-                <CopyButton
-                  label="Copy cleaned view"
-                  text={() => cleanedDocument(draft.title, cleaned.body)}
-                />
-                <DownloadButton
-                  label="Download cleaned view"
-                  filename={() => `${filenameFor(draft.title)} (cleaned).md`}
-                  blob={() =>
-                    Promise.resolve(
-                      new Blob([cleanedMarkdown(draft.title, cleaned.body)], {
-                        type: 'text/markdown',
-                      }),
-                    )
+              <TagEditor
+                label="Tags"
+                values={draft.tags}
+                placeholder="Add a tag"
+                onChange={(tags) => {
+                  editor.edit({ tags });
+                }}
+                onCommit={() => void editor.saveNow()}
+              />
+              <TagEditor
+                label="Also called"
+                values={draft.aliases}
+                placeholder="Add another name"
+                maxLength={120}
+                onChange={(aliases) => {
+                  editor.edit({ aliases });
+                }}
+                onCommit={() => void editor.saveNow()}
+              />
+              <VerbatimSwitch
+                checked={draft.verbatim ?? note.verbatim ?? false}
+                onChange={(verbatim) => {
+                  editor.edit({ verbatim });
+                  void editor.saveNow();
+                }}
+              />
+              <ChecklistSwitch
+                checked={(draft.kind ?? note.kind ?? 'note') === 'checklist'}
+                onChange={(checklist) => {
+                  // The body is converted with the kind, in the one PATCH: a
+                  // checklist whose body is still prose would show every
+                  // paragraph as one open item and normalise it on the first
+                  // write, which is the conversion done by surprise.
+                  const body = checklist ? proseToChecklist(draft.body) : checklistToProse(draft.body);
+                  editor.edit({ kind: checklist ? 'checklist' : 'note', body });
+                  const saved = editor.saveNow();
+                  /*
+                   * Then a tidy, since a dictated paragraph is one long item
+                   * until it is split (R8-F8). Only once the server has the
+                   * checklist — a save that failed would have the worker clean
+                   * the prose — and only when some item is more than a word,
+                   * since a list of single words has nothing to split.
+                   */
+                  if (checklist && parseChecklist(body).some((item) => /\S\s+\S/.test(item.text))) {
+                    void saved.then(() => {
+                      const stored = queryClient.getQueryData<NoteDetailWire>(queryKeys.note(note.id));
+                      if (stored?.kind === 'checklist') startTidy(note.id, true);
+                    });
                   }
+                }}
+              />
+              {/*
+                Last, because a note's id is a fact rarely needed: it is what a
+                device's `X-Chintan-Note-Id` header carries to file into this
+                note, and until now the only way to it was the address bar
+                (owner, 2026-09-29). `CopyButton` handles the clipboard fallback
+                and says Copied or failed.
+              */}
+              <section className="language-field">
+                <h2 className="tag-editor__label">Note id</h2>
+                <code className="note-id">{note.id}</code>
+                <CopyButton
+                  label="Copy note id"
+                  text={() => note.id}
+                  className="settings-status__action"
                 />
-              </>
-            )}
-          </div>
-        )}
+                <p className="language-field__hint">
+                  For <code>X-Chintan-Note-Id</code>: a device that sends this header files
+                  everything into this note (You → Devices &amp; shortcuts).
+                </p>
+              </section>
+            </>
+          ) : (
+            /*
+             * Title first, then the body: a body pasted somewhere else with no
+             * title loses what it was about, and re-typing that is exactly the
+             * friction this is meant to remove.
+             */
+            <div className="note-copy">
+              <CopyButton
+                label="Copy note"
+                text={() => [draft.title.trim(), draft.body.trim()].filter(Boolean).join('\n\n')}
+              />
+              <DownloadButton
+                label="Download note"
+                filename={() => `${filenameFor(draft.title)}.md`}
+                blob={() =>
+                  Promise.resolve(
+                    new Blob([`# ${draft.title.trim()}\n\n${draft.body.trim()}\n`], {
+                      type: 'text/markdown',
+                    }),
+                  )
+                }
+              />
+              {/*
+                The worker's rewrite, when there is one, named for what it is: a
+                control called "Copy" next to another called "Copy" would mean
+                neither. Stale or not — the user can see which it is on its tab.
+              */}
+              {cleaned && (
+                <>
+                  <CopyButton
+                    label="Copy cleaned view"
+                    text={() => cleanedDocument(draft.title, cleaned.body)}
+                  />
+                  <DownloadButton
+                    label="Download cleaned view"
+                    filename={() => `${filenameFor(draft.title)} (cleaned).md`}
+                    blob={() =>
+                      Promise.resolve(
+                        new Blob([cleanedMarkdown(draft.title, cleaned.body)], {
+                          type: 'text/markdown',
+                        }),
+                      )
+                    }
+                  />
+                </>
+              )}
+            </div>
+          )}
+        </div>
       </section>
     </div>
   );

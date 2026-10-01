@@ -101,12 +101,69 @@ test('the Details sheet keeps Close in reach while its content scrolls', async (
   const close = page.getByRole('button', { name: 'Close details' });
   await expect(close).toBeVisible();
 
-  const scrolled = await page.locator('.note-panel').evaluate((panel) => {
-    panel.scrollTop = panel.scrollHeight;
-    return panel.scrollTop;
+  const scrolled = await page.locator('.note-panel__body').evaluate((body) => {
+    body.scrollTop = body.scrollHeight;
+    return body.scrollTop;
   });
   expect(scrolled).toBeGreaterThan(0);
   await expect(close).toBeInViewport();
+});
+
+test('the Details head stays put while only the body scrolls, and nothing shows above it', async ({
+  page,
+}) => {
+  // The sheet used to be the scroller with a sticky head, so the content slid
+  // up under a bare band and could show in the sheet's top padding (owner,
+  // 2026-09-30). Now the head is a fixed row and only the body scrolls.
+  await page.setViewportSize({ width: 412, height: 560 });
+  await page.goto('/notes/roof-repair');
+  await noteAction(page, 'Details');
+  const panel = page.locator('.note-panel');
+  const head = page.locator('.note-panel__head');
+  const body = page.locator('.note-panel__body');
+  await expect(head).toBeVisible();
+  const edge = () => head.evaluate((el) => getComputedStyle(el).borderBottomColor);
+  const flat = await edge();
+  const headTop = (await head.boundingBox())!.y;
+  expect(await panel.evaluate((sheet) => sheet.scrollTop)).toBe(0);
+
+  for (const to of ['mid', 'end'] as const) {
+    const scrolled = await body.evaluate((el, where) => {
+      el.scrollTop = where === 'end' ? el.scrollHeight : (el.scrollHeight - el.clientHeight) / 2;
+      el.dispatchEvent(new Event('scroll'));
+      return el.scrollTop;
+    }, to);
+    expect(scrolled, 'the body must scroll for this to mean anything').toBeGreaterThan(0);
+    await expect.poll(async () => (await head.boundingBox())!.y).toBe(headTop);
+    // The sheet itself never scrolls, and the head draws its hairline.
+    expect(await panel.evaluate((sheet) => sheet.scrollTop)).toBe(0);
+    await expect.poll(edge).not.toBe(flat);
+    await expect(panel).toHaveAttribute('data-scrolled', '');
+    // What the body scrolled away is clipped at the head's foot: from the
+    // sheet's top edge down through the head, no point lands in the body.
+    const above = await page.evaluate(() => {
+      const sheet = document.querySelector('.note-panel')!.getBoundingClientRect();
+      const headBottom = document.querySelector('.note-panel__head')!.getBoundingClientRect().bottom;
+      const clip = document.querySelector('.note-panel__body')!.getBoundingClientRect().top;
+      const hits: string[] = [];
+      for (let y = Math.ceil(sheet.top) + 1; y < headBottom; y += 2) {
+        for (const x of [sheet.left + 24, sheet.left + sheet.width / 2]) {
+          const hit = document.elementFromPoint(x, y);
+          if (hit?.closest('.note-panel__body')) hits.push(`${hit.tagName}@${y}`);
+        }
+      }
+      return { headBottom, clip, hits };
+    });
+    expect(above.clip).toBeGreaterThanOrEqual(above.headBottom - 0.5);
+    expect(above.hits).toEqual([]);
+  }
+
+  await body.evaluate((el) => {
+    el.scrollTop = 0;
+    el.dispatchEvent(new Event('scroll'));
+  });
+  await expect.poll(edge).toBe(flat);
+  await expect(panel).not.toHaveAttribute('data-scrolled');
 });
 
 test.describe('on a phone', () => {
@@ -153,7 +210,7 @@ test.describe('on a phone', () => {
     await page.setViewportSize({ width: 412, height: 700 });
     await page.goto('/notes/roof-repair');
     await noteAction(page, 'Details');
-    const panel = page.locator('.note-panel');
+    const panel = page.locator('.note-panel__body');
     const before = await panel.evaluate((sheet) => {
       sheet.scrollTop = sheet.scrollHeight;
       return sheet.scrollTop;
