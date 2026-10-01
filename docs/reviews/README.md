@@ -35,6 +35,6 @@ decided. Nothing else is.
 The two hands-on passes from 21 September the queue names, `qa-final.md`
 and `smoke-checklist-capture.md`, sat untracked in the owner's checkout until
 1 October and are committed above. The round-5 section names
-`qa-w1-live.md`, the 26 September live pass on prod, and the round-6 section
-`qa-delete-live.md`; neither was committed, and their outcome is in those
-sections.
+`qa-w1-live.md`, the 26 September live pass on prod; it was not committed,
+nor was `qa-delete-live.md` from the same day, and their outcome is in that
+section.
