@@ -80,6 +80,8 @@ function server(
     note: structuredClone(initial),
     patches: [] as Record<string, unknown>[],
     cleans: [] as (Record<string, unknown> | null)[],
+    /** PATCHes refused for a stale version, which `patches` leaves out. */
+    conflicts: 0,
   };
   const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
     const url = new URL(String(input));
@@ -87,9 +89,13 @@ function server(
     if (url.pathname.endsWith('/clean') && method === 'POST') {
       state.cleans.push(init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null);
       const failing = error !== undefined && state.cleans.length <= failures;
+      // As the server: accepting a clean stamps the row, and the worker's
+      // answer bumps it again, though neither touches the words.
+      state.note = { ...state.note, version: state.note.version + 1 };
       setTimeout(() => {
         state.note = {
           ...state.note,
+          version: state.note.version + 1,
           cleaned: {
             ...SPLIT,
             body: failing ? '' : split,
@@ -102,6 +108,16 @@ function server(
     }
     if (method === 'PATCH') {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      // Only accepted writes are counted as patches: an edit made while a
+      // clean is in flight crosses its version stamp, which the editor's
+      // 409 rebase answers, and that is not what these tests are about.
+      if (body['version'] !== state.note.version) {
+        state.conflicts += 1;
+        return new Response(
+          JSON.stringify({ type: 'about:blank', title: 'Conflict', status: 409, current_version: state.note.version }),
+          { status: 409, headers: { 'content-type': 'application/problem+json' } },
+        );
+      }
       state.patches.push(body);
       const nextBody = typeof body['body'] === 'string' ? body['body'] : state.note.body;
       const cleaned = state.note.cleaned;
@@ -146,6 +162,7 @@ function server(
     set note(next: NoteDetailWire) { state.note = next; },
     get patches() { return state.patches; },
     get cleans() { return state.cleans; },
+    get conflicts() { return state.conflicts; },
   };
 }
 
@@ -291,7 +308,10 @@ describe('a checklist note', () => {
     await waitFor(() => {
       expect(api.patches).toHaveLength(1);
     });
-    expect(api.patches[0]).toEqual(expect.objectContaining({ body: SPLIT.body }));
+    // On the version the clean and its answer moved the note to (3 → 5): the
+    // write is not sent stale and rescued by a 409 round trip (R8-P1).
+    expect(api.patches[0]).toEqual(expect.objectContaining({ body: SPLIT.body, version: 5 }));
+    expect(api.conflicts).toBe(0);
     expect(screen.getByRole('textbox', { name: 'Item 3' })).toHaveValue('Butter');
     expect(toastText()).toBe('List tidied: 3 lines → 4 items.');
     expect(screen.queryByText('Tidying the list…', { selector: '.checklist-editor__status' })).toBeNull();
@@ -302,6 +322,7 @@ describe('a checklist note', () => {
     });
     expect(api.patches[1]).toEqual(expect.objectContaining({ body: SHOPPING.body }));
     expect(screen.queryByRole('textbox', { name: 'Item 3' })).toBeNull();
+    expect(api.conflicts).toBe(0);
   });
 
   it('the tidy’s Undo refuses once a recording has landed in the list meanwhile', async () => {
@@ -476,7 +497,9 @@ describe('a checklist note', () => {
     await waitFor(() => {
       expect(api.patches).toHaveLength(2);
     });
-    expect(api.patches[1]).toEqual(expect.objectContaining({ body: split }));
+    // Conversion 1 → 2, the clean and its answer 2 → 4: no 409 on the way (R8-P1).
+    expect(api.patches[1]).toEqual(expect.objectContaining({ body: split, version: 4 }));
+    expect(api.conflicts).toBe(0);
     expect(toastText()).toBe('Made a checklist: 2 paragraphs → 2 items.');
 
     await user.click(screen.getByRole('button', { name: 'Undo' }));

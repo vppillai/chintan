@@ -169,6 +169,14 @@ export function useApplyTidy(note: NoteDetailWire, editor: NoteEditor): void {
     }
 
     const written = cleaned.body;
+    /*
+     * The clean request and its answer each bumped the note's version, and
+     * this effect, a child's, runs before the editor's own sync effect has
+     * seen the poll that brought them; the save would leave on the version
+     * from before the clean and come back 409 (R8-P1). `note` is that poll's
+     * copy, and its body is the editor's (checked above), so it is adopted.
+     */
+    editor.adopt(note);
     editor.edit({ body: written });
     void editor.saveNow();
     const before = parseChecklist(previous).length;
@@ -191,7 +199,7 @@ export function useApplyTidy(note: NoteDetailWire, editor: NoteEditor): void {
         },
       },
     });
-  }, [entry, cleaned, note.id, note.body, note.kind, editor, start]);
+  }, [entry, cleaned, note, editor, start]);
 
   /*
    * A worker that never answers must not leave "Tidying…" up for good. The
