@@ -250,12 +250,6 @@ export function SettingsScreen() {
             ))}
           </select>
         </SettingsRow>
-        {/*
-          The one way into `/talk` from inside the app (round-4 R4-16): the
-          manifest shortcut needs a long press on an installed icon, and a
-          person who only ever taps the mic never meets the hold gesture.
-        */}
-        <RowLink to={ROUTES.talk} label="PTT" hint="Hold to talk, release to send" />
       </SettingsCard>
 
       {/* ---- Appearance: applied on the device at once, and saved ---------- */}

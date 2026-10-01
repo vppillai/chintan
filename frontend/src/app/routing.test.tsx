@@ -40,11 +40,9 @@ const url = (router: Router) => `${path(router)}${router.state.location.search}`
 const shell = () => document.querySelector('.app');
 
 describe('screenForPath', () => {
-  it('names every screen the shell lays out, /talk included, and only the rest "other"', () => {
+  it('names every screen the shell lays out, and only the rest "other"', () => {
     expect(screenForPath('/')).toBe('library');
     expect(screenForPath('/capture')).toBe('capture');
-    expect(screenForPath('/talk')).toBe('talk');
-    expect(screenForPath('/talk/')).toBe('talk');
     expect(screenForPath('/notes/roof-repair')).toBe('note');
     expect(screenForPath('/elsewhere')).toBe('other');
   });
@@ -150,6 +148,15 @@ describe('the capture screen is full screen', () => {
 describe('old URLs still land somewhere', () => {
   it('sends /notes to the library', async () => {
     const { router } = mount(['/notes']);
+    await settle();
+    await waitFor(() => {
+      expect(path(router)).toBe('/');
+    });
+    expect(screen.getByRole('heading', { name: /^Notes/ })).toBeInTheDocument();
+  });
+
+  it('sends /talk, the deleted PTT screen, Home with its query, since an installed app keeps the old shortcut for days (F7)', async () => {
+    const { router } = mount(['/talk?note=roof-repair']);
     await settle();
     await waitFor(() => {
       expect(path(router)).toBe('/');

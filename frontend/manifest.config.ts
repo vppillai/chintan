@@ -141,14 +141,6 @@ export function chintanManifest(base: string, identity: AppIdentity) {
         url: at('capture'),
         icons: [{ src: at('icon-192.png'), sizes: '192x192' }],
       },
-      {
-        // Plain "PTT", not "Chintan PTT": it already sits under the app's own icon.
-        name: 'PTT',
-        short_name: 'PTT',
-        description: 'Hold to talk, release to send',
-        url: at('talk'),
-        icons: [{ src: at('icon-192.png'), sizes: '192x192' }],
-      },
     ],
   };
 }

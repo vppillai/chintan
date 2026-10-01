@@ -27,7 +27,7 @@ import { isTargeted, loadTargeted } from './targeted.ts';
 import { awaitsConnection } from './useResendOnReconnect.ts';
 
 // The row's parts live under `filing/`; the screens that draw a part of the
-// row on their own — a note's Recordings tab, `/talk`, the note screen — keep
+// row on their own — a note's Recordings tab, the note screen — keep
 // importing them from here.
 export { FilingStages } from './filing/FilingItem.tsx';
 export { retryMessage } from './filing/model.ts';

@@ -30,15 +30,9 @@ export function RecordingIndicator() {
   if (location.pathname === ROUTES.capture) return null;
   if (!isCaptureBusy(model)) return null;
   // On the library an upload is already shown as the filing row at the top,
-  // with its percentage, and `/talk` draws the same row under its button; a
-  // second line saying the same thing is noise. Every other screen still
-  // says so, because nothing else on them does.
-  if (
-    model.state === 'uploading' &&
-    (location.pathname === ROUTES.home || location.pathname === ROUTES.talk)
-  ) {
-    return null;
-  }
+  // with its percentage; a second line saying the same thing is noise. Every
+  // other screen still says so, because nothing else on them does.
+  if (model.state === 'uploading' && location.pathname === ROUTES.home) return null;
   // A recording sent into a note returns to that note, whose filing banner
   // draws the upload on every tab; this row above the bar was a second word
   // for the same thing, and tapping it went to a capture screen that only

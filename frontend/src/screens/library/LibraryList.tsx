@@ -239,7 +239,7 @@ export function LibraryList({
       {/*
         The way into the archive from the active list, whatever its chip is
         doing — once there is a library to walk from or an archive to walk
-        into. A first-run screen showed "Tap PTT to record your first note, or hold it and talk."
+        into. A first-run screen showed a line on how to record
         and then "Archive · 0", the nothing T17 took out of the chips; the
         row hides a zero for the same reason the chip does (QA 2026-09-21,
         finding 13).

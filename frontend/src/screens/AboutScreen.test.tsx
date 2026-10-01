@@ -23,11 +23,14 @@ describe('About', () => {
 
     expect(screen.getByRole('heading', { name: config.appName, level: 1 })).toBeInTheDocument();
     expect(screen.getByText(config.appDescription)).toHaveClass('about__lede');
-    // What it does, in one paragraph under the name, naming both ways in:
-    // the tab-bar disc, and PTT from You or the shortcut (round-4 R4-16;
-    // the hold left the tab bar on owner feedback 2026-09-27).
-    const intro = screen.getByText(/tap Record and talk/i);
-    expect(intro).toHaveTextContent(/open PTT from You or the home-screen shortcut and hold to talk/i);
+    // What it does, in one paragraph under the name, naming both gestures on
+    // the one disc: a tap is hands-free, a hold is push-to-talk (R8, F5). The
+    // PTT screen and its shortcut are gone (F7), so nothing points at them.
+    const intro = screen.getByText(/tap Record for a hands-free recording/i);
+    expect(intro).toHaveTextContent(
+      /hold it to talk and let go to send; slide up to lock, left to cancel/i,
+    );
+    expect(intro).not.toHaveTextContent(/PTT|shortcut/i);
     expect(intro).toHaveTextContent(/hear what you actually said/i);
   });
 
@@ -44,7 +47,7 @@ describe('About', () => {
     expect(
       Array.from(steps.querySelectorAll('.about__step-title'), (title) => title.textContent?.replace(/^\d/, '')),
     ).toEqual(['Record', 'Transcribe', 'Route', 'Clean up', 'Append']);
-    // Step one is the tap alone: the tab-bar disc no longer holds.
+    // Step one names the tap alone; the intro above says the hold.
     expect(steps).toHaveTextContent(/tap Record and speak/i);
     expect(steps).not.toHaveTextContent(/hold/i);
 
@@ -52,7 +55,7 @@ describe('About', () => {
     expect(screen.getByText(/add this to the roof note/i)).toBeInTheDocument();
     // The tab bar's mic, not the control T6 removed (QA 2026-09-21, finding 12).
     expect(screen.getByText(/into this note/i)).toBeInTheDocument();
-    expect(screen.getByText(/above the PTT button/i)).toBeInTheDocument();
+    expect(screen.queryByText(/PTT button/i)).toBeNull();
     expect(screen.queryByText(/record into this/i)).toBeNull();
     expect(screen.getByText(/waits at the top of your notes/i)).toBeInTheDocument();
     // Cleanup follows the note.
