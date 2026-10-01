@@ -771,13 +771,24 @@ if [ "$SMOKE" = "1" ] && is_apply; then
         else
             worker_err="$(cat "$worker_errf")"
             rm -f "$worker_out" "$worker_errf"
-            # Neither of these says the new code is bad, so neither rolls a
-            # deploy back. AccessDenied is a deploy role without
-            # lambda:InvokeFunction on the alias (a bootstrap stack from before
-            # 2026-10); TooManyRequests is the worker's concurrency ceiling
-            # busy with real work at the moment of the check.
+            # TooManyRequests does not say the new code is bad — it is the
+            # worker's concurrency ceiling busy with real work at the moment
+            # of the check — so it warns and goes on. AccessDenied is the
+            # deploy role without lambda:InvokeFunction on the alias, which
+            # bootstrap.yaml has granted since 2026-10. On staging that is
+            # still a warning, so a clone whose bootstrap stack predates the
+            # grant can deploy and read what to fix. On prod it fails the
+            # deploy: for four deploys on 30 Sept this branch printed "smoke
+            # skipped" and then "smoke passed", and a smoke that did not run
+            # has not passed. The aliases go back, like any failed smoke —
+            # prod stays on the code the last complete smoke proved.
             case "$worker_err" in
-                *AccessDenied*) warn "worker smoke skipped: this role may not invoke $worker; redeploy infrastructure/bootstrap.yaml (scripts/setup.sh)" ;;
+                *AccessDenied*)
+                    if [ "$ENVIRONMENT" = "prod" ]; then
+                        rollback_and_fail "smoke INCOMPLETE: this role may not invoke $worker; redeploy infrastructure/bootstrap.yaml (scripts/setup.sh) and re-run"
+                    fi
+                    warn "worker smoke skipped: this role may not invoke $worker; redeploy infrastructure/bootstrap.yaml (scripts/setup.sh). This fails on prod."
+                    ;;
                 *TooManyRequests*) warn "worker smoke skipped: the worker is throttled; invoke it by hand to check" ;;
                 *) rollback_and_fail "smoke: invoking the worker: $worker_err" ;;
             esac
