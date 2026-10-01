@@ -5,6 +5,8 @@ import (
 	"io"
 	"strings"
 	"unicode"
+
+	"github.com/vppillai/chintan/backend/internal/llm"
 )
 
 // Audio is one recording handed to a transcription provider.
@@ -119,8 +121,8 @@ func (t Transcription) NoSpeech() bool {
 }
 
 // silenceHallucinations are the transcripts Whisper is known to produce for
-// silence or room tone, learned from subtitled video, in normalizePhrase
-// form. Exact phrases only: "Thank you, Anu" or "bye to the old car" is
+// silence or room tone, learned from subtitled video, as llm.FoldWords
+// spells them. Exact phrases only: "Thank you, Anu" or "bye to the old car" is
 // speech. ponytail: English only; add a language's stock phrases when a
 // silent capture in it is seen filing one.
 var silenceHallucinations = map[string]bool{
@@ -138,14 +140,15 @@ var silenceHallucinations = map[string]bool{
 // silenceHallucination reports that every sentence of text is a stock
 // silence phrase, so "Thank you. Thank you." counts and "Thank you. Buy
 // milk." does not. The whole text is tried first, since a credit like
-// "Amara.org" has a full stop inside it.
+// "Amara.org" has a full stop inside it. The phrases are compared by words
+// (llm.FoldWords), so Whisper's punctuation and capitals do not matter.
 func silenceHallucination(text string) bool {
-	if silenceHallucinations[normalizePhrase(text)] {
+	if silenceHallucinations[llm.FoldWords(text)] {
 		return true
 	}
 	pieces := 0
 	for _, piece := range strings.FieldsFunc(text, func(r rune) bool { return strings.ContainsRune(".!?\n", r) }) {
-		norm := normalizePhrase(piece)
+		norm := llm.FoldWords(piece)
 		if norm == "" {
 			continue
 		}
@@ -155,15 +158,6 @@ func silenceHallucination(text string) bool {
 		pieces++
 	}
 	return pieces > 0
-}
-
-// normalizePhrase lower-cases s and keeps only its words, single-spaced, so
-// Whisper's punctuation and capitals do not matter ("Amara.org" is "amara
-// org").
-func normalizePhrase(s string) string {
-	return strings.Join(strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
-	}), " ")
 }
 
 // STT transcribes speech.

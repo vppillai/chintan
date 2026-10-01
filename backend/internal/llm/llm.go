@@ -44,13 +44,13 @@ func Fence(text string) string {
 // An empty out is vacuously a sub-sequence and returns true; a caller that
 // cannot accept "nothing" has to say so itself.
 func VerifySubsequence(out, in string) bool {
-	outWords := comparableWords(out)
+	outWords := Words(out)
 	if len(outWords) == 0 {
 		return true
 	}
 
 	i := 0
-	for _, word := range comparableWords(in) {
+	for _, word := range Words(in) {
 		if word == outWords[i] {
 			if i++; i == len(outWords) {
 				return true
@@ -76,12 +76,16 @@ func ExtractJSONObject(raw string) (string, error) {
 // — the tick checks, the append's merge and the regeneration's search by
 // words. Empty when the text has no letter, digit or mark.
 func FoldWords(s string) string {
-	return strings.Join(comparableWords(s), " ")
+	return strings.Join(Words(s), " ")
 }
 
-// comparableWords reduces text to lowercase words (IsWordRune), so that
-// punctuation and casing differences do not count as rewriting.
-func comparableWords(s string) []string {
+// Words is the one word splitter: text lowercased and cut into runs of
+// IsWordRune, so punctuation and casing differences do not count as
+// rewriting. Every reader that needs words — the checks here, ask.Tokenize,
+// match's token overlap, the silence-hallucination test and the recording
+// filename slug — calls this or IsWordRune, so an Indic or emoji fix lands
+// everywhere at once (R7-2a was fixed in one place and missed in another).
+func Words(s string) []string {
 	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !IsWordRune(r) })
 }
 
@@ -93,8 +97,7 @@ func comparableWords(s string) []string {
 // other. The variation selectors (U+FE0F after most emoji) are Mn too but
 // belong to the emoji, not to a word, and the enclosing keycap U+20E3 is Me:
 // counting either made "✈️ Travel" fold to a stray selector and "Milk❤️" stop
-// matching "Milk", so both stay breaks. ask.Tokenize and the recording
-// filename slug keep marks for the same reason.
+// matching "Milk", so both stay breaks.
 func IsWordRune(r rune) bool {
 	if unicode.IsLetter(r) || unicode.IsDigit(r) {
 		return true

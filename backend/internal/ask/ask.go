@@ -138,16 +138,13 @@ func FoldScript(s string) string {
 }
 
 // Tokenize splits a question into the terms retrieval scores by: lowercased,
-// stopwords removed, at least two runes each. A token is a run of letters,
-// digits and combining marks in any script — the marks matter because a
-// Devanagari vowel sign is a mark, not a letter, and splitting on it would
-// cut every word of a Hindi question in half. Duplicates are kept out so a
+// stopwords removed, at least two runes each. A token is a word as
+// llm.Words cuts them (letters, digits and combining marks of any script,
+// not the emoji variation selectors), after the chillu fold. Duplicates are kept out so a
 // repeated word does not double its weight, and the first MaxQueryTerms terms
 // are kept, in the order spoken.
 func Tokenize(question string) []string {
-	fields := strings.FieldsFunc(strings.ToLower(FoldScript(question)), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.Is(unicode.Mn, r) && !unicode.Is(unicode.Mc, r)
-	})
+	fields := llm.Words(FoldScript(question))
 	seen := make(map[string]struct{}, len(fields))
 	out := make([]string, 0, len(fields))
 	for _, f := range fields {
