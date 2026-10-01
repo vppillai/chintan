@@ -642,6 +642,51 @@ func TestMoveCaptureIntoANewNoteCompensatesAFailure(t *testing.T) {
 	}
 }
 
+// The source refresh failing after the cut (review 2026-10-01, BE-2): the
+// target holds the only copy, so a save under the version a device read
+// while the stamp was on is still refused — the target was refreshed first,
+// which cleared the stamp and moved the version again — and the paragraph
+// stays in the target for the retry.
+func TestMoveCaptureWhoseSourceRefreshFailsKeepsTheTargetGuarded(t *testing.T) {
+	h := newEditHarness(t)
+	source := h.note("u1", "Source", CaptureMarker("c_1")+"\nFirst.")
+	target := h.note("u1", "Target", "Theirs.")
+	h.appended("u1", source.ID, "c_1", t1000)
+
+	broken := NewCaptureService(failingPutNote{Store: h.store, id: source.ID}, h.objects)
+	if _, _, err := broken.MoveCapture(h.ctx, "u1", "c_1", target.ID); err == nil || !strings.Contains(err.Error(), "source note index") {
+		t.Fatalf("MoveCapture = %v, want the source refresh failure", err)
+	}
+	if got := h.body(target); !strings.Contains(got, "First.") {
+		t.Fatalf("target = %q, want the paragraph kept for the retry", got)
+	}
+	n, _ := h.store.GetNote(h.ctx, "u1", target.ID)
+	if n.AppendingCapture != "" {
+		t.Errorf("the target still carries the stamp %q", n.AppendingCapture)
+	}
+	// The version the other device saw under the stamp.
+	stale, underStamp := "Theirs. And more.", target.Version+1
+	if _, err := h.notes.UpdateNote(h.ctx, "u1", target.ID, NoteUpdates{Body: &stale, ExpectedVersion: &underStamp}); err == nil {
+		t.Fatal("a save under the stamp's version landed over the only copy")
+	}
+	if n := strings.Count(h.body(source)+h.body(target), "First."); n != 1 {
+		t.Errorf("the paragraph is in the notes %d times, want once", n)
+	}
+}
+
+// failingPutNote fails the row write for one note and is the store otherwise.
+type failingPutNote struct {
+	repository.Store
+	id string
+}
+
+func (f failingPutNote) PutNote(ctx context.Context, tenantID string, n model.NoteIndex) (model.NoteIndex, error) {
+	if n.ID == f.id {
+		return model.NoteIndex{}, errors.New("dynamodb: 500 InternalServerError")
+	}
+	return f.Store.PutNote(ctx, tenantID, n)
+}
+
 // failingPutCapture fails the row write for one capture and is the memory
 // store otherwise: the fault that hits a move after both bodies are written.
 type failingPutCapture struct {
@@ -727,6 +772,54 @@ func TestMoveCaptureThatCannotCutChangesNothing(t *testing.T) {
 	}
 	if h.body(source) != CaptureMarker("c_1")+"\nFirst." || h.body(target) != "" {
 		t.Fatal("a move whose first write failed changed a body")
+	}
+	// The undo hands the target's append stamp back, so its editor may save.
+	if n, _ := h.store.GetNote(h.ctx, "u1", target.ID); n.AppendingCapture != "" {
+		t.Errorf("the target still carries the stamp %q after the undo", n.AppendingCapture)
+	}
+}
+
+// BE-2 (review 2026-10-01): an editor save on the target that lands between
+// the copy and the row refresh is refused as the worker's append refuses one
+// (ErrAppendInProgress), so a body read before the paragraph is never stored
+// over it and then cut from the source. The text ends in exactly one note,
+// and the stamp is gone with the move so the editor may save again.
+func TestMoveCaptureRefusesAnEditorSaveOnTheTargetMidMove(t *testing.T) {
+	h := newEditHarness(t)
+	source := h.note("u1", "Source", CaptureMarker("c_1")+"\nFirst.")
+	target := h.note("u1", "Target", "Theirs.")
+	h.appended("u1", source.ID, "c_1", t1000)
+
+	var saveErr error
+	racing := NewCaptureService(h.store, editAfterPutIfMatch{
+		Objects: h.objects, key: target.S3MarkdownKey,
+		edit: func() {
+			// The other device's draft: the target as read before the move,
+			// typed into, under the version it read.
+			stale, version := "Theirs. And more.", target.Version
+			_, saveErr = h.notes.UpdateNote(h.ctx, "u1", target.ID, NoteUpdates{Body: &stale, ExpectedVersion: &version})
+		},
+	})
+	if _, moved, err := racing.MoveCapture(h.ctx, "u1", "c_1", target.ID); err != nil || !moved {
+		t.Fatalf("MoveCapture = (%v, %v)", moved, err)
+	}
+	if !errors.Is(saveErr, ErrAppendInProgress) {
+		t.Fatalf("the save during the move = %v, want ErrAppendInProgress", saveErr)
+	}
+	if got := h.body(target); !strings.Contains(got, "First.") || !strings.Contains(got, "Theirs.") {
+		t.Errorf("target = %q, want the paragraph beside its own text", got)
+	}
+	if n := strings.Count(h.body(source)+h.body(target), "First."); n != 1 {
+		t.Errorf("the paragraph is in the notes %d times, want once", n)
+	}
+	n, _ := h.store.GetNote(h.ctx, "u1", target.ID)
+	if n.AppendingCapture != "" {
+		t.Errorf("the target still carries the stamp %q after the move", n.AppendingCapture)
+	}
+	// The repeated save, as the client repeats it, now lands.
+	again := "Theirs. And more."
+	if _, err := h.notes.UpdateNote(h.ctx, "u1", target.ID, NoteUpdates{Body: &again, ExpectedVersion: &n.Version}); err != nil {
+		t.Errorf("the save after the move = %v", err)
 	}
 }
 
