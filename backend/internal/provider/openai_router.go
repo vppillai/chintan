@@ -15,11 +15,6 @@ import (
 )
 
 const (
-	// maxTitleLen is the one title bound, routing.MaxTitleRunes; the name
-	// stays for the test that pins a dictated title to it. The other numbers
-	// routedContent reads (routing.MaxNameWords, MaxInstructionOnlyWords,
-	// MaxSpokenTitleWords) are in the same table, routing/bounds.go.
-	maxTitleLen = routing.MaxTitleRunes
 	// routeMaxTokens caps the routing completion. A well-formed reply is an action, an
 	// id or a short title, a confidence and a span or two — under fifty tokens — so the
 	// cap never shortens a real answer; it bounds a runaway one, which then fails to

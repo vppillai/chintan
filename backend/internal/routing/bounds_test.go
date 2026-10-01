@@ -20,8 +20,7 @@ type routingRule struct {
 	where  string
 }
 
-// The fourteen rules in force. A rule with no numeric bound says so; a rule
-// whose bound is another package's names the constant there. The literal is
+// The fourteen rules in force. A rule with no numeric bound says so. The literal is
 // repeated here on purpose: changing a bound is two edits, the number and
 // its row, which is the review this test exists to force.
 var routingRules = []routingRule{
@@ -37,8 +36,8 @@ var routingRules = []routingRule{
 	{10, "same-second re-check before a create (pipeline.route)", map[string]string{"MaxCandidates": "200"}, ""},
 	{11, "targeted-capture instruction gate (MentionsInstruction)", nil, "no bound: the instructionCues list"},
 	{12, "fallback title (pipeline.fallbackNoteTitle)", map[string]string{"FallbackTitleWords": "6", "FallbackTitleRunes": "40"}, ""},
-	{13, "no speech: the letter test, the silence phrases, the score pair (provider.Transcription.NoSpeech)", nil, "provider/stt.go: noSpeechThreshold 0.6, logprobThreshold -1 (Whisper's own defaults)"},
-	{14, "hint echo and the short-dictation tidy (pipeline.transcriptOutcome, pipeline.isShortDictation)", nil, "pipeline/transcribe.go: minHintAudioMS 1500, maxHintNotes 50; pipeline/clean.go: shortDictationWords 12"},
+	{13, "no speech: the letter test, the silence phrases, the score pair (provider.Transcription.NoSpeech)", map[string]string{"NoSpeechThreshold": "0.6", "LogprobThreshold": "-1.0"}, ""},
+	{14, "hint echo and the short-dictation tidy (pipeline.spellingHints, pipeline.transcriptOutcome, pipeline.isShortDictation)", map[string]string{"MinHintAudioMS": "1500", "MaxHintNotes": "50", "ShortDictationWords": "12"}, ""},
 }
 
 // titleBound is the one bound that is not a rule's: every title, dictated,
@@ -64,12 +63,12 @@ func TestRoutingBoundsAreRegistered(t *testing.T) {
 		for _, spec := range gen.Specs {
 			vs := spec.(*ast.ValueSpec)
 			for i, name := range vs.Names {
-				lit, ok := vs.Values[i].(*ast.BasicLit)
+				lit, ok := numericLiteral(vs.Values[i])
 				if !ok {
 					t.Errorf("%s is not a literal; a bound is a number, written once", name.Name)
 					continue
 				}
-				declared[name.Name] = lit.Value
+				declared[name.Name] = lit
 			}
 		}
 	}
@@ -108,6 +107,79 @@ func TestRoutingBoundsAreRegistered(t *testing.T) {
 	sort.Strings(unregistered)
 	if len(unregistered) > 0 {
 		t.Errorf("bounds.go declares %s with no rule in the table; register the rule, and its recorded case (D8)", strings.Join(unregistered, ", "))
+	}
+}
+
+// numericLiteral is the source text of a number, a leading minus included.
+func numericLiteral(e ast.Expr) (string, bool) {
+	switch v := e.(type) {
+	case *ast.BasicLit:
+		if v.Kind == token.INT || v.Kind == token.FLOAT {
+			return v.Value, true
+		}
+	case *ast.UnaryExpr:
+		if lit, ok := v.X.(*ast.BasicLit); ok && v.Op == token.SUB && (lit.Kind == token.INT || lit.Kind == token.FLOAT) {
+			return "-" + lit.Value, true
+		}
+	}
+	return "", false
+}
+
+// ruleFiles are where the fourteen rules are written; a new rule lands in
+// one of them. budgetConstants are the numbers those files may still
+// declare: estimates and caps for the model call, not bounds a rule
+// decides by.
+var (
+	ruleFiles       = []string{"spans.go", "../pipeline/route.go", "../provider/openai_router.go"}
+	budgetConstants = map[string]bool{"routeOutputTokensEstimate": true, "routeMaxTokens": true}
+)
+
+// TestRuleFilesHoldNoUnregisteredLiterals is the other direction of the pin:
+// the table holds bounds.go, and this holds the rule files to bounds.go. A
+// numeric constant declared in one of them, or a comparison against a number
+// other than zero or one (an index check, a clamp), is a bound that bypassed
+// the table. The budget constants are the allowlist.
+func TestRuleFilesHoldNoUnregisteredLiterals(t *testing.T) {
+	fset := token.NewFileSet()
+	for _, path := range ruleFiles {
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				vs := spec.(*ast.ValueSpec)
+				for i, name := range vs.Names {
+					if i >= len(vs.Values) || budgetConstants[name.Name] {
+						continue
+					}
+					if lit, ok := numericLiteral(vs.Values[i]); ok {
+						t.Errorf("%s declares %s = %s; a rule's number lives in bounds.go with its row", path, name.Name, lit)
+					}
+				}
+			}
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			bin, ok := n.(*ast.BinaryExpr)
+			if !ok {
+				return true
+			}
+			switch bin.Op {
+			case token.LSS, token.GTR, token.LEQ, token.GEQ, token.EQL, token.NEQ:
+			default:
+				return true
+			}
+			for _, side := range []ast.Expr{bin.X, bin.Y} {
+				if lit, ok := numericLiteral(side); ok && lit != "0" && lit != "1" {
+					t.Errorf("%s compares against %s at %s; a rule's number lives in bounds.go with its row", path, lit, fset.Position(bin.Pos()))
+				}
+			}
+			return true
+		})
 	}
 }
 

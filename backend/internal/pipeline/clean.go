@@ -16,6 +16,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/routing"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
@@ -31,7 +32,7 @@ import (
 // call (review T11). Pointing CleanKey at the source key, rather than copying
 // the text, keeps every reader of CleanKey working and costs no write.
 //
-// A dictation under shortDictationWords words is tidied instead of sent to
+// A dictation under routing.ShortDictationWords words is tidied instead of sent to
 // the model (tidyDictation).
 //
 // Cleaned is not written on its own: both callers of cleanForNote go straight
@@ -72,7 +73,7 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 	}
 	if isShortDictation(source) {
 		// No model call: the dictation is too short for the rewrite to be
-		// worth its wait (shortDictationWords). The tidy is stored as the
+		// worth its wait (routing.ShortDictationWords). The tidy is stored as the
 		// clean text, so the append and every reader of CleanKey see it as
 		// they see the model's; the usage meter simply has no cleanup call
 		// to record.
@@ -132,17 +133,7 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 	return p.deferPersist(capture)
 }
 
-// shortDictationWords is the length under which a dictation skips the
-// cleanup model and gets tidyDictation instead. In the seven days to
-// 2026-09-30, 59% of cleanup calls returned 15 output tokens or fewer, the
-// median transcript was 11 words, and the call took 818 ms at p50 and 3 s at
-// p95: most recordings waited up to three seconds for a capital letter and a
-// full stop. Twelve words keeps that median case off the model. The owner
-// accepted the cost: a misheard word in a dictation this short is kept as
-// Whisper heard it.
-const shortDictationWords = 12
-
-// isShortDictation reports whether text is under shortDictationWords words.
+// isShortDictation reports whether text is under routing.ShortDictationWords words.
 // A script written without spaces between words (Han, kana, Thai, Lao,
 // Khmer, Myanmar) is never short by this count, since a whole sentence of it
 // is one field; it goes to the model as before.
@@ -152,7 +143,7 @@ func isShortDictation(text string) bool {
 			return false
 		}
 	}
-	return len(strings.Fields(text)) < shortDictationWords
+	return len(strings.Fields(text)) < routing.ShortDictationWords
 }
 
 // tidyDictation is the deterministic cleanup of a short dictation, and

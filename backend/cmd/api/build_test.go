@@ -54,4 +54,17 @@ func TestBuildServesTheAPIOverFakes(t *testing.T) {
 	if w := do(http.MethodGet, "/v1/usage", ""); w.Code != http.StatusOK {
 		t.Fatalf("GET /v1/usage = %d: %s; the usage store is not wired", w.Code, w.Body)
 	}
+	// The services whose Deps field answers 503 when nil: each must be wired.
+	if w := do(http.MethodGet, "/v1/search?q=x", ""); w.Code != http.StatusOK {
+		t.Fatalf("GET /v1/search = %d: %s; search is not wired", w.Code, w.Body)
+	}
+	if w := do(http.MethodGet, "/v1/tags", ""); w.Code != http.StatusOK {
+		t.Fatalf("GET /v1/tags = %d: %s; tags are not wired", w.Code, w.Body)
+	}
+	if w := do(http.MethodGet, "/v1/export/e_1", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("GET /v1/export/e_1 = %d: %s; export is not wired", w.Code, w.Body)
+	}
+	if w := do(http.MethodGet, "/v1/ask/x", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("GET /v1/ask/x = %d: %s; ask is not wired", w.Code, w.Body)
+	}
 }

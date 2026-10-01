@@ -10,17 +10,21 @@ import (
 // Fourteen rules rescue or refuse what the router answers (prompts.md
 // §Routing; the table is TestRoutingBoundsAreRegistered). Every number one
 // of them reads lives here, with why it is that number and the rule that
-// reads it, or, for the two rules whose numbers are the transcription's and
-// the cleanup's (13: the silence scores; 14: the hint and short-dictation
-// bounds), is named from here. Until 2026-10-01 these sat in three packages
-// and disagreed with each other — a "name" was five words to one rule, eight
-// to another, two words or eight letters to a third — and two prompt
-// experiments left bounds behind whose comments cited reverted sentences
-// (review 2026-10-01, BE-5, BE-12).
+// reads it — the two rules whose numbers belong to the transcription and the
+// cleanup (13: the silence scores; 14: the hint and short-dictation bounds)
+// included, read from here by provider and pipeline. Until 2026-10-01 these
+// sat in three packages and disagreed with each other — a "name" was five
+// words to one rule, eight to another, two words or eight letters to a third
+// — and two prompt experiments left bounds behind whose comments cited
+// reverted sentences (review 2026-10-01, BE-5, BE-12).
 //
-// A new bound is registered in the test's table before it ships, and a new
-// rule waits for a recorded replay case (decision D8, 2026-10-01), as prompt
-// text already does.
+// Two tests hold the line. TestRoutingBoundsAreRegistered holds this file to
+// the rule table; TestRuleFilesHoldNoUnregisteredLiterals reads the three
+// files the rules live in (route.go, openai_router.go, spans.go) and fails
+// on a numeric constant or a comparison against a number that is not here.
+// A new bound is registered in the table before it ships, and a new rule
+// waits for a recorded replay case (decision D8, 2026-10-01), as prompt text
+// already does.
 const (
 	// MinNameWords and MinNameRunes are what may file a recording by opening
 	// it or by being spoken as a name (rules 2 and 3: prefix_title,
@@ -97,6 +101,37 @@ const (
 	// prompt does not depend on it: it bounds every rendered candidate field
 	// itself (maxFieldLen).
 	MaxTitleRunes = 200
+
+	// NoSpeechThreshold and LogprobThreshold are Whisper's own silence
+	// thresholds, the defaults of its reference transcribe(): a segment is
+	// skipped as silence when no_speech_prob is over 0.6 unless avg_logprob
+	// is over -1, i.e. the model is also unsure of the words (rule 13;
+	// provider.Transcription.NoSpeech). Its tuned pair rather than a number
+	// of ours, so a quiet but confidently heard "Buy milk" is kept.
+	NoSpeechThreshold = 0.6
+	LogprobThreshold  = -1.0
+
+	// MinHintAudioMS is the shortest recording that gets a spelling prompt
+	// (rule 14; pipeline.spellingHints). Whisper can answer near-silence by
+	// echoing its prompt back as the transcript, and a 1.5 s clip is mostly
+	// the ring's start and stop; below it a list of the person's note titles
+	// would become the "dictation".
+	MinHintAudioMS = 1500
+
+	// MaxHintNotes bounds the notes read for an untargeted capture's hints
+	// (rule 14). The adapter keeps only what fits Whisper's 224-token prompt,
+	// which is fewer names than this, so the extra rows only cost read bytes.
+	MaxHintNotes = 50
+
+	// ShortDictationWords is the length under which a dictation skips the
+	// cleanup model and gets pipeline.tidyDictation instead (rule 14). In the
+	// seven days to 2026-09-30, 59% of cleanup calls returned 15 output
+	// tokens or fewer, the median transcript was 11 words, and the call took
+	// 818 ms at p50 and 3 s at p95: most recordings waited up to three
+	// seconds for a capital letter and a full stop. Twelve words keeps that
+	// median case off the model. The owner accepted the cost: a misheard word
+	// in a dictation this short is kept as Whisper heard it.
+	ShortDictationWords = 12
 )
 
 // SanitizeTitle bounds a title to one line of at most MaxTitleRunes: control

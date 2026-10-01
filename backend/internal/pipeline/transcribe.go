@@ -271,26 +271,15 @@ func (p *Pipeline) transcriptionLanguage(ctx context.Context, tenantID string, c
 	return language, nil
 }
 
-// minHintAudioMS is the shortest recording that gets a spelling prompt.
-// Whisper can answer near-silence by echoing its prompt back as the
-// transcript, and a 1.5 s clip is mostly the ring's start and stop; below it
-// a list of the person's note titles would become the "dictation".
-const minHintAudioMS = 1500
-
-// maxHintNotes bounds the notes read for an untargeted capture's hints. The
-// adapter keeps only what fits Whisper's 224-token prompt, which is fewer
-// names than this, so the extra rows only cost read bytes.
-const maxHintNotes = 50
-
 // spellingHints is the names Whisper is asked to spell as written (R7-10b):
 // the destination note's title and aliases for a capture recorded into a
 // note, else the titles and aliases of the most recently touched notes,
 // which is the order the router reads them in. It is a convenience like
 // routing: a store fault is logged and the recording is transcribed without
 // hints rather than failed. An unknown or short duration gets none, see
-// minHintAudioMS.
+// routing.MinHintAudioMS.
 func (p *Pipeline) spellingHints(ctx context.Context, tenantID string, capture *model.CaptureIndex) []string {
-	if capture.DurationMS <= minHintAudioMS {
+	if capture.DurationMS <= routing.MinHintAudioMS {
 		return nil
 	}
 	var notes []model.NoteIndex
@@ -309,7 +298,7 @@ func (p *Pipeline) spellingHints(ctx context.Context, tenantID string, capture *
 		// partition read per routed capture; hand this list over if reads
 		// ever show in the bill. Not threaded through now because a retry
 		// resumes at routing in a later invocation, where this list is gone.
-		active, _, err := p.cfg.Store.DrainNotes(ctx, tenantID, repository.DrainOptions{MaxItems: maxHintNotes})
+		active, _, err := p.cfg.Store.DrainNotes(ctx, tenantID, repository.DrainOptions{MaxItems: routing.MaxHintNotes})
 		if err != nil {
 			obs.Log(ctx).Warn("spelling hints unavailable; transcribing without them",
 				slog.String("capture_id", capture.ID), slog.String("error", err.Error()))

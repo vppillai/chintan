@@ -231,7 +231,8 @@ func dropInvented(items []Item, body string) (kept []Item, dropped int) {
 		}
 		return kept
 	}
-	return keep(items), dropped
+	kept = keep(items)
+	return kept, dropped
 }
 
 // tickSafety is the second check on a Split up, over the body's lines and

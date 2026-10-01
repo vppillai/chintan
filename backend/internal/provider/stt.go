@@ -7,6 +7,7 @@ import (
 	"unicode"
 
 	"github.com/vppillai/chintan/backend/internal/llm"
+	"github.com/vppillai/chintan/backend/internal/routing"
 )
 
 // Audio is one recording handed to a transcription provider.
@@ -82,16 +83,6 @@ func (t Transcription) DurationMS() int64 {
 	return int64(t.Duration*1000 + 0.5)
 }
 
-// Whisper's own silence thresholds, the defaults of its reference
-// transcribe(): a segment is skipped as silence when no_speech_prob is over
-// 0.6 unless avg_logprob is over -1, i.e. the model is also unsure of the
-// words. Using its tuned pair rather than a number of ours means a quiet
-// but confidently heard "Buy milk" is kept.
-const (
-	noSpeechThreshold = 0.6
-	logprobThreshold  = -1.0
-)
-
 // NoSpeech reports that the recording held no dictation (R7-10c): the
 // transcript has no letter or digit in it (a 1.5 s tone came back as "."
 // and became a note called "Dictation"), or it is only Whisper's stock
@@ -113,7 +104,7 @@ func (t Transcription) NoSpeech() bool {
 		return false
 	}
 	for _, s := range t.Segments {
-		if s.NoSpeechProb <= noSpeechThreshold || s.AvgLogprob > logprobThreshold {
+		if s.NoSpeechProb <= routing.NoSpeechThreshold || s.AvgLogprob > routing.LogprobThreshold {
 			return false
 		}
 	}
