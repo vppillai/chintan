@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { useEffect, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { StatusRegion, announce } from '@/components/StatusRegion.tsx';
 import { Toast, dismissToast } from '@/components/Toast.tsx';
 
 import { doneStorageKey } from './ChecklistDone.tsx';
@@ -55,8 +56,9 @@ function mount(initial: string, noteId = 'shopping') {
   const view = render(
     <>
       <Harness />
-      {/* The shell's, in the app; here so the Undo that Delete done offers can be pressed. */}
+      {/* The shell's, in the app; here so the Undo that Delete done offers can be pressed, and so what the editor says can be read. */}
       <Toast />
+      <StatusRegion />
     </>,
   );
   return { log, body: () => log.bodies.at(-1) ?? initial, unmount: view.unmount };
@@ -64,6 +66,7 @@ function mount(initial: string, noteId = 'shopping') {
 
 afterEach(() => {
   dismissToast();
+  announce('');
   sessionStorage.clear();
 });
 
@@ -120,7 +123,9 @@ describe('ChecklistEditor', () => {
     await user.click(screen.getByRole('checkbox', { name: 'Milk' }));
     expect(body()).toBe('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
     expect(log.saves).toBe(1);
-    expect(screen.getByText('Marked done')).toHaveAttribute('role', 'status');
+    // Said once, by the toast; the status region is left to the toast's word.
+    expect(screen.getByText('Milk done', { selector: '.toast__text' })).toBeInTheDocument();
+    expect(screen.queryByText('Marked done')).toBeNull();
     // The row stays where the finger is, ticked and struck, for as long as
     // the tick takes to draw — a row that moved at once would mount in Done
     // already ticked, and nothing would be seen to happen.
@@ -1007,6 +1012,7 @@ describe('the Done section', () => {
     await user.click(screen.getByRole('checkbox', { name: 'Bread' }));
     expect(body()).toBe('- [x] Bread');
     expect(screen.getByText('2 done items deleted', { selector: '.toast__text' })).toBeInTheDocument();
+    // With the toast kept away, the tick is said by the status region instead.
     expect(screen.getByText('Marked done', { selector: '[aria-live]' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Undo' }));
     expect(body()).toBe('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
@@ -1036,8 +1042,8 @@ describe('the Done section', () => {
     await user.click(screen.getByRole('checkbox', { name: 'Eggs' }));
     expect(body()).toBe('- [ ] Milk\n- [x] Eggs\n- [ ] Bread');
     expect(screen.getByText('Eggs done', { selector: '.toast__text' })).toBeInTheDocument();
-    // The live region still says it, as before the toast.
-    expect(screen.getByText('Marked done', { selector: '[aria-live]' })).toBeInTheDocument();
+    // The toast is a live region: the tick is said once, not twice.
+    expect(screen.queryByText('Marked done')).toBeNull();
 
     await user.click(screen.getByRole('button', { name: 'Undo' }));
     expect(body()).toBe('- [ ] Milk\n- [ ] Eggs\n- [ ] Bread');

@@ -256,7 +256,7 @@ describe('what was just saved is what the app shows next', () => {
     });
     await user.type(body, ' more words here.');
     await user.tab();
-    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(await screen.findByText('Saved', { selector: '.save-indicator' })).toBeInTheDocument();
     expect(api.patches).toEqual([
       expect.objectContaining({ version: 1, status: 200 }),
     ]);
@@ -304,7 +304,7 @@ describe('what was just saved is what the app shows next', () => {
     await user.clear(title);
     await user.type(title, 'Renamed');
     await user.tab();
-    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(await screen.findByText('Saved', { selector: '.save-indicator' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /back to\s*notes/i }));
     expect(await screen.findByRole('button', { name: /^renamed/i })).toBeInTheDocument();
@@ -1301,7 +1301,7 @@ describe('a recording filed while the user was typing', () => {
       expect(screen.queryByText(/changed elsewhere/i)).toBeNull();
     });
     expect(body).toHaveValue('v1 body mine\n\nFrom the recording.');
-    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(await screen.findByText('Saved', { selector: '.save-indicator' })).toBeInTheDocument();
     expect(api.notes.get('roof-repair')?.body).toBe('v1 body mine\n\nFrom the recording.');
     expect(api.patches.at(-1)).toEqual(expect.objectContaining({ version: 2, status: 200 }));
   });
@@ -1339,7 +1339,7 @@ describe('a recording filed while the user was typing', () => {
     await waitFor(() => {
       expect(screen.queryByText(/changed elsewhere/i)).toBeNull();
     });
-    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(await screen.findByText('Saved', { selector: '.save-indicator' })).toBeInTheDocument();
     expect(api.notes.get('roof-repair')?.body).toBe('v1 body mine');
   });
 });

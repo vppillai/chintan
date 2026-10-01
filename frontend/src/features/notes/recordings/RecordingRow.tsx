@@ -379,17 +379,17 @@ export function RecordingRow({
           {capture.status === 'needs_target' && <TargetPrompt capture={capture} />}
 
           {running ? (
-            <p className="screen__count" role="status">
+            <p className="screen__count">
               Being filed. The recording and its transcript will be here once it has been
               saved into the note.
             </p>
           ) : unreachable ? (
-            <p className="screen__count" role="status">
+            <p className="screen__count">
               The recording and its transcript need a connection. The note&rsquo;s text is on
               this device.
             </p>
           ) : artifacts.isLoading ? (
-            <p className="screen__count" role="status">
+            <p className="screen__count">
               Loading the recording…
             </p>
           ) : textOnly ? (

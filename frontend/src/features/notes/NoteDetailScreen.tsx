@@ -20,6 +20,7 @@ import { ROUTES } from '@/app/routes.ts';
 import { historyIndex } from '@/app/useTabNavigation.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
+import { announce } from '@/components/StatusRegion.tsx';
 import { FilingBanner } from '@/features/capture/FilingBanner.tsx';
 import { useLocalUpload } from '@/features/capture/FilingRow.tsx';
 import type { CaptureModel } from '@/features/capture/machine.ts';
@@ -46,7 +47,7 @@ import {
   type NoteTabDescriptor,
 } from './NoteTabs.tsx';
 import { Recordings } from './Recordings.tsx';
-import { SAVE_LABELS } from './autosave.ts';
+import { SAVE_LABELS, type SaveState } from './autosave.ts';
 import { FIND_CLOSED, findReducer, type FindState, type FindAction } from './find.ts';
 import { describeRecordings, formatRowTime } from './groups.ts';
 import { describeProgress, parseChecklist, progressOf } from './checklist.ts';
@@ -742,6 +743,22 @@ function BackLink() {
 }
 
 /**
+ * The indicator's word, said through the shell's one region rather than from
+ * a live region of its own, which a tick's toast and the editor's status used
+ * to overlap (review 2026-10-01, FE-4). Only an outcome is said — saved,
+ * queued, failed: "Saving…" and "Unsaved changes" follow every tick and
+ * keystroke in the same task and would talk over what the editor just said
+ * ("Marked done" → "Saving…"); the visible line still shows them.
+ */
+function SaveWord({ state, text }: { state: SaveState; text: string }) {
+  const outcome = state === 'saved' || state === 'queued' || state === 'error';
+  useEffect(() => {
+    if (outcome) announce(text);
+  }, [outcome, text]);
+  return text;
+}
+
+/**
  * Autosave state, rendered.
  *
  * Every autosave state is rendered, failures included, with real CSS behind
@@ -810,13 +827,8 @@ function SaveIndicator({ editor }: { editor: ReturnType<typeof useNoteEditor> })
   }
 
   return (
-    <p
-      className="save-indicator"
-      data-state={model.state}
-      role="status"
-      aria-live="polite"
-    >
-      {model.error ?? SAVE_LABELS[model.state]}
+    <p className="save-indicator" data-state={model.state}>
+      <SaveWord state={model.state} text={model.error ?? SAVE_LABELS[model.state]} />
       {model.state === 'error' && (
         <button
           type="button"

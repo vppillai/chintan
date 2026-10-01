@@ -580,10 +580,15 @@ tick back, so the row returns to its place, and only while the body is
 still exactly the tick's — after any later act, the person's own included,
 it says "The list changed since — nothing undone." rather than undo that
 act too. So only the last tick is undoable. Reopening a done row offers
-none, and the status line still says "Marked done". The tick's toast is
-weak (`ToastNotice.weak`): it never takes the place of a standing Delete
-done or Tidy Undo, so a tick right after Delete done leaves that Undo
-standing, and the tick is said by the status line alone. Done rows have no grip, because their order
+none and is said as "Reopened". A tick is said once (review 2026-10-01,
+FE-4): by its toast, which is a live region; the status line says "Marked
+done" only when the toast was kept away. The tick's toast is weak
+(`ToastNotice.weak`): it never takes the place of a standing Delete done or
+Tidy Undo, so a tick right after Delete done leaves that Undo standing, and
+the tick is said by the status line alone. The status line is the shell's
+one region (`announce`, `components/StatusRegion.tsx`), which the editor,
+the Tidy notice and the note's autosave indicator all speak through rather
+than from live regions of their own. Done rows have no grip, because their order
 is the body's and nothing shows it; a drag among them would move lines
 whose places are invisible.
 

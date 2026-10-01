@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { Icon } from '@/components/Icon.tsx';
 import type { OverflowMenuItem } from '@/components/OverflowMenu.tsx';
+import { announce } from '@/components/StatusRegion.tsx';
 import { showToast } from '@/components/Toast.tsx';
 import { useDragReorder } from '@/hooks/useDragReorder.ts';
 
@@ -137,9 +138,14 @@ export function ChecklistEditor({
 }) {
   const items = useMemo(() => parseChecklist(body), [body]);
   const tidying = useTidying(noteId);
+  // Said, not only drawn, through the shell's one region (`announce`): a
+  // Tidy under way, and below, where a row went after a tick, a move or a
+  // key, since a screen reader has nothing else to tell it.
+  useEffect(() => {
+    if (tidying) announce('Tidying the list…');
+  }, [tidying]);
   const hintId = useId();
   const fieldHintId = useId();
-  const [announcement, setAnnouncement] = useState('');
   const [adding, setAdding] = useState('');
 
   /*
@@ -244,8 +250,13 @@ export function ChecklistEditor({
      * is still exactly the tick's: after any later act, the person's own
      * included, it refuses rather than undo that act too.
      */
-    if (!item.done) {
-      showToast({
+    write(next, undefined, flipped);
+    if (item.done) announce('Reopened');
+    else {
+      // Said once: by the toast, which is a live region too, or — when a
+      // standing Delete done or Tidy Undo keeps the weak toast away — by the
+      // status region (review 2026-10-01, FE-4; R7-13 had both say it).
+      const shown = showToast({
         message: `${shortName(item.text)} done`,
         ms: TICK_TOAST_MS,
         weak: true,
@@ -257,14 +268,13 @@ export function ChecklistEditor({
               return;
             }
             write(previous);
-            setAnnouncement('Reopened');
+            announce('Reopened');
             save();
           },
         },
       });
+      if (!shown) announce('Marked done');
     }
-    write(next, undefined, flipped);
-    setAnnouncement(item.done ? 'Reopened' : 'Marked done');
     save();
   };
 
@@ -286,7 +296,7 @@ export function ChecklistEditor({
       // A refusal is said from the grip, where the key otherwise does
       // nothing a screen reader can tell (DB6-22); from the field the key
       // keeps its meaning and the browser's focus move is the answer.
-      if (focus === 'grip') setAnnouncement(target.refusal);
+      if (focus === 'grip') announce(target.refusal);
       return false;
     }
     const next = shiftLevel(body, entry.index, by, open[position - 1]?.index ?? entry.index);
@@ -309,8 +319,8 @@ export function ChecklistEditor({
     // Where it went, once, however many levels one release moved it.
     const parent = parentOf(after, landed);
     const under = parent === null ? null : `“${shortName(after[parent]?.text ?? '')}”`;
-    if (under === null) setAnnouncement('Now a top-level item');
-    else setAnnouncement(by > 0 ? `Made a sub-item of ${under}` : `Moved up a level, under ${under}`);
+    if (under === null) announce('Now a top-level item');
+    else announce(by > 0 ? `Made a sub-item of ${under}` : `Moved up a level, under ${under}`);
     save();
     return true;
   };
@@ -337,13 +347,13 @@ export function ChecklistEditor({
     if ('refusal' in move) {
       // The arrow keys at either end: said, since nothing moved and nothing
       // else says why (the menu disables its items there).
-      if (focusGrip) setAnnouncement(move.refusal);
+      if (focusGrip) announce(move.refusal);
       return;
     }
     write(move.next);
     if (focusGrip) focusGripAfterWrite.current = move.gripAt;
     // The slot's level is the row's now; said, because no path here asked.
-    if (move.said !== null) setAnnouncement(move.said);
+    if (move.said !== null) announce(move.said);
     save();
   };
 
@@ -433,7 +443,7 @@ export function ChecklistEditor({
 
   const reopenAll = (): void => {
     write(uncheckAll(body));
-    setAnnouncement('All items reopened');
+    announce('All items reopened');
     save();
   };
 
@@ -455,7 +465,7 @@ export function ChecklistEditor({
         },
       },
     });
-    setAnnouncement(message);
+    announce(message);
     write(removeDone(body));
     save();
   };
@@ -474,16 +484,12 @@ export function ChecklistEditor({
           </p>
         </>
       )}
-      {/* Seen above the rows; heard through a live region that is always
-          mounted, since one inserted with its text is often not announced. */}
+      {/* Seen above the rows; said through the shell's region (the effect above). */}
       {tidying && (
         <p className="checklist-editor__status" aria-hidden="true">
           Tidying the list…
         </p>
       )}
-      <p className="visually-hidden" role="status">
-        {tidying ? 'Tidying the list…' : ''}
-      </p>
       <ul
         ref={listRef}
         className="checklist"
@@ -580,15 +586,6 @@ export function ChecklistEditor({
           onDeleteDone={deleteDone}
         />
       )}
-
-      {/*
-        Said, not only drawn: the row the finger tapped has just left the
-        list it was in, and a screen reader has nothing else to tell it where
-        it went.
-      */}
-      <p className="visually-hidden" role="status" aria-live="polite">
-        {announcement}
-      </p>
     </div>
   );
 }
