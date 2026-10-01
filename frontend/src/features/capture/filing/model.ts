@@ -189,3 +189,31 @@ export function describeAgoShort(iso: string, now: number): string {
 export function retryMessage(error: unknown): string {
   return error instanceof ApiError ? error.userMessage : 'The retry did not go through. Try again.';
 }
+
+/** Which glyph a filing notice wears, and the `data-kind` its row carries (F9). */
+export type NoticeKind = 'moving' | 'needs' | 'failed' | 'filed' | 'started';
+
+/**
+ * The kind of a filing row: a receipt is filed or started; a capture is
+ * moving, asking which note, or stopped short. A stuck capture is non-terminal
+ * but needs the person, so it is `failed` like the rows it sits with.
+ * `no_content` is `failed` too — it has stopped and only Dismiss is left — and
+ * the stylesheet draws its glyph muted rather than in the alert colour, since
+ * nothing went wrong. The title says which it is either way, so the glyph is
+ * never the only cue.
+ */
+export function noticeKind(row: CaptureWire | ReceiptGroup): NoticeKind {
+  if ('captureIds' in row) return row.createdNote ? 'started' : 'filed';
+  switch (row.status) {
+    case 'needs_target':
+      return 'needs';
+    case 'failed':
+    case 'spend_capped':
+    case 'no_content':
+      return 'failed';
+    case 'appended':
+      return row.created_note ? 'started' : 'filed';
+    default:
+      return isStuck(row) ? 'failed' : 'moving';
+  }
+}

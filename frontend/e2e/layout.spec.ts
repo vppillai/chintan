@@ -1,6 +1,6 @@
 import process from 'node:process';
 
-import type { Page } from '@playwright/test';
+import { devices, type Page } from '@playwright/test';
 
 import { expect, test, type ApiState } from './fixtures.ts';
 
@@ -403,9 +403,102 @@ for (const theme of THEMES) {
         );
 
         await page.goto('/');
-        await expect(page.getByRole('region', { name: /recordings being filed/i })).toBeVisible();
+        await expect(page.getByRole('region', { name: 'Filing' })).toBeVisible();
         await shoot(page, `filing__${viewport.name}__${theme}`);
         assertClean(await inspect(page), `filing row @ ${viewport.name}/${theme}`);
+      });
+    });
+  }
+}
+
+/*
+ * The filing tray (F9). R7's receipt grid gave its chevron and × a row but no
+ * column, so the grid placed them first and the title dropped to a second
+ * line under them — in prod, on every phone. Measured here: on a receipt and
+ * on a failed row the × is drawn, 44 px square, on the title's line; and the
+ * tray is the notice surface, not a note card's.
+ */
+const { defaultBrowserType: _pixelBrowser, ...PIXEL_7 } = devices['Pixel 7'];
+const NOTICE_DEVICES = [
+  { name: 'Pixel 7', use: PIXEL_7 },
+  { name: 'desktop', use: { viewport: { width: 1280, height: 800 } } },
+] as const;
+
+for (const theme of THEMES) {
+  for (const device of NOTICE_DEVICES) {
+    test.describe(`filing tray · ${device.name} · ${theme}`, () => {
+      test.use(device.use);
+
+      test('the × of a receipt and of a failed row sits on the title line, 44 px', async ({
+        page,
+        api,
+      }) => {
+        await withoutServiceWorker(page);
+        await useTheme(page, theme);
+        const now = new Date().toISOString();
+        api.captures.push(
+          {
+            id: 'cap-filed',
+            status: 'appended',
+            created_at: now,
+            appended_at: now,
+            version: 1,
+            note_id: 'roof-repair',
+            excerpt: 'Ridge tiles on the south slope have slipped again.',
+          },
+          {
+            id: 'cap-broken',
+            status: 'failed',
+            created_at: now,
+            version: 1,
+            note_id: null,
+            error: 'Couldn’t transcribe this',
+            excerpt: 'Remember to book the dentist.',
+          },
+        );
+
+        await page.goto('/');
+        const filing = page.getByRole('region', { name: 'Filing' });
+        await expect(filing.getByText(/^Filed/)).toBeVisible();
+        await shoot(page, `filing-tray__${device.name}__${theme}`);
+
+        for (const row of [
+          filing.locator('.filing-row--receipt'),
+          filing.locator('.filing-row[data-status="failed"]'),
+        ]) {
+          const dismiss = row.getByRole('button', { name: 'Dismiss' });
+          await expect(dismiss).toBeVisible();
+          // Drawn, not merely present: R7-7a hid it under a finger.
+          await expect(dismiss).toHaveCSS('opacity', '1');
+          await expect(dismiss).toHaveCSS('clip-path', 'none');
+          const x = await dismiss.boundingBox();
+          const title = await row.locator('.filing-row__title').boundingBox();
+          if (!x || !title) throw new Error('the × or the title has no box');
+          expect(x.width).toBeGreaterThanOrEqual(43.5);
+          expect(x.height).toBeGreaterThanOrEqual(43.5);
+          expect(
+            Math.abs(x.y + x.height / 2 - (title.y + title.height / 2)),
+            'the title and its × share a line',
+          ).toBeLessThanOrEqual(4);
+        }
+
+        const colours = await page.evaluate(() => {
+          const probe = document.createElement('div');
+          probe.style.backgroundColor = 'var(--color-surface)';
+          document.body.append(probe);
+          const surface = getComputedStyle(probe).backgroundColor;
+          probe.remove();
+          const tray = document.querySelector('.filing__tray');
+          const note = document.querySelector('.note-row');
+          return {
+            surface,
+            tray: tray ? getComputedStyle(tray).backgroundColor : null,
+            note: note ? getComputedStyle(note).backgroundColor : null,
+          };
+        });
+        expect(colours.tray).toBe(colours.surface);
+        expect(colours.note).not.toBeNull();
+        expect(colours.tray).not.toBe(colours.note);
       });
     });
   }

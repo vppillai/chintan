@@ -4,7 +4,7 @@ import { isFilingRelevant, useRetryCapture } from '@/api/queries.ts';
 import type { CaptureWire, NoteDetailWire } from '@/api/schema.ts';
 
 import { LocalUploadItem, retryMessage } from './FilingRow.tsx';
-import { FilingItem } from './filing/FilingItem.tsx';
+import { FilingItem, NoticeGlyph } from './filing/FilingItem.tsx';
 import { dismissCapture, loadDismissed } from './dismissed.ts';
 import type { CaptureModel } from './machine.ts';
 
@@ -59,44 +59,51 @@ export function FilingBanner({
      */
     return (
       <section className="filing filing--banner" aria-label="Filing a recording">
-        <p className="filing-landed" role="status">
-          <span>{checklist ? 'Added to the list' : 'Added at the end'}</span>
-          <button
-            type="button"
-            className="filing-landed__show"
-            onClick={() => {
-              // Its job is done: the text now points at itself, and focus
-              // goes with it (the Text panel moves it there).
-              clearLanded();
-              onShow(landed.before);
-            }}
-          >
-            Show
-          </button>
-        </p>
+        <div className="filing__tray">
+          <p className="filing-landed" role="status">
+            <NoticeGlyph kind="filed" />
+            <span>{checklist ? 'Added to the list' : 'Added at the end'}</span>
+            <button
+              type="button"
+              className="filing-landed__show"
+              onClick={() => {
+                // Its job is done: the text now points at itself, and focus
+                // goes with it (the Text panel moves it there).
+                clearLanded();
+                onShow(landed.before);
+              }}
+            >
+              Show
+            </button>
+          </p>
+        </div>
       </section>
     );
   }
 
   return (
+    // The library's tray around its one row (F9), so a notice reads the same
+    // on the note screen as on Home.
     <section className="filing filing--banner" aria-label="Filing a recording">
-      {localUpload ? (
-        <LocalUploadItem model={localUpload} />
-      ) : (
-        capture && (
-          <FilingItem
-            capture={capture}
-            onRetry={() => retry.mutate(capture.id)}
-            retrying={retry.isPending && retry.variables === capture.id}
-            retryError={
-              retry.isError && retry.variables === capture.id ? retryMessage(retry.error) : null
-            }
-            onDismiss={() => {
-              setDismissed(dismissCapture(capture.id, dismissed));
-            }}
-          />
-        )
-      )}
+      <div className="filing__tray">
+        {localUpload ? (
+          <LocalUploadItem model={localUpload} />
+        ) : (
+          capture && (
+            <FilingItem
+              capture={capture}
+              onRetry={() => retry.mutate(capture.id)}
+              retrying={retry.isPending && retry.variables === capture.id}
+              retryError={
+                retry.isError && retry.variables === capture.id ? retryMessage(retry.error) : null
+              }
+              onDismiss={() => {
+                setDismissed(dismissCapture(capture.id, dismissed));
+              }}
+            />
+          )
+        )}
+      </div>
     </section>
   );
 }

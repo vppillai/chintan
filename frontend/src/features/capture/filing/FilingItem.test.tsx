@@ -202,3 +202,55 @@ describe('an upload that has not landed, read on another device', () => {
     await screen.findByText('Filing your recording');
   });
 });
+
+describe('every notice wears a glyph for its kind (F9)', () => {
+  it('marks each row with data-kind and draws its glyph', async () => {
+    mount([
+      capture({ id: 'moving', status: 'transcribing' }),
+      capture({ id: 'needs', status: 'needs_target' }),
+      capture({ id: 'failed', status: 'failed', error: 'Timed out' }),
+      capture({ id: 'empty', status: 'no_content' }),
+      capture({ id: 'filed', status: 'appended', note_id: 'n1', appended_at: new Date().toISOString() }),
+    ]);
+    await screen.findByText(/^Filed/);
+    const kinds = Array.from(document.querySelectorAll('.filing-row'), (row) => ({
+      kind: row.getAttribute('data-kind'),
+      glyph: row.querySelector('.filing-row__glyph svg') !== null,
+    }));
+    expect(kinds).toEqual([
+      { kind: 'moving', glyph: true },
+      { kind: 'needs', glyph: true },
+      { kind: 'failed', glyph: true },
+      { kind: 'failed', glyph: true },
+      { kind: 'filed', glyph: true },
+    ]);
+  });
+
+  it('says "Started" with the started kind', async () => {
+    mount([
+      capture({
+        status: 'appended',
+        note_id: 'n1',
+        created_note: true,
+        appended_at: new Date().toISOString(),
+      }),
+    ]);
+    const title = await screen.findByText(/^Started/);
+    expect(title.closest('article')).toHaveAttribute('data-kind', 'started');
+  });
+
+  it('puts a failed row away with an × named Dismiss, drawn before anything has focus', async () => {
+    mount([capture({ status: 'failed', error: 'Timed out' })]);
+    await screen.findByText('Timed out');
+    expect(document.activeElement).toBe(document.body);
+    // The × replaced the word: there is no "Dismiss" text on the row.
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toHaveClass('filing-row__dismiss');
+    expect(screen.queryByText('Dismiss')).toBeNull();
+  });
+
+  it('offers no × on a row asking which note, since the recording is in no note yet', async () => {
+    mount([capture({ status: 'needs_target' })]);
+    await screen.findByText(/which note should this go in/i);
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+  });
+});

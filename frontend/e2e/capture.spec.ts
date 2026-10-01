@@ -75,7 +75,7 @@ test('records, uploads, and hands off to the filing row', async ({ page, api }) 
   await page.getByRole('button', { name: 'Send' }).click();
 
   await expect(page).toHaveURL(/\/$/);
-  const filing = page.getByRole('region', { name: /recordings being filed/i });
+  const filing = page.getByRole('region', { name: 'Filing' });
   await expect(filing).toBeVisible();
   await expect(filing.getByText(/uploading… \d+%/i)).toBeVisible();
   expect(api.captures).toHaveLength(0);
@@ -532,7 +532,7 @@ test('leads with the note the router picked, and files into it', async ({ page, 
 
   await page.goto('/');
 
-  const filing = page.getByRole('region', { name: /recordings being filed/i });
+  const filing = page.getByRole('region', { name: 'Filing' });
   await expect(filing.getByText(/which note should this go in/i)).toBeVisible();
   const add = filing.getByRole('button', { name: /add to .*roof repair/i });
   await expect(add).toBeVisible();
@@ -565,7 +565,7 @@ test('a suggested new note is offered by the title the router chose', async ({ p
 
   await page.goto('/');
 
-  const filing = page.getByRole('region', { name: /recordings being filed/i });
+  const filing = page.getByRole('region', { name: 'Filing' });
   await expect(filing.getByRole('button', { name: /start .*kitchen rebuild/i })).toBeVisible();
 
   // And disagreeing is one tap, so the suggestion is never a trap.

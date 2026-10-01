@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { CAPTURE_STATUSES, isTerminalStatus } from '@/api/schema.ts';
-import { capture } from '@/test/filing.tsx';
+import { STUCK_CREATED_AT, capture } from '@/test/filing.tsx';
 
-import { STAGES, describeAgoShort, groupReceipts, stageIndex } from './model.ts';
+import { STAGES, describeAgoShort, groupReceipts, noticeKind, stageIndex } from './model.ts';
 
 describe('stageIndex', () => {
   it('lights a segment for every status the pipeline can leave a capture in', () => {
@@ -107,5 +107,29 @@ describe('describeAgoShort', () => {
     expect(ago(3 * 3_600_000)).toBe('3 h');
     expect(ago(4 * 86_400_000)).toBe('4 d');
     expect(describeAgoShort('not a date', now)).toBe('');
+  });
+});
+
+describe('noticeKind', () => {
+  it('names the glyph for every status, a stuck capture and a started note', () => {
+    const kinds = Object.fromEntries(
+      CAPTURE_STATUSES.map((status) => [status, noticeKind(capture({ status }))]),
+    );
+    expect(kinds).toMatchObject({
+      uploaded: 'moving',
+      transcribing: 'moving',
+      appending: 'moving',
+      needs_target: 'needs',
+      failed: 'failed',
+      spend_capped: 'failed',
+      no_content: 'failed',
+      appended: 'filed',
+    });
+    // Stuck: still moving on the wire, but it needs the person now.
+    expect(noticeKind(capture({ status: 'transcribing', created_at: STUCK_CREATED_AT }))).toBe('failed');
+    const [group] = groupReceipts([capture({ status: 'appended', note_id: 'n1', created_note: true })]);
+    expect(group && noticeKind(group)).toBe('started');
+    const [filed] = groupReceipts([capture({ status: 'appended', note_id: 'n1' })]);
+    expect(filed && noticeKind(filed)).toBe('filed');
   });
 });

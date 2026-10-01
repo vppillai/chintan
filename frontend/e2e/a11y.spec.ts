@@ -83,6 +83,38 @@ for (const theme of THEMES) {
   });
 }
 
+/*
+ * Home with every filing tier in the tray (F9): moving, asking which note,
+ * failed, and two receipts folded. The glyphs, the hairlines and the faint
+ * "· 2 min" are on the notice surface, which is what the contrast rule reads.
+ */
+for (const theme of THEMES) {
+  test(`Home with every filing tier has no critical axe violations in ${theme}`, async ({
+    page,
+    api,
+  }) => {
+    const now = new Date().toISOString();
+    const row = { created_at: now, version: 1, note_id: null } as const;
+    api.captures.push(
+      { ...row, id: 'cap-moving', status: 'transcribing' },
+      { ...row, id: 'cap-needs', status: 'needs_target', excerpt: 'Call the plumber.' },
+      { ...row, id: 'cap-failed', status: 'failed', error: 'Couldn’t transcribe this' },
+      { ...row, id: 'cap-a', status: 'appended', appended_at: now, note_id: 'roof-repair' },
+      { ...row, id: 'cap-b', status: 'appended', appended_at: now, note_id: 'reading-list' },
+    );
+    await page.addInitScript((value) => {
+      localStorage.setItem('chintan.theme', value);
+    }, theme);
+
+    await page.goto('/');
+    const filing = page.getByRole('region', { name: 'Filing' });
+    await expect(filing.getByText(/filed into/)).toBeVisible();
+    await expect(filing.getByText('Couldn’t transcribe this')).toBeVisible();
+    await page.waitForLoadState('networkidle');
+    await expectNoSeriousViolations(page);
+  });
+}
+
 /**
  * A heading to land on, on every screen. The note screen had none: its title
  * is an input (axe `page-has-heading-one`, the one finding of the QA pass's

@@ -74,7 +74,7 @@ describe('the upload this device is still making has a row of its own', () => {
     const row = await screen.findByRole('status');
     expect(row).toHaveTextContent('Uploading… 40%');
     expect(screen.getByText('0:41')).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: /recordings being filed/i })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Filing' })).toBeInTheDocument();
   });
 
   it('follows the store as the upload progresses', async () => {
@@ -130,7 +130,9 @@ describe('the upload this device is still making has a row of its own', () => {
 
     expect(await screen.findByText(/safe on this device/i)).toBeInTheDocument();
     const retry = screen.getByRole('button', { name: 'Retry' });
-    expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+    // Discard deletes the audio, so it stays a word and never becomes the × (F9).
+    expect(screen.getByRole('button', { name: 'Discard' })).toHaveTextContent('Discard');
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
 
     // Retry is the store's send, not the server's retry endpoint: there is no
     // server capture to retry yet.
@@ -155,7 +157,7 @@ describe('the upload this device is still making has a row of its own', () => {
       expect(useCaptureStore.getState().model.state).toBe('idle');
     });
     await waitFor(() => {
-      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+      expect(screen.queryByRole('region', { name: 'Filing' })).toBeNull();
     });
   });
 
@@ -187,7 +189,7 @@ describe('the upload this device is still making has a row of its own', () => {
     sending({ noteId: 'roof-repair' });
     mount([]);
     await waitFor(() => {
-      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+      expect(screen.queryByRole('region', { name: 'Filing' })).toBeNull();
     });
   });
 
@@ -200,7 +202,7 @@ describe('the upload this device is still making has a row of its own', () => {
     });
     mount([]);
     await waitFor(() => {
-      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+      expect(screen.queryByRole('region', { name: 'Filing' })).toBeNull();
     });
   });
 });
@@ -231,7 +233,7 @@ describe('the filing row is server state, not a JavaScript variable', () => {
   it('renders nothing when there is no capture in flight', async () => {
     mount([]);
     await waitFor(() => {
-      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+      expect(screen.queryByRole('region', { name: 'Filing' })).toBeNull();
     });
   });
 
@@ -534,7 +536,7 @@ describe('a row leaves when it is acted on, and stays gone', () => {
     view.unmount();
     mount([filed]);
     await waitFor(() => {
-      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+      expect(screen.queryByRole('region', { name: 'Filing' })).toBeNull();
     });
     expect(JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? '[]')).toEqual(['srv-read']);
   });
@@ -575,7 +577,7 @@ describe('a row leaves when it is acted on, and stays gone', () => {
         .toBeGreaterThan(1);
     });
     expect(screen.queryByText(/^Filed/)).toBeNull();
-    expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Filing' })).toBeNull();
   });
 
   it('is dismissed by Dismiss across a remount too', async () => {
@@ -587,7 +589,7 @@ describe('a row leaves when it is acted on, and stays gone', () => {
     mount([filed]);
 
     await waitFor(() => {
-      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+      expect(screen.queryByRole('region', { name: 'Filing' })).toBeNull();
     });
   });
 
@@ -1090,7 +1092,7 @@ describe('a recording made into a note is the note\'s to show, not the library\'
       capture({ id: 'srv-legacy', status: 'appended', note_id: 'roof-repair', targeted: true }),
     ]);
     await waitFor(() => {
-      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+      expect(screen.queryByRole('region', { name: 'Filing' })).toBeNull();
     });
   });
 
@@ -1105,7 +1107,7 @@ describe('a recording made into a note is the note\'s to show, not the library\'
   it('renders nothing at all when every capture is a note\'s', async () => {
     mount([capture({ id: 'srv-targeted', status: 'appended', note_id: 'roof-repair', targeted: true })]);
     await waitFor(() => {
-      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+      expect(screen.queryByRole('region', { name: 'Filing' })).toBeNull();
     });
   });
 
@@ -1126,7 +1128,7 @@ describe('a recording made into a note is the note\'s to show, not the library\'
     });
     mount([]);
     await waitFor(() => {
-      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+      expect(screen.queryByRole('region', { name: 'Filing' })).toBeNull();
     });
   });
 
@@ -1171,5 +1173,48 @@ describe('a recording made into a note is the note\'s to show, not the library\'
     expect(loadTargeted().size).toBe(0);
     localStorage.setItem(TARGETED_KEY, JSON.stringify([1, 'ok', null]));
     expect(Array.from(loadTargeted())).toEqual(['ok']);
+  });
+});
+
+describe('the section is a tray of notices under the heading "Filing" (F9)', () => {
+  it('is a region named by its h2, with one live region outside the rows', async () => {
+    mount([
+      capture({ id: 'moving', status: 'transcribing' }),
+      capture({ id: 'a', status: 'appended', note_id: 'n1', appended_at: new Date().toISOString() }),
+      capture({ id: 'b', status: 'appended', note_id: 'n2', appended_at: new Date().toISOString() }),
+    ]);
+    const region = await screen.findByRole('region', { name: 'Filing' });
+    expect(within(region).getByRole('heading', { name: 'Filing', level: 2 })).toBeInTheDocument();
+    await screen.findByText(/filed into/);
+    // Round 7's single always-mounted region for the fold; every other
+    // `aria-live` is a row's own title.
+    const outside = Array.from(document.querySelectorAll('[aria-live]')).filter(
+      (node) => !node.closest('.filing-row'),
+    );
+    expect(outside).toHaveLength(1);
+  });
+
+  it("hands focus from a failed row's × to the next row, and from the last to the heading", async () => {
+    const user = userEvent.setup();
+    render(<h1 className="library-heading" tabIndex={-1} />);
+    mount([
+      capture({ id: 'first', status: 'failed', error: 'First failure' }),
+      capture({ id: 'second', status: 'failed', error: 'Second failure' }),
+    ]);
+    const first = (await screen.findByText('First failure')).closest('article') as HTMLElement;
+    within(first).getByRole('button', { name: 'Dismiss' }).focus();
+    await user.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(screen.queryByText('First failure')).toBeNull();
+    });
+    expect(document.activeElement?.closest('.filing-row')).toHaveTextContent('Second failure');
+
+    const second = screen.getByText('Second failure').closest('article') as HTMLElement;
+    within(second).getByRole('button', { name: 'Dismiss' }).focus();
+    await user.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(screen.queryByText('Second failure')).toBeNull();
+    });
+    expect(document.activeElement).toHaveClass('library-heading');
   });
 });

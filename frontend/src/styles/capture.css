@@ -16,25 +16,81 @@
 
 .filing {
   display: grid;
-  gap: var(--space-2);
-  margin-block-end: var(--space-4);
+  gap: 0;
+  margin-block-end: var(--space-6);
 }
 
+/* "Filing", in the day groups' own label style. */
+.filing__label {
+  margin-block-end: var(--space-2);
+}
+
+/*
+ * Notices, not notes (F9): one tray pressed into the page — the inset shadow
+ * on surface, the opposite of the raised cards under it — divided by
+ * hairlines. No border, and no overflow clip, which would cut the focus
+ * rings of the controls at its edge. The rows are transparent so the inset
+ * shadow shows through them; the swipe tray behind a receipt is only ever as
+ * wide as the row has moved (`.swipe__tray`), so nothing needs covering.
+ */
+.filing__tray {
+  background-color: var(--color-notice);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-notice);
+}
+
+.filing__tray > * + *,
+.filing-fold__rows > * {
+  border-block-start: 1px solid var(--color-notice-line);
+}
+
+/*
+ * Glyph, text, ×: three columns, every part placed in row 1 by name. R7's
+ * receipt grid set a row but no column on its trailing buttons, so the
+ * grid put them first and the title dropped below them; with a column for
+ * everything that cannot happen again.
+ */
 .filing-row {
   display: grid;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  background-color: var(--color-raised);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-xs);
+  grid-template-columns: var(--layout-notice-glyph) minmax(0, 1fr) var(--layout-touch-target-min);
+  align-items: start;
+  column-gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
 }
 
-.filing-row[data-status='failed'],
-.filing-row[data-status='spend_capped'],
-.filing-row[data-status='upload-failed'],
-.filing-row[data-stuck] {
-  border-color: var(--color-line-strong);
+/* A row drawn on its own — this device's upload on /talk or a note's Recordings tab — is its own tray. */
+.filing-row:not(.filing__tray .filing-row) {
+  background-color: var(--color-notice);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-notice);
+}
+
+.filing-row__glyph {
+  grid-area: 1 / 1;
+  display: grid;
+  place-items: center;
+  inline-size: var(--layout-notice-glyph);
+  block-size: var(--layout-notice-glyph);
+  margin-block-start: var(--space-2);
+  color: var(--color-notice-glyph);
+}
+
+.filing-row[data-kind='needs'] .filing-row__glyph {
+  color: var(--color-ink);
+}
+
+/* Nothing went wrong on an empty recording, so its glyph stays muted. */
+.filing-row[data-kind='failed']:not([data-status='no_content']) .filing-row__glyph {
+  color: var(--color-notice-alert);
+}
+
+/* The text column, padded so its first line centres on the 44 px ×. */
+.filing-row__body {
+  grid-area: 1 / 2;
+  display: grid;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  padding-block: var(--space-3);
 }
 
 /*
@@ -60,8 +116,7 @@
 .filing-row__head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
+  gap: var(--space-1);
 }
 
 .filing-row__title {
@@ -533,28 +588,22 @@
 }
 
 /* --------------------------------------------------------------------------
-   Filing row additions — the receipt; the rest of the row is above
+   Filing row additions — the receipt, the ×, the fold; the rest is above
    -------------------------------------------------------------------------- */
 
 /*
- * One line (R7-7a): the title cut with an ellipsis, "· 2 min" right after it,
- * then the chevron; the excerpt, when there is one, is a muted second line
- * under them. The × takes a column only where it can be seen.
+ * One line (R7-7a): the title cut with an ellipsis and "· 2 min" right after
+ * it; the excerpt, when there is one, is a muted second line under them.
  */
 .filing-row--receipt {
   position: relative;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  column-gap: 0;
-  row-gap: 0;
-  padding-block: var(--space-1);
-  padding-inline-end: var(--space-1);
 }
 
-.filing-row--receipt > .filing-row__head {
-  grid-column: 1;
-  justify-content: flex-start;
-  gap: var(--space-1);
+.filing-row--receipt .filing-row__body {
+  gap: 0;
+}
+
+.filing-row--receipt .filing-row__head {
   min-inline-size: 0;
 }
 
@@ -565,36 +614,21 @@
   white-space: nowrap;
 }
 
-.filing-row--receipt > .filing-row__excerpt {
-  grid-column: 1;
+.filing-row--receipt .filing-row__excerpt {
   -webkit-line-clamp: 1;
 }
 
-.filing-row--receipt > .filing-row__receipt,
-.filing-row--receipt > .filing-row__dismiss {
-  grid-row: 1 / span 2;
-}
-
-/* "Started" wears the plus, so a note made for this recording reads apart from an append. */
-.filing-row__started-icon {
-  display: inline-block;
-  margin-inline-end: var(--space-1);
-  vertical-align: -0.15em;
-  color: var(--color-accent-strong);
-}
-
 /*
- * The chevron is the button, and its ::after is what makes the whole card
- * tappable. The title is outside it on purpose — first in the head, as on
- * every row — so the live region a moving row rendered is the node the
- * receipt updates (FilingRow.tsx). The × sits above the stretch.
+ * "Open the note" is a zero-size button whose ::after covers the row, so
+ * the whole receipt opens the note and no chevron takes a column (F9). The
+ * title is outside it on purpose — first in the head, as on every row — so
+ * the live region a moving row rendered is the node the receipt updates
+ * (FilingItem.tsx). The × sits above the stretch.
  */
 .filing-row__receipt {
-  display: grid;
-  place-items: center;
-  inline-size: var(--layout-touch-target-min);
-  block-size: var(--layout-touch-target-min);
-  color: var(--color-faint);
+  inline-size: 0;
+  block-size: 0;
+  overflow: visible;
 }
 
 .filing-row__receipt::after {
@@ -603,7 +637,21 @@
   inset: 0;
 }
 
+/* A zero-size button has no ring worth the name, so the row wears it. */
+.filing-row--receipt:has(.filing-row__receipt:focus-visible) {
+  outline: var(--layout-focus-ring-width) solid var(--color-ink);
+  outline-offset: calc(-1 * var(--layout-focus-ring-width));
+}
+
+@supports selector(:has(*)) {
+  .filing-row__receipt:focus-visible {
+    outline: none;
+  }
+}
+
+/* Always drawn, under a finger too (F9 supersedes R7-7a's hidden ×). */
 .filing-row__dismiss {
+  grid-area: 1 / 3;
   position: relative;
   z-index: 1;
   display: grid;
@@ -612,33 +660,15 @@
   block-size: var(--layout-touch-target-min);
   border-radius: var(--radius-full);
   color: var(--color-muted);
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-/*
- * The × on the hovered or focused receipt only. Under a mouse it keeps its
- * column and fades in, so nothing moves under the pointer. Under a finger it
- * takes no room — the swipe tray and "Clear all" put a receipt away — and
- * is still a real button that a keyboard or screen reader reaches, drawn
- * over the chevron's place once it has focus.
- */
 @media (hover: hover) and (pointer: fine) {
-  .filing-row--receipt:not(:hover, :focus-within) > .filing-row__dismiss {
-    opacity: 0;
-  }
-}
-
-@media not ((hover: hover) and (pointer: fine)) {
-  .filing-row--receipt > .filing-row__dismiss {
-    position: absolute;
-    inset-block-start: 50%;
-    inset-inline-end: var(--space-1);
-    translate: 0 -50%;
-    background-color: var(--color-raised);
-  }
-
-  .filing-row--receipt:not(:focus-within) > .filing-row__dismiss {
-    clip-path: inset(50%);
-    opacity: 0;
+  .filing-row__dismiss:hover {
+    background-color: var(--color-line);
+    color: var(--color-ink);
   }
 }
 
@@ -652,27 +682,33 @@
   color: var(--color-muted);
 }
 
-/* The swipe wrapper takes the card's corners, so the tray behind it does too. */
+/* The rows are the tray's; only the ends take its corners, so a swipe tray there does too. */
 .filing-swipe {
-  border-radius: var(--radius-lg);
+  border-radius: 0;
+}
+
+.filing__tray > .filing-swipe:first-child {
+  border-start-start-radius: var(--radius-lg);
+  border-start-end-radius: var(--radius-lg);
+}
+
+.filing__tray > .filing-swipe:last-child {
+  border-end-start-radius: var(--radius-lg);
+  border-end-end-radius: var(--radius-lg);
 }
 
 /*
- * Two or more receipts fold into one summary row that expands in place. The
- * sentence and its chevron are one button; "Clear all" is the row's other
- * control.
+ * Two or more receipts fold into one summary row that expands in place:
+ * glyph, then the sentence and its chevron as one button — the chevron
+ * stays, because this expands rather than navigates — then "Clear all".
  */
-.filing-fold,
-.filing-fold__rows {
-  display: grid;
-  gap: var(--space-2);
+.filing-row--fold {
+  grid-template-columns: var(--layout-notice-glyph) minmax(0, 1fr) auto;
+  align-items: center;
 }
 
-.filing-row--fold {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  padding-block: var(--space-1);
-  padding-inline-end: var(--space-1);
+.filing-row--fold .filing-row__glyph {
+  margin-block-start: 0;
 }
 
 .filing-fold__toggle {
@@ -712,8 +748,13 @@
   margin-block: var(--space-2) var(--space-3);
 }
 
-.filing--banner .filing-row {
-  padding-block: var(--space-2);
+/* "Added at the end · Show", in the tray with the receipt's check. */
+.filing--banner .filing-landed {
+  padding-inline: var(--space-3) var(--space-1);
+}
+
+.filing--banner .filing-landed .filing-row__glyph {
+  margin-block-start: 0;
 }
 
 /*

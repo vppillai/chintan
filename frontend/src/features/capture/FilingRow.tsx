@@ -13,7 +13,7 @@ import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
 import { UNSENT_CAPTURES_KEY } from './ResumePrompt.tsx';
 import { dismissCapture, dismissCaptures, loadDismissed } from './dismissed.ts';
-import { FilingItem, receiptTitle } from './filing/FilingItem.tsx';
+import { FilingItem, NoticeGlyph, receiptTitle } from './filing/FilingItem.tsx';
 import {
   groupReceipts,
   isStuck,
@@ -229,65 +229,76 @@ export function FilingRow() {
   return (
     <>
     {live}
-    <section ref={sectionRef} className="filing" aria-label="Recordings being filed">
-      {local && <LocalUploadItem model={local} />}
-      {/*
-        One array, so a capture keeps its key — and its DOM node, and the live
-        region that announces the landing — as it passes from moving to
-        receipt: React finds a key only among siblings of the same array.
-      */}
-      {[...moving, ...needsYou, ...shown].map((row) =>
-        'captureIds' in row ? (
-          receipt(row)
-        ) : (
-          <FilingItem
-            key={row.id}
-            capture={row}
-            onRetry={() => retry.mutate(row.id)}
-            retrying={retry.isPending && retry.variables === row.id}
-            retryError={retry.isError && retry.variables === row.id ? retryMessage(retry.error) : null}
-            onDismiss={() => {
-              dismiss(row.id);
-            }}
-          />
-        ),
-      )}
-      {folded.length > 0 && (
-        <div className="filing-fold" data-expanded={expanded || undefined}>
-          <div className="filing-row filing-row--fold">
-            {/*
-              A button with aria-expanded rather than a <details>, because
-              "Clear all" sits on the same line and a control inside a
-              <summary> is not one a screen reader can reach on its own.
-              A landing into the fold is announced by the section's own
-              region above, not by this sentence.
-            */}
-            <button
-              type="button"
-              className="filing-fold__toggle"
-              aria-expanded={expanded}
-              aria-controls={expanded ? 'filing-fold-rows' : undefined}
-              onClick={() => {
-                setExpanded((open) => !open);
+    {/*
+      Notices, not notes (F9): one tray pressed into the page under its own
+      heading, so it reads as a different thing from the raised cards below,
+      and lands in heading navigation beside "Pinned" and "Today".
+    */}
+    <section ref={sectionRef} className="filing" aria-labelledby="filing-heading">
+      <h2 id="filing-heading" className="note-group__label filing__label">
+        Filing
+      </h2>
+      <div className="filing__tray">
+        {local && <LocalUploadItem model={local} />}
+        {/*
+          One array, so a capture keeps its key — and its DOM node, and the live
+          region that announces the landing — as it passes from moving to
+          receipt: React finds a key only among siblings of the same array.
+        */}
+        {[...moving, ...needsYou, ...shown].map((row) =>
+          'captureIds' in row ? (
+            receipt(row)
+          ) : (
+            <FilingItem
+              key={row.id}
+              capture={row}
+              onRetry={() => retry.mutate(row.id)}
+              retrying={retry.isPending && retry.variables === row.id}
+              retryError={retry.isError && retry.variables === row.id ? retryMessage(retry.error) : null}
+              onDismiss={() => {
+                dismiss(row.id);
               }}
-            >
-              <span className="filing-row__title">
-                <span className="numeric">{foldedCaptures}</span> filed into{' '}
-                <span className="numeric">{folded.length}</span> notes
-              </span>
-              <Icon name="chevron-right" size={18} className="filing-fold__chevron" />
-            </button>
-            <button type="button" className="filing-row__action filing-fold__clear" onClick={clearAll}>
-              <span>Clear all</span>
-            </button>
-          </div>
-          {expanded && (
-            <div id="filing-fold-rows" className="filing-fold__rows">
-              {folded.map((group) => receipt(group, true))}
+            />
+          ),
+        )}
+        {folded.length > 0 && (
+          <div className="filing-fold" data-expanded={expanded || undefined}>
+            <div className="filing-row filing-row--fold" data-kind="filed">
+              <NoticeGlyph kind="filed" />
+              {/*
+                A button with aria-expanded rather than a <details>, because
+                "Clear all" sits on the same line and a control inside a
+                <summary> is not one a screen reader can reach on its own.
+                A landing into the fold is announced by the section's own
+                region above, not by this sentence.
+              */}
+              <button
+                type="button"
+                className="filing-fold__toggle"
+                aria-expanded={expanded}
+                aria-controls={expanded ? 'filing-fold-rows' : undefined}
+                onClick={() => {
+                  setExpanded((open) => !open);
+                }}
+              >
+                <span className="filing-row__title">
+                  <span className="numeric">{foldedCaptures}</span> filed into{' '}
+                  <span className="numeric">{folded.length}</span> notes
+                </span>
+                <Icon name="chevron-right" size={18} className="filing-fold__chevron" />
+              </button>
+              <button type="button" className="filing-row__action filing-fold__clear" onClick={clearAll}>
+                <span>Clear all</span>
+              </button>
             </div>
-          )}
-        </div>
-      )}
+            {expanded && (
+              <div id="filing-fold-rows" className="filing-fold__rows">
+                {folded.map((group) => receipt(group, true))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </section>
     </>
   );
@@ -297,7 +308,7 @@ export function FilingRow() {
  * Moves focus off a row about to leave, when its control holds focus: a ×
  * pressed from the keyboard used to take focus with it to `<body>`, and the
  * next Tab started from the top of the page. Focus goes to the neighbouring
- * row's own control — its × or Dismiss, or the folded receipts' summary —
+ * row's own control — its Retry or ×, or the folded receipts' summary —
  * else, when this was the last row, to the library's heading, which
  * `NotesScreen` makes focusable for the purpose. Read before the state
  * update, while the row is still in the document.
@@ -343,66 +354,74 @@ export function LocalUploadItem({ model }: { model: CaptureModel }) {
     <article
       className="filing-row"
       data-status={failed ? 'upload-failed' : model.state}
+      data-kind={failed ? 'failed' : 'moving'}
       data-local="true"
     >
-      <div className="filing-row__head">
-        <p className="filing-row__title" role="status" aria-live="polite">
-          {failed ? (
-            model.failure?.message
-          ) : landed ? (
-            'Uploaded'
-          ) : (
-            <>
-              Uploading… <span className="numeric">{percent}</span>%
-            </>
+      <NoticeGlyph kind={failed ? 'failed' : 'moving'} />
+      <div className="filing-row__body">
+        <div className="filing-row__head">
+          <p className="filing-row__title" role="status" aria-live="polite">
+            {failed ? (
+              model.failure?.message
+            ) : landed ? (
+              'Uploaded'
+            ) : (
+              <>
+                Uploading… <span className="numeric">{percent}</span>%
+              </>
+            )}
+          </p>
+          {model.elapsedMs > 0 && (
+            <span className="filing-row__duration numeric">
+              {formatDurationShort(model.elapsedMs)}
+            </span>
           )}
-        </p>
-        {model.elapsedMs > 0 && (
-          <span className="filing-row__duration numeric">
-            {formatDurationShort(model.elapsedMs)}
-          </span>
-        )}
-      </div>
-
-      {/*
-        A determinate bar, because for once the client does know the shape of
-        the work: the uploader's coarse steps. It hands over to the stage strip
-        of the server row as soon as that exists.
-      */}
-      {!failed && (
-        <div className="filing-row__upload" aria-hidden="true">
-          <span className="filing-row__upload-fill" style={{ inlineSize: `${percent}%` }} />
         </div>
-      )}
 
-      {willResend && (
-        <p className="filing-row__status">It will be sent when you&rsquo;re back online.</p>
-      )}
+        {/*
+          A determinate bar, because for once the client does know the shape of
+          the work: the uploader's coarse steps. It hands over to the stage strip
+          of the server row as soon as that exists.
+        */}
+        {!failed && (
+          <div className="filing-row__upload" aria-hidden="true">
+            <span className="filing-row__upload-fill" style={{ inlineSize: `${percent}%` }} />
+          </div>
+        )}
 
-      {failed && (
-        <div className="filing-row__actions">
-          {canRetryUpload(model) && (
+        {willResend && (
+          <p className="filing-row__status">It will be sent when you&rsquo;re back online.</p>
+        )}
+
+        {failed && (
+          <div className="filing-row__actions">
+            {canRetryUpload(model) && (
+              <button
+                type="button"
+                className="filing-row__action filing-row__action--primary"
+                onClick={() => void send(api)}
+              >
+                <span>Retry</span>
+              </button>
+            )}
+            {/*
+              A word, never an ×: Discard deletes the only copy of the audio,
+              and an × on these rows means "put away" (F9).
+            */}
             <button
               type="button"
-              className="filing-row__action filing-row__action--primary"
-              onClick={() => void send(api)}
+              className="filing-row__action"
+              onClick={() => {
+                void discard().then(() => {
+                  void queryClient.invalidateQueries({ queryKey: UNSENT_CAPTURES_KEY });
+                });
+              }}
             >
-              <span>Retry</span>
+              <span>Discard</span>
             </button>
-          )}
-          <button
-            type="button"
-            className="filing-row__action"
-            onClick={() => {
-              void discard().then(() => {
-                void queryClient.invalidateQueries({ queryKey: UNSENT_CAPTURES_KEY });
-              });
-            }}
-          >
-            <span>Discard</span>
-          </button>
-        </div>
-      )}
+          </div>
+        )}
+      </div>
     </article>
   );
 }
