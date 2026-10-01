@@ -155,9 +155,9 @@ export function NotificationsCard() {
         </p>
       ) : !configured ? (
         <p className="you-card__note" role="note">
-          Not set up on this instance yet. The owner creates the key pair with{' '}
-          <code>scripts/vapid-keys.sh</code> and puts it in SSM; the switch appears here once it is
-          there.
+          Not set up on this instance yet. The owner installs the key pair with{' '}
+          <code>scripts/vapid-keys.sh --apply</code> (setup does it unless <code>web_push</code> is
+          off); the switch appears here after the next deploy.
         </p>
       ) : support === 'ios-not-installed' ? (
         <p className="you-card__note" role="note">
