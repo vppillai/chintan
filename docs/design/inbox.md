@@ -227,8 +227,9 @@ About: `captureOf` leaves both fields out, and the wire test pins that.
   at one request a second (burst ten) — some forty times what ten devices
   at two hundred requests a day can need — because a bad-key POST is billed
   (the invocation and the body transfer) before the handler refuses it; a
-  CloudWatch alarm on the gateway's 4xx count (a thousand in five minutes)
-  e-mails when a flood is under way. The trade-off: the ceiling is per
+  CloudWatch alarm on the gateway's 4xx count (three hundred in five
+  minutes: one route held at its throttle for the window) e-mails when a
+  flood is under way. The trade-off: the ceiling is per
   route and shared by every caller, so a flood at the public URL pauses the
   inbox for the owner's own devices while it lasts; the app itself uses
   other routes and is untouched. If that ever matters, CloudFront in front

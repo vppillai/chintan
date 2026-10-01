@@ -19,6 +19,14 @@
 # data: a disabled account keeps its notes for when it is enabled again, and a
 # deleted one must be erased with chintanctl FIRST, because once the Cognito
 # user is gone nothing maps the email back to the tenant id its data lives under.
+# --delete --apply asks you to type `delete`, the same prompt teardown.sh and
+# cleanup-aws.sh use; --yes skips it for a scripted run.
+#
+# The shell never holds the password. A python block generates it, writes the
+# AWS CLI's --cli-input-json document and the password file, both mode 600 in
+# a private temporary directory, the way scripts/vapid-keys.sh handles the
+# VAPID pair; the shell only runs the CLI on the one file and copies or cats
+# the other, so the value is never an argv that `ps` would show.
 #
 # Usage:
 #   scripts/invite-user.sh --instance dev --email you@example.com [--apply]
@@ -35,7 +43,9 @@
 #   --disable             refuse the user's sign-in and token refresh; their notes stay
 #   --delete              remove the account from the pool; run
 #                         `chintanctl erase --instance <name> --tenant <sub> --apply` first
+#   --yes                 skip the typed confirmation --delete --apply asks for
 #   --apply               execute; without it, print the plan and change nothing
+#   --dry-run             the default: print the plan and change nothing
 #
 # TEMP_PASSWORD may be supplied in the environment to use a specific value.
 
@@ -75,6 +85,7 @@ while [ $# -gt 0 ]; do
         --print-password) PRINT_PASSWORD=1 ;;
         --disable) MODE=disable ;;
         --delete) MODE=delete ;;
+        --yes) ASSUME_YES=1 ;;
         --apply) APPLY=1 ;;
         --dry-run) APPLY=0 ;;
         -h | --help)
@@ -95,7 +106,7 @@ validate_environment "$ENVIRONMENT"
 # correctly configured default profile fail with an opaque profile-not-found
 # error. Pass --profile through the environment if you use one.
 require_aws
-require_cmd openssl
+require_cmd python3
 
 STACK="$(stack_name "$INSTANCE" "$ENVIRONMENT")"
 stack_exists "$STACK" || die "stack $STACK not found in region ${AWS_REGION:-<default>}"
@@ -135,6 +146,9 @@ if [ "$MODE" != "invite" ]; then
         aws_cli cognito-idp admin-disable-user --user-pool-id "$POOL_ID" --username "$EMAIL"
         ok "disabled $EMAIL: sign-in and token refresh are refused until admin-enable-user"
     else
+        confirm_destructive delete \
+            "deleting $EMAIL from $POOL_ID cannot be undone" \
+            "afterwards nothing maps the email back to tenant $SUB"
         aws_cli cognito-idp admin-delete-user --user-pool-id "$POOL_ID" --username "$EMAIL"
         ok "deleted $EMAIL from $POOL_ID"
     fi
@@ -151,26 +165,44 @@ if ! confirm_apply "$APPLY" "$([ "$EXISTS" = "1" ] && echo "reset" || echo "crea
     exit 0
 fi
 
+tmp="$(mktemp -d)"
+chmod 700 "$tmp"
+trap 'rm -rf "$tmp"' EXIT
+
+# --permanent is deliberately absent from the reset document:
+# admin-set-user-password without it puts the account into
+# FORCE_CHANGE_PASSWORD, which is the state the sign-in flow and the README
+# both assume.
+python3 -c '
+import json, os, secrets, sys
+pool, user, exists, tmp = sys.argv[1:5]
 # 20 URL-safe characters plus one of each required class, so the value always
-# satisfies the pool's password policy without depending on chance.
-TEMP_PASSWORD="${TEMP_PASSWORD:-$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-20)Aa1!}"
+# satisfies the pool password policy without depending on chance.
+password = os.environ.get("TEMP_PASSWORD") or secrets.token_urlsafe(15) + "Aa1!"
+if exists == "1":
+    doc = {"UserPoolId": pool, "Username": user, "Password": password}
+else:
+    doc = {
+        "UserPoolId": pool,
+        "Username": user,
+        "UserAttributes": [
+            {"Name": "email", "Value": user},
+            {"Name": "email_verified", "Value": "true"},
+        ],
+        "MessageAction": "SUPPRESS",
+        "TemporaryPassword": password,
+    }
+for name, text in (("input.json", json.dumps(doc)), ("password", password + "\n")):
+    fd = os.open(os.path.join(tmp, name), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+' "$POOL_ID" "$EMAIL" "$EXISTS" "$tmp"
 
 if [ "$EXISTS" = "1" ]; then
-    # --permanent is deliberately absent. admin-set-user-password without it puts
-    # the account into FORCE_CHANGE_PASSWORD, which is the state the sign-in flow
-    # and the README both assume.
-    aws_cli cognito-idp admin-set-user-password \
-        --user-pool-id "$POOL_ID" \
-        --username "$EMAIL" \
-        --password "$TEMP_PASSWORD" >/dev/null
+    aws_cli cognito-idp admin-set-user-password --cli-input-json "file://$tmp/input.json" >/dev/null
     ok "password reset for $EMAIL"
 else
-    aws_cli cognito-idp admin-create-user \
-        --user-pool-id "$POOL_ID" \
-        --username "$EMAIL" \
-        --user-attributes "Name=email,Value=$EMAIL" Name=email_verified,Value=true \
-        --message-action SUPPRESS \
-        --temporary-password "$TEMP_PASSWORD" >/dev/null
+    aws_cli cognito-idp admin-create-user --cli-input-json "file://$tmp/input.json" >/dev/null
     ok "created $EMAIL"
 fi
 
@@ -179,10 +211,11 @@ info "username: $EMAIL"
 if [ "$PRINT_PASSWORD" = "1" ]; then
     warn "printing the temporary password because --print-password was passed"
     warn "clear your terminal afterwards"
-    printf 'temporary password: %s\n' "$TEMP_PASSWORD"
+    printf 'temporary password: '
+    cat "$tmp/password"
 else
     umask 077
-    printf '%s\n' "$TEMP_PASSWORD" >"$PASSWORD_OUT"
+    cp "$tmp/password" "$PASSWORD_OUT"
     chmod 600 "$PASSWORD_OUT"
     ok "temporary password written to $PASSWORD_OUT (mode 600, not printed)"
     dim "  delete it once the user has signed in: rm -f $PASSWORD_OUT"

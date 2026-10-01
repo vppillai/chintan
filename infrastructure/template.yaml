@@ -2222,20 +2222,31 @@ Resources:
   # RouteSettings bound the rate). Nothing else says a flood is happening:
   # the Lambda log skips 401s, ApiRequests carries only a status class, and
   # the first signal would be the budget's forecast e-mail about a day in.
-  # This is a Sum, not a rate: a thousand 4xx in five minutes is some forty
-  # times anything the app produces, so the alarm says one thing only — the
-  # public routes are being hammered — and stays quiet through a stale token
-  # or a mistyped key. ApiId alone is the dimension the gateway publishes
-  # without detailed metrics (review 2026-09-24, R4-7).
+  # This is a Sum, not a rate, and the threshold follows from the throttles
+  # above: each inbox route admits 1 rps with a burst of 10, so a flood held
+  # at one route's ceiling for the whole five-minute window reaches the
+  # handler 300 + 10 = 310 times, and all three routes together at most 930.
+  # Those are admitted requests: the gateway's own 429s also land in this
+  # metric, so a flood above the throttle crosses 300 sooner. The thousand
+  # this had until 2026-10 was out of reach of the admitted requests alone
+  # (review 2026-10-01, OPS-13); 300 is the count a single saturated route
+  # produces in one window, and still some twelve times anything the app
+  # produces, so the alarm says one thing only — a public route is being
+  # hammered — and stays quiet through a stale token or a mistyped key.
+  # ApiId alone is the dimension the gateway publishes without detailed
+  # metrics (review 2026-09-24, R4-7).
   ApiClientErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-api-4xx'
       AlarmDescription: >-
-        The gateway answered a thousand or more 4xx in five minutes. The open
-        inbox routes are being flooded with bad keys, or a client is stuck in
-        a retry loop; each refused request is billed before the key is checked.
+        The gateway answered three hundred or more 4xx in five minutes: one
+        inbox route held at its 1 rps throttle for the whole window (310
+        admitted requests; the gateway's own 429s count here too, so a flood
+        above the throttle gets here sooner). The open inbox routes are being
+        flooded with bad keys, or a client is stuck in a retry loop; each
+        refused request is billed before the key is checked.
       Namespace: AWS/ApiGateway
       MetricName: 4xx
       Dimensions:
@@ -2244,7 +2255,7 @@ Resources:
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1
-      Threshold: 1000
+      Threshold: 300
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       AlarmActions:
