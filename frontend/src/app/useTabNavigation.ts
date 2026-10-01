@@ -46,10 +46,34 @@ export function isPlainClick(event: MouseEvent): boolean {
 /*
  * The screen a multi-entry Back is on its way to. `navigate(-n)` is a plain
  * `history.go`, which settles in a later `popstate` and returns nothing to
- * wait on, so the second half of the move waits here for the POP to land
- * (`usePendingTab`). Module-level because there is one history.
+ * wait on, so the second half of the move waits for the POP to land
+ * (`usePendingTab`). In `sessionStorage`, like the tab's history itself, so a
+ * reload between the two halves still finishes the move; denied storage
+ * falls back to memory.
  */
-let pending: string | null = null;
+const PENDING_KEY = 'chintan.nav.pending';
+let pendingInMemory: string | null = null;
+
+function takePending(): string | null {
+  let target = pendingInMemory;
+  try {
+    target = sessionStorage.getItem(PENDING_KEY) ?? target;
+    sessionStorage.removeItem(PENDING_KEY);
+  } catch {
+    /* Storage denied: the copy in memory is the one. */
+  }
+  pendingInMemory = null;
+  return target;
+}
+
+function setPending(target: string): void {
+  pendingInMemory = target;
+  try {
+    sessionStorage.setItem(PENDING_KEY, target);
+  } catch {
+    /* Storage denied: memory holds it for this page. */
+  }
+}
 
 /** Whether the location is already the target, so a landing needs no replace. */
 function arrived(target: string, pathname: string, search: string): boolean {
@@ -78,7 +102,7 @@ export function useTabNavigation() {
   const goHome = (): void => {
     const index = historyIndex();
     if (index > 0 && !isHome(pathname, search)) {
-      pending = ROUTES.home;
+      setPending(ROUTES.home);
       void navigate(-index);
       return;
     }
@@ -98,7 +122,7 @@ export function useTabNavigation() {
     if (index === 0) void navigate(to, { state: RESTORE_SCROLL });
     else if (index === 1) void navigate(to, { replace: true, state: RESTORE_SCROLL });
     else {
-      pending = to;
+      setPending(to);
       void navigate(-(index - 1));
     }
   };
@@ -128,9 +152,9 @@ export function usePendingTab(): void {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const target = pending;
-    if (target === null || navigationType !== 'POP') return;
-    pending = null;
+    if (navigationType !== 'POP') return;
+    const target = takePending();
+    if (target === null) return;
     if (arrived(target, location.pathname, location.search)) return;
     void navigate(target, { replace: true, state: RESTORE_SCROLL });
     // The landing is one location change; nothing else should re-run this.

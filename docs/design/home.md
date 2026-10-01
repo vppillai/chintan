@@ -266,7 +266,11 @@ You → About → Home → You → About and then Back walked every screen visit
 - The index is React Router's private `history.state.idx`, read only through
   `historyIndex()`. Tabs stay real links, so a modified click opens a new tab.
 
-Known edge, left as the spec has it: the Archived chip is a filter and
-replaces like the others, so the archive reached by the chip (rather than by
-the "Archive" row at the list's end) takes Home's entry 0, and Back from it
-leaves the app. The Home tab there replaces it with Home.
+The Archived chip is the archive's other door and moves the same way: on
+from Home it pushes the archive (`goTab`), off at entry 1 it goes back down
+to Home, so Back from an archive reached either way is Home. The other chips
+stay filters and replace. Deleting a note goes Home the same way (`goHome`),
+and deleting one forever from the archive goes to the archive by `goTab`, so
+neither stacks a second copy of the screen it lands on. A reload keeps the
+tab's history and the router's index, so `useBackGuard` seeds only when the
+index is 0.

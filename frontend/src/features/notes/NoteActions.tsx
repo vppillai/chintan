@@ -1,5 +1,4 @@
 import { useState, type RefObject } from 'react';
-import { useNavigate } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
 import {
@@ -12,6 +11,7 @@ import {
 } from '@/api/queries.ts';
 import { isTerminalStatus, type NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
+import { useTabNavigation } from '@/app/useTabNavigation.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { DeleteConfirm } from '@/components/DeleteConfirm.tsx';
 import { OverflowMenu, type OverflowMenuItem } from '@/components/OverflowMenu.tsx';
@@ -84,7 +84,7 @@ export function NoteMenu({
   triggerRef: RefObject<HTMLButtonElement | null>;
   onOpenPanel: (panel: NotePanelKind) => void;
 }) {
-  const navigate = useNavigate();
+  const { goHome, goTab } = useTabNavigation();
   const archive = useArchiveNote();
   const restore = useRestoreNote();
   const undo = useUndoDelete();
@@ -189,9 +189,9 @@ export function NoteMenu({
 
   const archiveNow = (): void => {
     archive.mutate(note.id, {
-      // `replace: true` on both paths is deliberate: the note's own URL is
-      // now either archived or gone, and leaving it in the history means
-      // Back walks straight into a screen that 404s. The toast outlives this
+      // Home by going back down to it (R8, F2), not by pushing or replacing:
+      // a replace left [Home, Home], and a push would leave the note's own
+      // URL, now archived, for Back to walk straight into. The toast outlives this
       // menu — it is the shell's — and Undo restores through this hook, whose
       // own `onSuccess` refetches the lists whether or not the menu is still
       // mounted; handed the note as it was, it re-pins a pinned one
@@ -200,7 +200,7 @@ export function NoteMenu({
         showDeleted(() => {
           undo.mutate(note);
         });
-        void navigate(ROUTES.notes, { replace: true });
+        goHome();
       },
     });
   };
@@ -258,9 +258,13 @@ export function NoteMenu({
         onConfirm={() => {
           setConfirming(null);
           purge.mutate(note.id, {
-            // Back to the archive, which is where this note was. Staying put
-            // would leave the screen showing a note the server no longer has.
-            onSuccess: () => void navigate(ROUTES.archive, { replace: true }),
+            // Back to the archive, which is where this note was, the way the
+            // archive is always reached (R8, F2): a replace stacked a second
+            // archive on the first. Staying put would leave the screen
+            // showing a note the server no longer has.
+            onSuccess: () => {
+              goTab(ROUTES.archive);
+            },
           });
         }}
       />

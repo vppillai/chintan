@@ -97,3 +97,38 @@ test('a cold start on About: "‹ You" leaves [Home, You]', async ({ page }) => 
   await page.goBack();
   await expect(page).toHaveURL(/\/$/);
 });
+
+test('a reload on About keeps the stack: "‹ You" still lands on You', async ({ page }) => {
+  await page.goto('/');
+  await openYou(page);
+  await openAbout(page);
+  // The tab's history and the router's index survive a reload; seeding Home
+  // again would leave [Home, You, Home, About] and "‹ You" on Home.
+  await page.reload();
+  await expect(page.getByRole('link', { name: /back to\s*you/i })).toBeVisible();
+  await page.getByRole('link', { name: /back to\s*you/i }).click();
+  await expect(page).toHaveURL(/\/settings$/);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+});
+
+test('the Archived chip opens the archive above Home, and Back is Home', async ({ page }) => {
+  await page.goto('about:blank');
+  await page.goto('/');
+  const start = await depth(page);
+  await page.getByRole('button', { name: /^Archived/ }).click();
+  await expect(page).toHaveURL(/\?view=archived$/);
+  await expect(page.getByRole('button', { name: /old fence/i })).toBeVisible();
+  expect(await depth(page)).toBe(start + 1);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
+
+  // Turned off from the archive, the chip goes back down to Home too.
+  await page.getByRole('button', { name: /^Archived/ }).click();
+  await expect(page).toHaveURL(/\?view=archived$/);
+  await page.getByRole('button', { name: /^Archived/ }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await page.goBack();
+  await expect(page).toHaveURL('about:blank');
+});
