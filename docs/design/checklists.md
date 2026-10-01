@@ -127,7 +127,7 @@ is the extraction's `maxDepth` and one prompt sentence, gated by
 `TestLiveEval/items`),
 `{"items":[{"text":"Walmart","children":[{"text":"Eggs"}]},{"text":"Milk"}]}`.
 What an item is lives in one rule block, `cleanup.checklistItemRules`,
-shared with Split up's prompt (`docs/design/prompts.md`): one thing the
+shared with the tasks prompt behind Tidy up list (`docs/design/prompts.md`): one thing the
 person wants, in their own words, language and script, quantity kept; every
 word about the list rather than on it left out — "add", "to my list", the
 list's own name, also when the recording opens with that name to file it
@@ -141,7 +141,7 @@ returned as spoken; garbling fixed and fillers dropped, nothing else
 changed, nothing lost. A model that answers the old shape, bare strings,
 still parses as flat items; a grandchild is flattened into the children,
 after its parent. "One level only: a child has no children" is the items
-prompt's own rule, not the shared block's, so Split up can keep a list's
+prompt's own rule, not the shared block's, so Tidy up list can keep a list's
 three levels. It runs in the `cleaning` status, under the cleanup
 op and deadline, and stores the tree one line per item at `clean_key`, a
 child's line two spaces in per level (`cleanup.RenderItems`), so a retry does
@@ -572,7 +572,7 @@ it says "The list changed since — nothing undone." rather than undo that
 act too. So only the last tick is undoable. Reopening a done row offers
 none, and the status line still says "Marked done". The tick's toast is
 weak (`ToastNotice.weak`): it never takes the place of a standing Delete
-done or adoption Undo, so a tick right after Delete done leaves that Undo
+done or Tidy Undo, so a tick right after Delete done leaves that Undo
 standing, and the tick is said by the status line alone. Done rows have no grip, because their order
 is the body's and nothing shows it; a drag among them would move lines
 whose places are invisible.
