@@ -525,8 +525,13 @@ for (const theme of THEMES) {
         ).toBeLessThanOrEqual(1);
       });
 
-      test('a receipt swiped open shows one Dismiss, the tray\'s', async ({ page, api }) => {
+      test('a receipt swiped open shows one Dismiss, the tray\'s', async ({
+        page,
+        api,
+        browserName,
+      }) => {
         test.skip(device.name !== 'Pixel 7', 'the swipe tray is for a finger');
+        test.skip(browserName !== 'chromium', 'the touch is sent over CDP, which is Chromium only');
         await withoutServiceWorker(page);
         await useTheme(page, theme);
         const now = new Date().toISOString();
