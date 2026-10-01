@@ -57,6 +57,11 @@ export function useAskQuestion() {
  * `GET /v1/ask/{id}`, polled on the cadence above while the row is pending.
  * Nothing else reads these rows, and they expire in a day, so there is no
  * stale time to speak of: a settled row is simply never asked for again.
+ *
+ * Not while the app is in the background: a tick with the document hidden
+ * asks nothing, as every other poller holds (R7-17a). The clock keeps
+ * running, so a question pocketed for a minute reads as timed out on
+ * return rather than being asked after all over again.
  */
 export function useAsk(askId: string | null, since: number) {
   const api = useApi();
@@ -65,6 +70,5 @@ export function useAsk(askId: string | null, since: number) {
     queryFn: () => api.getAsk(askId ?? ''),
     enabled: askId !== null,
     refetchInterval: (query) => askPollInterval(query.state.data, since),
-    refetchIntervalInBackground: true,
   });
 }

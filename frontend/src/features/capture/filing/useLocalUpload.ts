@@ -4,7 +4,6 @@ import { useEffect } from 'react';
 import { queryKeys } from '@/api/queries.ts';
 import type { CaptureWire } from '@/api/schema.ts';
 
-import { UNSENT_CAPTURES_KEY } from '../ResumePrompt.tsx';
 import { recordedHereIds } from '../buffer.ts';
 import type { CaptureModel } from '../machine.ts';
 import { useCaptureStore } from '../store.ts';
@@ -62,7 +61,7 @@ export function useLocalUpload(
     // The server has the audio: ask for its row now rather than at the poll's
     // next tick, and the device's list of unsent recordings is one shorter.
     void queryClient.invalidateQueries({ queryKey: queryKeys.pendingCaptures() });
-    void queryClient.invalidateQueries({ queryKey: UNSENT_CAPTURES_KEY });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.unsentCaptures() });
     // The note it went into has a new recording; its own poll takes over from
     // there, since the new row is non-terminal.
     if (target) void queryClient.invalidateQueries({ queryKey: queryKeys.note(target) });
@@ -94,9 +93,6 @@ export function useLocalUpload(
   return null;
 }
 
-/** Under `['captures']`, so every invalidation of the capture lists re-reads it too. */
-const RECORDED_HERE_KEY = ['captures', 'recorded-here'] as const;
-
 /**
  * Whether this device recorded the capture: it is the one being sent now, or
  * the device's capture store names it. `null` (a receipt, which has no one
@@ -109,7 +105,7 @@ const RECORDED_HERE_KEY = ['captures', 'recorded-here'] as const;
  */
 export function useRecordedHere(captureId: string | null): boolean {
   const sending = useCaptureStore((state) => state.model.serverCaptureId);
-  const { data } = useQuery({ queryKey: RECORDED_HERE_KEY, queryFn: recordedHereIds, retry: false });
+  const { data } = useQuery({ queryKey: queryKeys.recordedHere(), queryFn: recordedHereIds, retry: false });
   if (captureId === null || sending === captureId || data === undefined) return true;
   return data.has(captureId);
 }

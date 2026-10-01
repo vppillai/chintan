@@ -196,6 +196,12 @@ describe('transcribing a recording again', () => {
     // The 202's capture is on the row at once: the stage strip is back.
     expect(await screen.findByRole('list', { name: 'Filing progress' })).toBeInTheDocument();
     expect(screen.getByText('Filing…')).toBeInTheDocument();
+    // And the note is not read again for it: the body has not changed, and a
+    // refetch only replaced the patch with the same capture a round trip later.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 20);
+    });
+    expect(api.calls.filter((call) => call.method === 'GET' && call.path === `/v1/notes/${NOTE.id}`)).toHaveLength(1);
   });
 
   it('shows the transcript the run lands, not the one the row had in hand', async () => {
@@ -215,10 +221,7 @@ describe('transcribing a recording again', () => {
     await screen.findByRole('list', { name: 'Filing progress' });
     expect(screen.queryByText(/heard as/i)).toBeNull();
     expect(screen.queryByRole('button', { name: /Ellis quoted/ })).toBeNull();
-    // The 202's refetch of the note has settled, so what lands next stays.
-    await waitFor(() => {
-      expect(queryClient.getQueryState(queryKeys.note(NOTE.id))?.fetchStatus).toBe('idle');
-    });
+    expect(queryClient.getQueryState(queryKeys.note(NOTE.id))?.fetchStatus).toBe('idle');
 
     // The worker writes a new document, and every stage bumps the capture's
     // version; the poll brings the landed row.

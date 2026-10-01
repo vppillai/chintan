@@ -3,11 +3,12 @@ import { useCallback } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import type { ChintanApi } from '@/api/endpoints.ts';
+import { queryKeys } from '@/api/queries/keys.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 
 import type { QueuedMutation } from './db.ts';
 import { count, flush } from './queue.ts';
-import { QUEUED_EDIT_KEY, queuedEditPayload } from './queuedEdits.ts';
+import { queuedEditPayload } from './queuedEdits.ts';
 
 /**
  * Applies one queued mutation against the live API.
@@ -30,7 +31,7 @@ async function runMutation(
   await api.updateNote(payload.noteId, payload.body, mutation.idempotencyKey);
 }
 
-export const OFFLINE_QUEUE_KEY = ['offline', 'queue'] as const;
+const OFFLINE_QUEUE_KEY = queryKeys.offlineQueue();
 
 export interface OfflineQueueState {
   online: boolean;
@@ -82,7 +83,7 @@ export function useOfflineQueue(): OfflineQueueState {
        * refreshing it here cannot re-trigger the flush that is running.
        */
       if (result.applied > 0 || result.failed > 0) {
-        void queryClient.invalidateQueries({ queryKey: [QUEUED_EDIT_KEY] });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.queuedEdits() });
         void queryClient.invalidateQueries({ queryKey: ['note'] });
         void queryClient.invalidateQueries({ queryKey: ['notes'] });
       }

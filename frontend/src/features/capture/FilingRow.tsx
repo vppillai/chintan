@@ -3,14 +3,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
-import { refreshAppendedNote, useRetryCapture, usePendingCaptures } from '@/api/queries.ts';
+import { queryKeys, refreshAppendedNote, useRetryCapture, usePendingCaptures } from '@/api/queries.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { formatDurationShort } from '@/features/notes/groups.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
-import { UNSENT_CAPTURES_KEY } from './ResumePrompt.tsx';
 import { dismissCapture, dismissCaptures, loadDismissed } from './dismissed.ts';
 import { FilingItem, NoticeGlyph, receiptTitle } from './filing/FilingItem.tsx';
 import { retryMessage, tierCaptures, type ReceiptGroup } from './filing/model.ts';
@@ -397,7 +396,7 @@ export function LocalUploadItem({ model }: { model: CaptureModel }) {
               className="filing-row__action"
               onClick={() => {
                 void discard().then(() => {
-                  void queryClient.invalidateQueries({ queryKey: UNSENT_CAPTURES_KEY });
+                  void queryClient.invalidateQueries({ queryKey: queryKeys.unsentCaptures() });
                 });
               }}
             >

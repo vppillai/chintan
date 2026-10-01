@@ -3,7 +3,7 @@ import { useEffect, useId, useRef } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
-import { useRetryCapture } from '@/api/queries.ts';
+import { queryKeys, useRetryCapture } from '@/api/queries.ts';
 import { isTerminalStatus, type CaptureWire } from '@/api/schema.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { OverflowMenu, type OverflowMenuItem } from '@/components/OverflowMenu.tsx';
@@ -93,10 +93,10 @@ export function RecordingRow({
    */
   const running = !isTerminalStatus(capture.status);
   const artifacts = useQuery({
-    // Keyed on the capture's write version as well as its id: transcribing
-    // again replaces the segments behind the same id, and the landed row
-    // must fetch afresh where a five-minute-fresh entry would be shown as is.
-    queryKey: ['capture-artifacts', capture.id, capture.version],
+    // Keyed on the capture's write version as well as its id (`queryKeys`):
+    // the landed row must fetch afresh where a five-minute-fresh entry would
+    // be shown as is.
+    queryKey: queryKeys.captureArtifacts(capture.id, capture.version),
     queryFn: () =>
       loadCaptureArtifacts(api, capture.id, {
         // Words sent through the inbox never had audio; asking is a 404 by

@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { useSession } from '@/api/ApiProvider.tsx';
+import { queryKeys } from '@/api/queries.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { Icon } from '@/components/Icon.tsx';
 import { config } from '@/config/env.ts';
@@ -43,7 +44,7 @@ export function AccountHeader() {
 
   // Read before the dialog opens, so the copy can name what is at risk.
   const { data: unsent } = useQuery({
-    queryKey: ['auth', 'unsent-work'],
+    queryKey: queryKeys.unsentWork(),
     queryFn: () => readUnsentWork(),
     staleTime: 0,
   });
@@ -68,7 +69,7 @@ export function AccountHeader() {
             className="text-link account__sign-out"
             disabled={busy}
             onClick={() => {
-              void queryClient.invalidateQueries({ queryKey: ['auth', 'unsent-work'] });
+              void queryClient.invalidateQueries({ queryKey: queryKeys.unsentWork() });
               setMessage(null);
               setOpen(true);
             }}

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useReducer, useRef } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
-import { recordSavedNote } from '@/api/queries.ts';
+import { queryKeys, recordSavedNote } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { enqueueReplacing } from '@/offline/queue.ts';
 import {
@@ -11,10 +11,8 @@ import {
   queuedEditBody,
   queuedEditFor,
   queuedEditId,
-  queuedEditKey,
   type QueuedEdit,
 } from '@/offline/queuedEdits.ts';
-import { OFFLINE_QUEUE_KEY } from '@/offline/useOfflineQueue.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 
 import {
@@ -221,7 +219,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
    * answer from outside this component and invalidates this key when it does.
    */
   const queued = useQuery({
-    queryKey: queuedEditKey(note?.id ?? ''),
+    queryKey: queryKeys.queuedEdit(note?.id ?? ''),
     queryFn: (): Promise<QueuedEdit | null> => queuedEditFor(note?.id ?? ''),
     enabled: Boolean(note),
     networkMode: 'always',
@@ -241,8 +239,8 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
   const forgetQueued = useCallback(async () => {
     if (!note) return;
     await clearQueuedEdit(note.id).catch(() => {});
-    queryClient.setQueryData(queuedEditKey(note.id), null);
-    void queryClient.invalidateQueries({ queryKey: OFFLINE_QUEUE_KEY });
+    queryClient.setQueryData(queryKeys.queuedEdit(note.id), null);
+    void queryClient.invalidateQueries({ queryKey: queryKeys.offlineQueue() });
   }, [note, queryClient]);
 
   useEffect(() => {
@@ -367,12 +365,12 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
           // query would still answer "nothing queued", and the screen would
           // read "Saved" for an edit the server has never seen.
           const outstanding: QueuedEdit = { pending: true, dead: false, error: null };
-          queryClient.setQueryData(queuedEditKey(note.id), outstanding);
+          queryClient.setQueryData(queryKeys.queuedEdit(note.id), outstanding);
           // The banner counts what is waiting, and nothing else tells it the
           // depth changed: its query polls slowly and only reacts to reconnect
           // and focus, so without this the user is told "nothing is saved on
           // this device" over an edit that is.
-          void queryClient.invalidateQueries({ queryKey: OFFLINE_QUEUE_KEY });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.offlineQueue() });
           commit({ type: 'saveQueued', draft: attempted });
           return;
         } catch {

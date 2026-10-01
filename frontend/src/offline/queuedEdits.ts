@@ -41,14 +41,6 @@ export function queuedEditPayload(mutation: QueuedMutation): QueuedEditPayload |
   return candidate as unknown as QueuedEditPayload;
 }
 
-/** Query key prefix. Deliberately not under `['offline','queue']`, which the
- * flush query owns — invalidating that from inside its own queryFn would loop. */
-export const QUEUED_EDIT_KEY = 'queued-edit';
-
-export function queuedEditKey(noteId: string) {
-  return [QUEUED_EDIT_KEY, noteId] as const;
-}
-
 /**
  * One queued edit per note, by construction.
  *

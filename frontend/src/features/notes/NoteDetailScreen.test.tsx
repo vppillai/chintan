@@ -339,12 +339,14 @@ describe('a note whose recording is still filing keeps asking', () => {
       duration_ms: 5_000,
     };
     const api = server([{ ...ROOF, body: 'Only paragraph.', captures: [moving] }]);
-    mount(api.fetchImpl, '/notes/roof-repair');
+    const { queryClient } = mount(api.fetchImpl, '/notes/roof-repair');
+    const invalidated = vi.spyOn(queryClient, 'invalidateQueries');
 
     const body = await screen.findByRole('textbox', { name: 'Note body' });
     await waitFor(() => {
       expect(body).toHaveValue('Only paragraph.');
     });
+    expect(invalidated).not.toHaveBeenCalledWith({ queryKey: ['notes'] });
 
     // The worker finishes between two polls.
     act(() => {
@@ -365,6 +367,9 @@ describe('a note whose recording is still filing keeps asking', () => {
     // The capture was asked after; the note itself once more, for the body.
     expect(api.captureGets).toBeGreaterThan(0);
     expect(api.gets).toBe(2);
+    // And the library's lists, whose snippet just grew: the same reconciliation
+    // the library's poll does, from the note's own copy crossing into appended.
+    expect(invalidated).toHaveBeenCalledWith({ queryKey: ['notes'] });
     // Settled: nothing left to ask about, so the polling stops.
     await vi.advanceTimersByTimeAsync(CAPTURE_POLL_FAST_MS + 200);
     const after = api.gets + api.captureGets;

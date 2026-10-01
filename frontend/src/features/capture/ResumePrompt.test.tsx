@@ -2,11 +2,12 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { queryKeys } from '@/api/queries.ts';
 import type { CaptureWire } from '@/api/schema.ts';
 import type { StoredCapture } from '@/offline/db.ts';
 import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
-import { ResumePrompt, UNSENT_CAPTURES_KEY, relativeTime } from './ResumePrompt.tsx';
+import { ResumePrompt, relativeTime } from './ResumePrompt.tsx';
 import { appendChunk, readCaptureRecord, saveCaptureRecord, unconfirmedCaptures } from './buffer.ts';
 import { INITIAL_CAPTURE } from './machine.ts';
 import { useCaptureStore } from './store.ts';
@@ -64,7 +65,7 @@ async function mount(
 ): Promise<void> {
   const queryClient = testQueryClient();
   if (settled) {
-    await queryClient.prefetchQuery({ queryKey: UNSENT_CAPTURES_KEY, queryFn: unconfirmedCaptures });
+    await queryClient.prefetchQuery({ queryKey: queryKeys.unsentCaptures(), queryFn: unconfirmedCaptures });
   }
   render(
     <TestProviders api={testApiContext(fetchImpl)} queryClient={queryClient}>
