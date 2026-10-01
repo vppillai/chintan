@@ -182,8 +182,8 @@ func TestARateLimitIsNotARevokedKey(t *testing.T) {
 }
 
 // TestAnOrdinaryProviderFaultRaisesNeitherCounter keeps the two new alarms from
-// firing on a 500, a timeout or a decode failure. Those are already covered by
-// CaptureStageFailures and by the worker's own error alarm. It also pins the
+// firing on a 500, a timeout or a decode failure. Those are covered by
+// CaptureStageFailures (CaptureFailuresAlarm) and by the DLQ alarm. It also pins the
 // verdict the user reads to the fixed sentence: the cause — a host, a Go
 // transport error, a decoder's complaint — goes to the log, never to the row.
 func TestAnOrdinaryProviderFaultRaisesNeitherCounter(t *testing.T) {

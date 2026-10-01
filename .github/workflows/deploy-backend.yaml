@@ -134,7 +134,8 @@ jobs:
         run: |
           set -euo pipefail
           for _ in $(seq 20); do
-            conclusion="$(gh api -X GET "repos/${GITHUB_REPOSITORY}/commits/${SHA}/check-runs"               -f check_name='Go test (race)' -f filter=latest               --jq '[.check_runs[] | select(.app.slug == "github-actions")][0].conclusion // "pending"')"
+            conclusion="$(gh api -X GET "repos/${GITHUB_REPOSITORY}/commits/${SHA}/check-runs"               -f check_name='Go test (race)' -f filter=latest               --jq '[.check_runs[] | select(.app.slug == "github-actions")][0].conclusion // "pending"' \
+              2>/dev/null || echo pending)"
             case "$conclusion" in
               success)
                 echo "CI's Go test (race) passed on ${SHA}; not running it again"

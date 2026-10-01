@@ -263,7 +263,7 @@ func (p *Pipeline) handleProviderError(ctx context.Context, capture *model.Captu
 			slog.String("stage", stage),
 			slog.String("error", cause.Error()))
 		obs.CountWithRollup(ctx, "ProviderKeyRejected", dims)
-		obs.Count(ctx, "CaptureStageFailures", map[string]string{"Stage": stage})
+		obs.CountWithRollup(ctx, "CaptureStageFailures", map[string]string{"Stage": stage})
 		// The user is told what actually happened. Every capture from here on
 		// fails the same way until the key is replaced, and "capture failed"
 		// would have them re-recording it.
@@ -283,7 +283,11 @@ func (p *Pipeline) handleProviderError(ctx context.Context, capture *model.Captu
 			slog.String("error", cause.Error()))
 	}
 
-	obs.Count(ctx, "CaptureStageFailures", map[string]string{"Stage": stage})
+	// With the rollup: CaptureFailuresAlarm in the template sums this across
+	// stages. A provider outage ends every capture here with a Retry button
+	// and returns nil to Lambda, so the DLQ alarm never sees it; this counter
+	// is the only thing that does.
+	obs.CountWithRollup(ctx, "CaptureStageFailures", map[string]string{"Stage": stage})
 	return p.markFailed(ctx, capture, captureProviderFailed)
 }
 
