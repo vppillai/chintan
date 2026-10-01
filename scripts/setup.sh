@@ -22,8 +22,8 @@
 # Options:
 #   --region REGION        AWS region for the bootstrap stack (required)
 #   --repo OWNER/NAME      GitHub repository (default: resolved with gh)
-#   --reviewer LOGIN       GitHub user who must approve a production deploy
-#                          (default: the repository owner; repeatable)
+#   --reviewer LOGIN       Add a human approval on production deploys (repeatable;
+#                          none by default — the staging smoke test is the gate)
 #   --apply                execute; without it, print the plan and change nothing
 
 # shellcheck source-path=SCRIPTDIR source=lib/common.sh
@@ -68,7 +68,6 @@ require_cmd jq python3
 [ -n "$REPO" ] || REPO="$(github_repo)"
 OWNER="${REPO%/*}"
 NAME="${REPO#*/}"
-[ "${#REVIEWERS[@]}" -gt 0 ] || REVIEWERS=("$OWNER")
 
 ACCOUNT_ID="$(aws_account_id)"
 TEMPLATE="$REPO_ROOT/infrastructure/bootstrap.yaml"
@@ -84,7 +83,7 @@ PUSH_INSTANCES="$("$REPO_ROOT/scripts/list-instances.sh" |
 info "account:     $ACCOUNT_ID"
 info "region:      $REGION"
 info "repository:  $REPO"
-info "reviewers:   ${REVIEWERS[*]}"
+info "reviewers:   ${REVIEWERS[*]:-none (the staging smoke test is the production gate)}"
 
 # ---------------------------------------------------------------------------
 # Pre-flight: the OIDC provider
@@ -116,7 +115,7 @@ info "plan"
 dim "  deploy stack        $CHINTAN_BOOTSTRAP_STACK in $REGION"
 dim "  gh secret           AWS_ACCOUNT_ID"
 dim "  gh variable         BUILD_ROLE_ARN, CFN_DEPLOY_ROLE_ARN"
-dim "  gh environment      production (reviewers: ${REVIEWERS[*]}, protected branches only)"
+dim "  gh environment      production (reviewers: ${REVIEWERS[*]:-none}, protected branches only)"
 dim "  gh environment      staging"
 dim "  gh pages            build_type=workflow${APP_HOST:+, custom domain $APP_HOST}"
 while read -r name region; do
@@ -190,12 +189,16 @@ ok "AWS_ACCOUNT_ID set; BUILD_ROLE_ARN and CFN_DEPLOY_ROLE_ARN set"
 # Environments
 # ---------------------------------------------------------------------------
 #
-# The production environment requires a human reviewer. An environment with no
-# reviewers gates nothing while appearing in the UI as protection, so a
-# production deploy waits for an approval before it runs.
+# The production environment has no reviewer by default (owner decision D1):
+# the staging deploy's smoke test and rollback are the gate, and
+# deploy-backend.yaml orders prod behind them. The environment still exists for
+# the OIDC trust (the deploy role is trusted from it) and for its branch policy.
+# `--reviewer` adds a human approval for a fork that wants one; the rule the
+# ruleset puts on main (scripts/dev/protect-main.sh) is what makes a merge
+# tested, with or without it.
 
 reviewer_ids="$(
-    for login in "${REVIEWERS[@]}"; do
+    for login in ${REVIEWERS[@]+"${REVIEWERS[@]}"}; do
         gh api "users/${login}" --jq '{type: "User", id: .id}'
     done | jq -sc .
 )"
@@ -205,7 +208,11 @@ jq -nc --argjson reviewers "$reviewer_ids" \
     '{wait_timer: 0, prevent_self_review: false, reviewers: $reviewers,
       deployment_branch_policy: {protected_branches: true, custom_branch_policies: false}}' |
     gh api "repos/${REPO}/environments/production" --method PUT --input - >/dev/null
-ok "production requires approval from ${REVIEWERS[*]} and deploys only from a protected branch"
+if [ "${#REVIEWERS[@]}" -gt 0 ]; then
+    ok "production requires approval from ${REVIEWERS[*]} and deploys only from a protected branch"
+else
+    ok "production has no reviewer (the staging smoke test is the gate) and deploys only from a protected branch"
+fi
 
 info "configuring the staging environment"
 jq -nc '{wait_timer: 0,
