@@ -1,3 +1,7 @@
+import type { Page } from '@playwright/test';
+
+import { CANCEL_DX_PX, HOLD_ARM_MS, LOCK_DY_PX, MIN_TALK_MS } from '../src/features/capture/holdTiming.ts';
+
 import { expect, test } from './fixtures.ts';
 
 /**
@@ -573,4 +577,133 @@ test('a suggested new note is offered by the title the router chose', async ({ p
   await expect(filing.getByRole('button', { name: 'Roof repair' })).toBeVisible();
   await expect(filing.getByRole('button', { name: 'Reading list' })).toBeVisible();
   await expect(filing.getByRole('button', { name: /back to the suggestion/i })).toBeVisible();
+});
+
+/* ---------------------------------------------------------------------------
+   Push-to-talk on the record disc (R8, F5 and F6)
+
+   A tap opens /capture (above); a hold records, release sends, a slide up
+   locks and a slide left cancels. Chromium's fake microphone feeds the real
+   recorder, so a hold makes real bytes and a release a real upload: the
+   presigned PUT is what proves something left the device.
+   --------------------------------------------------------------------------- */
+
+/** Every presigned PUT the page makes, as it makes it. */
+function puts(page: Page): string[] {
+  const seen: string[] = [];
+  page.on('request', (request) => {
+    if (request.method() === 'PUT' && request.url().includes('/upload/')) seen.push(request.url());
+  });
+  return seen;
+}
+
+async function discCentre(page: Page): Promise<{ x: number; y: number }> {
+  const box = (await page.locator('.record-button').boundingBox())!;
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+test('holding the disc records, and letting go sends it', async ({ page, api }) => {
+  const sent = puts(page);
+  await page.goto('/');
+  const bar = page.getByRole('navigation', { name: 'Main' });
+  const height = (await bar.boundingBox())!.height;
+  const { x, y } = await discCentre(page);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await expect(bar).toHaveAttribute('data-hold', 'holding');
+  await expect(bar.getByText('‹ Slide to cancel')).toBeVisible();
+  // The slots swapped in place: the bar is the height it was.
+  expect((await bar.boundingBox())!.height).toBe(height);
+  await page.waitForTimeout(HOLD_ARM_MS + MIN_TALK_MS + 300);
+  await page.mouse.up();
+
+  await expect(page.locator('.tab-bar__into')).toHaveText('Sent');
+  // Still Home: the click after the hold did not open the recorder.
+  await expect(page).toHaveURL(/\/$/);
+  await expect.poll(() => api.captures.length, { message: 'capture created' }).toBe(1);
+  await expect.poll(() => sent.length, { message: 'audio uploaded' }).toBeGreaterThan(0);
+});
+
+test('a hold dragged left past the line is cancelled, and nothing is sent', async ({ page, api }) => {
+  const sent = puts(page);
+  await page.goto('/');
+  const { x, y } = await discCentre(page);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.waitForTimeout(HOLD_ARM_MS + MIN_TALK_MS);
+  await page.mouse.move(x - CANCEL_DX_PX - 10, y, { steps: 8 });
+  await expect(page.locator('.tab-bar__into')).toHaveText('Cancelled');
+  await page.mouse.up();
+  await page.waitForTimeout(1_000);
+  expect(api.captures).toHaveLength(0);
+  expect(sent).toHaveLength(0);
+});
+
+test('a hold dragged up locks: it keeps recording with the button up, and Send sends', async ({
+  page,
+  api,
+}) => {
+  const sent = puts(page);
+  await page.goto('/');
+  const bar = page.getByRole('navigation', { name: 'Main' });
+  const { x, y } = await discCentre(page);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.waitForTimeout(HOLD_ARM_MS + 100);
+  await page.mouse.move(x, y - LOCK_DY_PX - 8, { steps: 8 });
+  await page.mouse.up();
+
+  await expect(bar).toHaveAttribute('data-hold', 'locked');
+  await page.waitForTimeout(MIN_TALK_MS + 400);
+  expect(api.captures).toHaveLength(0);
+  await expect(page.getByRole('button', { name: 'Discard recording' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Stop and review' })).toBeVisible();
+  await page.getByRole('button', { name: 'Send recording' }).click();
+  await expect.poll(() => api.captures.length, { message: 'capture created' }).toBe(1);
+  await expect.poll(() => sent.length, { message: 'audio uploaded' }).toBeGreaterThan(0);
+  await expect(page).toHaveURL(/\/$/);
+});
+
+/*
+ * F6, the regression: on a phone, slide-to-cancel never cancelled. It was
+ * measured from the edge of a disc as wide as the screen, so the line was
+ * off it. A real touch, through Chromium's own touch pipeline, slides left
+ * 110 px from where it pressed and lets go; nothing may be uploaded.
+ */
+test.describe('on a 412 px phone, by touch', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 412, height: 915 } });
+
+  test('sliding left 110 px from the press point cancels the recording, and nothing is uploaded', async ({
+    page,
+    api,
+  }) => {
+    const sent = puts(page);
+    await page.goto('/');
+    const { x, y } = await discCentre(page);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    // Held well past the arm, with audio recorded.
+    await page.waitForTimeout(1_500);
+    const steps = 10;
+    const to = x - 110;
+    for (let i = 1; i <= steps; i += 1) {
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ x: x + ((to - x) * i) / steps, y }],
+      });
+    }
+    // The finger is still down, and the hint says it is over.
+    await expect(page.locator('.tab-bar__into')).toHaveText('Cancelled');
+    await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('status')).toHaveText(
+      'Cancelled',
+    );
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+
+    await page.waitForTimeout(1_000);
+    expect(sent).toHaveLength(0);
+    expect(api.captures).toHaveLength(0);
+    // Nothing recording either: no "tap to return" row, and the bar at rest.
+    await expect(page.locator('.recording-indicator')).toHaveCount(0);
+    await expect(page).toHaveURL(/\/$/);
+  });
 });

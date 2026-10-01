@@ -9,10 +9,10 @@ import type { SVGProps } from 'react';
  * `vector-effect: non-scaling-stroke` keeps it 1.75 device-independent pixels
  * at every size, so a 16 px chevron beside a 22 px tab icon reads as the same
  * pen. Before this the weight was 1.6 units and thinned with the box, so the
- * small icons came out at just over a pixel next to the tab bar's. The two
- * display-size discs — the tab bar's Record and `/talk` — pass their own
- * `strokeWidth`: 1.75 px was set for 16–30 px UI glyphs and reads thin on a
- * 76 px accent disc.
+ * small icons came out at just over a pixel next to the tab bar's. The
+ * display-size disc — the tab bar's Record — passes its own `strokeWidth`:
+ * 1.75 px was set for 16–30 px UI glyphs and reads thin on a 76 px accent
+ * disc.
  *
  * Every icon is `aria-hidden`: the accessible name always comes from the
  * control's own text or `aria-label`, never from the glyph.
@@ -24,7 +24,6 @@ export type IconName =
   | 'home'
   | 'you'
   | 'mic'
-  | 'ptt'
   | 'play'
   | 'stop'
   | 'back'
@@ -54,7 +53,10 @@ export type IconName =
   | 'alert'
   | 'pin'
   | 'grip'
-  | 'bindu';
+  | 'bindu'
+  | 'lock'
+  | 'lock-open'
+  | 'chevrons-up';
 
 export const PATHS: Record<IconName, string> = {
   // A house: roof, two walls, a door. The Home tab is the way back to the
@@ -65,12 +67,6 @@ export const PATHS: Record<IconName, string> = {
   home: 'M4 11.5 12 4.5l8 7M5.5 10.2V20h13V10.2M10 20v-5h4v5',
   you: 'M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM4 21a8 8 0 0 1 16 0',
   mic: 'M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5 11a7 7 0 0 0 14 0M12 18v3',
-  // A walkie-talkie: body, antenna, grille, and beside it the side key that
-  // *is* push-to-talk. The `/talk` disc wears it (R5-BR-P3): that screen does
-  // nothing but hold-to-talk, and a second microphone told the wrong story
-  // next to the tab bar's, whose tap still opens the recorder and so keeps
-  // the mic. Design record: `docs/design/branding/ptt-glyph.svg`.
-  ptt: 'M9.5 6h5A1.5 1.5 0 0 1 16 7.5v12a1.5 1.5 0 0 1-1.5 1.5h-5A1.5 1.5 0 0 1 8 19.5v-12A1.5 1.5 0 0 1 9.5 6zM10.5 6V2.5M10.5 10h3M18.5 10.5v4',
   // Playback, not recording — a triangle rather than the microphone glyph,
   // which NoteDetailScreen's audio player borrowed from the record button and
   // which read as "record" on a control that only ever plays back audio that
@@ -151,6 +147,13 @@ export const PATHS: Record<IconName, string> = {
   // Two columns of three dots: the handle a pinned row is dragged by. Dots
   // are zero-length strokes, as in `more`, so the weight matches.
   grip: 'M9.5 6.5v.01M14.5 6.5v.01M9.5 12v.01M14.5 12v.01M9.5 17.5v.01M14.5 17.5v.01',
+  // A padlock, shut: a held recording that goes on with the finger lifted.
+  lock: 'M7.5 11h9a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 18.5v-6A1.5 1.5 0 0 1 7.5 11zM9 11V8a3 3 0 0 1 6 0v3',
+  // The same padlock with its shackle lifted: where the slide up goes.
+  'lock-open':
+    'M7.5 11h9a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 18.5v-6A1.5 1.5 0 0 1 7.5 11zM9 11V7a3 3 0 0 1 5.8-1.1',
+  // Two chevrons stacked: slide up.
+  'chevrons-up': 'M7 12l5-5 5 5M7 18l5-5 5 5',
 };
 
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {
