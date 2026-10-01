@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
 import { deviceCreated, devicesPage } from '@/api/__fixtures__/responses.ts';
@@ -14,6 +15,7 @@ import {
   UNCONFIRMED_TEXT,
   curlRecipe,
   deviceHint,
+  devicesStatus,
   inboxAudioUrl,
   isExpired,
 } from './DevicesCard.tsx';
@@ -54,7 +56,12 @@ function json(body: unknown, status = 200): Response {
  */
 function mount(
   initial: readonly DeviceWire[] = listed,
-  overrides: { create?: (init?: RequestInit) => Response | Promise<Response> } = {},
+  overrides: {
+    create?: (init?: RequestInit) => Response | Promise<Response>;
+    list?: () => Response;
+    /** Where You was opened: `/settings#devices` is About's link. */
+    entry?: string;
+  } = {},
 ) {
   let items = [...initial];
   const calls: { method: string; path: string; body?: unknown }[] = [];
@@ -83,13 +90,15 @@ function mount(
       items = items.filter((device) => device.id !== id);
       return new Response(null, { status: 204 });
     }
-    if (url.pathname === '/v1/devices') return json({ items });
+    if (url.pathname === '/v1/devices') return overrides.list ? overrides.list() : json({ items });
     return json({ items: [] });
   });
   render(
-    <TestProviders api={testApiContext(fetchImpl)}>
-      <DevicesCard />
-    </TestProviders>,
+    <MemoryRouter initialEntries={[overrides.entry ?? '/settings']}>
+      <TestProviders api={testApiContext(fetchImpl)}>
+        <DevicesCard />
+      </TestProviders>
+    </MemoryRouter>,
   );
   return { calls };
 }
@@ -98,6 +107,87 @@ function mount(
 async function deviceRows(): Promise<HTMLElement[]> {
   return within(await screen.findByRole('list', { name: 'Your devices' })).getAllByRole('listitem');
 }
+
+/** The card's own disclosure: the one whose summary holds the title. */
+async function fold(): Promise<HTMLDetailsElement> {
+  const card = await screen.findByRole('region', { name: 'Devices & shortcuts' });
+  return card.querySelector(':scope > details') as HTMLDetailsElement;
+}
+
+describe('the devices card folds behind its title (owner, round 8)', () => {
+  it('is closed by default, its summary the title, a status and a chevron', async () => {
+    mount([idle, { ...idle, id: 'dev_2', name: 'Ring' }]);
+    const details = await fold();
+    expect(details.open).toBe(false);
+    const summary = details.querySelector(':scope > summary') as HTMLElement;
+    expect(within(summary).getByRole('heading', { name: 'Devices & shortcuts' })).toBeInTheDocument();
+    expect(summary.querySelector('.you-card__fold-chevron')).not.toBeNull();
+    await waitFor(() => {
+      expect(summary).toHaveTextContent('2 devices');
+    });
+    // The rows are in the DOM, behind the fold.
+    expect(screen.getByText('Ring')).not.toBeVisible();
+  });
+
+  it('opens and closes on its summary', async () => {
+    const user = userEvent.setup();
+    mount([idle]);
+    const details = await fold();
+    await user.click(details.querySelector(':scope > summary') as HTMLElement);
+    expect(details.open).toBe(true);
+    expect(await screen.findByRole('button', { name: /add a device/i })).toBeVisible();
+  });
+
+  it('counts the keys, and says first what needs attention', () => {
+    const now = Date.parse('2026-09-30T00:00:00Z');
+    const inDays = (days: number): string => new Date(now + days * DAY_MS).toISOString();
+    expect(devicesStatus([], now)).toBe('No devices yet');
+    expect(devicesStatus([idle], now)).toBe('1 device');
+    expect(devicesStatus([idle, idle, idle], now)).toBe('3 devices');
+    expect(devicesStatus([idle, { ...idle, expires_at: inDays(3) }], now)).toBe('1 expiring soon');
+    expect(devicesStatus([idle, { ...idle, expires_at: inDays(30) }], now)).toBe('2 devices');
+    expect(
+      devicesStatus([{ ...idle, expires_at: inDays(-1) }, { ...idle, expires_at: inDays(3) }], now),
+    ).toBe('1 expired');
+  });
+
+  it('says it could not load in the summary, and stays closed', async () => {
+    mount([], { list: () => json({ title: 'Nope', status: 400 }, 400) });
+    const details = await fold();
+    await waitFor(() => {
+      expect(details.querySelector(':scope > summary')).toHaveTextContent('Couldn’t load');
+    });
+    expect(details.open).toBe(false);
+  });
+
+  it('opens when About links to it', async () => {
+    mount([idle], { entry: '/settings#devices' });
+    const details = await fold();
+    await waitFor(() => {
+      expect(details.open).toBe(true);
+    });
+    expect(details.closest('section')).toHaveAttribute('id', 'devices');
+  });
+
+  it('stays open while a minted key is on screen, through re-renders', async () => {
+    const user = userEvent.setup();
+    mount([idle]);
+    const details = await fold();
+    await user.click(details.querySelector(':scope > summary') as HTMLElement);
+    await user.click(await screen.findByRole('button', { name: /add a device/i }));
+    await user.type(screen.getByRole('textbox', { name: /what is this device/i }), 'Ring');
+    await user.click(screen.getByRole('button', { name: 'Create key' }));
+    const shown = await screen.findByRole('status');
+    // The list refetches after the create and the summary changes (the
+    // fixture's key is dated in the past): a re-render, which must not fold
+    // the key away.
+    await waitFor(() => {
+      expect(details.querySelector(':scope > summary')).toHaveTextContent('1 expired');
+    });
+    expect(details.open).toBe(true);
+    expect(shown).toBeVisible();
+  });
+});
 
 describe('the devices card on You', () => {
   it('lists each device with when it was added and when it last sent something', async () => {
@@ -180,7 +270,7 @@ describe('the devices card on You', () => {
 
   it('says so when there are none, and stops adding at ten', async () => {
     mount([]);
-    expect(await screen.findByText(/no devices yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no devices yet\. add one/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /add a device/i })).toBeEnabled();
   });
 

@@ -69,7 +69,7 @@ describe('About', () => {
     expect(devices.closest('.about__section')).toContainElement(
       screen.getByRole('heading', { name: 'How filing works' }),
     );
-    expect(within(devices).getByRole('link', { name: /devices & shortcuts/i })).toHaveAttribute('href', '/settings');
+    expect(within(devices).getByRole('link', { name: /devices & shortcuts/i })).toHaveAttribute('href', '/settings#devices');
     expect(screen.queryByText(/pebble/i)).toBeNull();
   });
 

@@ -1161,3 +1161,55 @@
     z-index: var(--z-content);
   }
 }
+
+/* ==========================================================================
+   A folded card (Devices & shortcuts): the title row is the disclosure
+   ========================================================================== */
+
+/* The whole head is the summary: title and status left, chevron right, at
+   least a 44 px target; the chevron turns when open, as a recipe's does. */
+.you-card__fold-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-block-size: var(--layout-touch-target-min);
+  padding-block-end: var(--space-4);
+  list-style: none;
+  cursor: pointer;
+}
+
+/* Inside the card's edge, which clips (overflow: hidden). */
+.you-card__fold-summary:focus-visible {
+  outline-offset: -2px;
+}
+
+.you-card__fold-summary::-webkit-details-marker {
+  display: none;
+}
+
+.you-card__fold-text {
+  display: grid;
+  flex: 1;
+  gap: var(--space-1);
+  min-inline-size: 0;
+}
+
+.you-card__status {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.you-card__fold-chevron {
+  flex-shrink: 0;
+  color: var(--color-faint);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.you-card--fold details[open] > summary .you-card__fold-chevron {
+  transform: rotate(90deg);
+}
+
+/* Open, the lead sits under the summary where the head would hold it. */
+.you-card__fold-lead {
+  padding: 0 var(--space-4) var(--space-3);
+}

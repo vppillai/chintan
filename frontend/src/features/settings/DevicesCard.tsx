@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useLocation } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
 import { useCreateDevice, useDeleteDevice, useDevices } from '@/api/queries.ts';
@@ -19,6 +20,10 @@ const DEVICE_NAME_MAX = 60;
 /** Why Add and Rotate are held at the limit: a rotation briefly needs an eleventh row. */
 const FULL_HINT = 'Ten is the limit; remove one first';
 const DAY_MS = 86_400_000;
+/** How close an expiry is before the folded card's summary says so. */
+const SOON_MS = 7 * DAY_MS;
+/** The card's id, and the hash About's link lands on to open it. */
+export const DEVICES_ANCHOR = 'devices';
 
 /**
  * The "Expires after" choices. Never is the default: the ring you use daily
@@ -50,6 +55,23 @@ function expiryText(device: DeviceWire, now: number): string {
   if (at <= now) return 'Expired';
   const days = Math.ceil((at - now) / DAY_MS);
   return `Expires in ${String(days)} ${days === 1 ? 'day' : 'days'}`;
+}
+
+/**
+ * The folded card's status, beside its title: what needs attention first (a
+ * key past its date, then one within a week of it), otherwise how many keys
+ * there are, so the card can stay closed and still say what is in it.
+ */
+export function devicesStatus(items: readonly DeviceWire[], now: number = Date.now()): string {
+  const expired = items.filter((device) => isExpired(device, now)).length;
+  if (expired > 0) return `${String(expired)} expired`;
+  const soon = items.filter((device) => {
+    const at = device.expires_at ? Date.parse(device.expires_at) : Number.NaN;
+    return at - now < SOON_MS;
+  }).length;
+  if (soon > 0) return `${String(soon)} expiring soon`;
+  if (items.length === 0) return 'No devices yet';
+  return `${String(items.length)} ${items.length === 1 ? 'device' : 'devices'}`;
 }
 
 /**
@@ -159,6 +181,30 @@ export function DevicesCard() {
   /** The device Remove was tapped on, awaiting the confirmation. */
   const [removing, setRemoving] = useState<DeviceWire | null>(null);
   const keyRef = useRef<HTMLDivElement>(null);
+  const { hash } = useLocation();
+  const linkedTo = hash === `#${DEVICES_ANCHOR}`;
+  /*
+   * Folded by default (owner, round 8): the list, the form and five recipes
+   * are more than a visit to You usually needs. Not remembered: a closed
+   * card costs one tap, and the cases that need it open open it themselves.
+   */
+  const [open, setOpen] = useState(linkedTo);
+  // About's "Devices & shortcuts" lands here with the hash, on a mounted You
+  // as well as a fresh one: open the card as the hash arrives (state adjusted
+  // during render, React's pattern for following a prop).
+  const [seenLink, setSeenLink] = useState(linkedTo);
+  if (linkedTo !== seenLink) {
+    setSeenLink(linkedTo);
+    if (linkedTo) setOpen(true);
+  }
+
+  // …and bring it into view. Instant, so reduced motion needs no case.
+  useEffect(() => {
+    if (!linkedTo) return;
+    const card = document.getElementById(DEVICES_ANCHOR);
+    // jsdom has no scrollIntoView; nothing to do there is the right thing.
+    if (card && typeof card.scrollIntoView === 'function') card.scrollIntoView({ block: 'start' });
+  }, [linkedTo]);
 
   // The key box mounts already filled, which a live region often does not
   // announce; focusing it reads the sentence and the key, and puts the next
@@ -166,6 +212,12 @@ export function DevicesCard() {
   useEffect(() => {
     if (minted) keyRef.current?.focus();
   }, [minted]);
+
+  /** A minted key is shown once, so the card holding it is opened with it and held open. */
+  const showKey = (device: DeviceCreatedWire): void => {
+    setMinted(device);
+    setOpen(true);
+  };
 
   const items = devices.data?.items ?? [];
   const full = items.length >= MAX_DEVICES;
@@ -178,7 +230,7 @@ export function DevicesCard() {
       { name: trimmed, ...(expiresIn ? { expires_in_days: Number(expiresIn) } : {}) },
       {
         onSuccess: (device) => {
-          setMinted(device);
+          showKey(device);
           setAdding(false);
           setName('');
           setExpiresIn('');
@@ -210,7 +262,7 @@ export function DevicesCard() {
       { name: device.name },
       {
         onSuccess: (created) => {
-          setMinted(created);
+          showKey(created);
           setRotating(device);
         },
         onError: (error) => {
@@ -234,6 +286,12 @@ export function DevicesCard() {
 
   return (
     <SettingsCard
+      id={DEVICES_ANCHOR}
+      fold={{
+        status: devices.isError ? 'Couldn’t load' : devices.isLoading ? 'Loading…' : devicesStatus(items),
+        open,
+        onToggle: setOpen,
+      }}
       title="Devices & shortcuts"
       lead="A key lets a watch, a phone shortcut or any other app drop a recording straight into your notes."
       foot={
