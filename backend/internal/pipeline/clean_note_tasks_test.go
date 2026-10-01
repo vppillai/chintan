@@ -152,10 +152,10 @@ func TestTasksModeRefusesAnAnswerThatChangesTheDoneItems(t *testing.T) {
 	}
 }
 
-// auto_clean on a checklist: the append writes the item, and the clean that
-// follows runs in tasks whatever preference the row holds — inline here, as
-// a worker without an invoker runs it.
-func TestAppendToAnAutoCleanChecklistCleansInTasksMode(t *testing.T) {
+// auto_clean on a checklist is ignored (R8-F8): the append writes the item,
+// and no clean follows — a checklist is tidied only when asked. Inline here,
+// as a worker without an invoker would run it, so a call would show.
+func TestAppendToAnAutoCleanChecklistDoesNotClean(t *testing.T) {
 	ctx := context.Background()
 	objects := memory.NewObjects()
 	llmFake := &fake.LLM{}
@@ -180,12 +180,10 @@ func TestAppendToAnAutoCleanChecklistCleansInTasksMode(t *testing.T) {
 	if _, err := h.pipeline.Run(ctx, "user1", "c_1"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	calls := llmFake.NoteCalls()
-	if len(calls) != 1 || calls[0].Mode != model.NoteCleanTasks {
-		t.Fatalf("clean-note calls = %+v, want one in tasks mode", calls)
+	if calls := llmFake.NoteCalls(); len(calls) != 0 {
+		t.Fatalf("clean-note calls = %+v, want none for a checklist", calls)
 	}
-	n := getNote(t, h, "l1")
-	if n.CleanedMode != model.NoteCleanTasks || n.CleanedBody != "- [ ] buy sealant" || n.CleanedStale {
-		t.Errorf("view after the append = %q in %q (stale=%v)", n.CleanedBody, n.CleanedMode, n.CleanedStale)
+	if n := getNote(t, h, "l1"); n.CleanedBody != "" {
+		t.Errorf("a view was written after the append: %q", n.CleanedBody)
 	}
 }

@@ -372,7 +372,15 @@ func (p *Pipeline) autoCleanAfterAppend(ctx context.Context, tenantID string, no
 // worker regenerates a view of its own accord: after an append to a note with
 // auto_clean, and after a regeneration of a note that has a view. trigger is
 // the NoteCleanRequested dimension.
+//
+// Never for a checklist (R8-F8): its items are split at capture, so a view
+// regenerated after each recording was a model call for a proposal nobody
+// adopted. A checklist is tidied only when asked ("Tidy up list"), and an
+// old row that still says auto_clean is ignored rather than refused.
 func (p *Pipeline) cleanNoteAfter(ctx context.Context, tenantID string, note model.NoteIndex, trigger string) {
+	if note.Kind == model.NoteKindChecklist {
+		return
+	}
 	mode := service.EffectiveCleanMode(note)
 	stamped, _, err := service.RecordCleanRequest(ctx, p.cfg.Store, tenantID, note, mode, p.now(), false)
 	if err != nil {

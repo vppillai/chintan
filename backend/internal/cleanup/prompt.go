@@ -185,9 +185,9 @@ var ErrNotATaskList = fmt.Errorf("cleanup: the model did not return a task list"
 // tidied and returns the checklist body to store — `- [ ] ` / `- [x] `
 // lines, two spaces of indent per level, at most MaxDepth — and how many
 // items were dropped.
-// Adoption writes this answer over the body (CleanedPanel "Use this list",
-// the first act in Split up), so the prompt's promises are checked rather
-// than trusted:
+// Tidy up list writes this answer over the body (useTidyList, with only a
+// 6 s Undo for a preview), so the prompt's promises are checked rather than
+// trusted:
 //
 //   - an item whose words are not the body's words, in order
 //     (llm.VerifySubsequence; group names like "Walmart" or "Party" are

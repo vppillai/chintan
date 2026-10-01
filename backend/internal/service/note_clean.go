@@ -243,9 +243,10 @@ func ClearCleanRequest(ctx context.Context, store repository.Store, userID strin
 // the body write is done and correct, and a hand-off that could not be made
 // is a view that stays stale — which the note already says — not lost text.
 // note is the row as the body write left it, so the stamp goes under its
-// version.
+// version. A checklist's auto_clean is ignored, as the pipeline's
+// cleanNoteAfter ignores it: a checklist is tidied only when asked (R8-F8).
 func autoCleanAfterBodyWrite(ctx context.Context, store repository.Store, worker Invoker, userID string, note model.NoteIndex) {
-	if !note.AutoClean || !NoteIsActive(note) {
+	if !note.AutoClean || note.Kind == model.NoteKindChecklist || !NoteIsActive(note) {
 		return
 	}
 	if worker == nil {

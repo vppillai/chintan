@@ -1743,7 +1743,9 @@ components:
             appended, moved in or out, or deleted. Never on an editor save —
             that marks the view stale and leaves the re-run to the user.
             Settable through `NoteUpdate`; one LLM call per change while on,
-            bounded by the daily spend cap.
+            bounded by the daily spend cap. Ignored for a checklist (stored,
+            not refused): its items are split at capture, and its `tasks`
+            view is generated only when asked, by Tidy up list.
         cleaned_mode:
           type: string
           enum: [polished, structured, tasks]
