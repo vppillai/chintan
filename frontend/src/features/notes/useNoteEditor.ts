@@ -213,6 +213,22 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
    */
   const saveRef = useRef<() => Promise<void>>(async () => {});
 
+  /*
+   * What the device still owes the server for this note.
+   *
+   * `networkMode: 'always'` because it is a local read — the whole question is
+   * what is on this device — and `staleTime: 0` because the flush changes the
+   * answer from outside this component and invalidates this key when it does.
+   */
+  const queued = useQuery({
+    queryKey: queuedEditKey(note?.id ?? ''),
+    queryFn: (): Promise<QueuedEdit | null> => queuedEditFor(note?.id ?? ''),
+    enabled: Boolean(note),
+    networkMode: 'always',
+    staleTime: 0,
+    retry: false,
+  });
+
   /**
    * Nothing is owed to the server for this note any more: a direct save
    * landed, or the user took the server's copy. The queue's entry goes, the
@@ -285,7 +301,9 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
       const stored = await api.updateNote(note.id, body);
       // A direct save supersedes anything the queue was still holding for
       // this note — a retired entry included, once Keep my edits re-sent it.
-      await forgetQueued();
+      // Only when something is (or may be) held: a plain autosave must not
+      // invalidate the offline banner's query for nothing.
+      if (queued.data !== null) await forgetQueued();
       /*
        * What the server now holds, written into the caches this screen reads
        * from next time. The response is a list row — no body — so the text is
@@ -440,7 +458,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
         message: error instanceof ApiError ? error.userMessage : 'Could not save.',
       });
     }
-  }, [api, commit, forgetQueued, note, queryClient]);
+  }, [api, commit, forgetQueued, note, queryClient, queued.data]);
 
   /**
    * The serialised entry point: at most one `performSave` on the wire.
@@ -552,22 +570,6 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
   }, [flush]);
 
   /*
-   * What the device still owes the server for this note.
-   *
-   * `networkMode: 'always'` because it is a local read — the whole question is
-   * what is on this device — and `staleTime: 0` because the flush changes the
-   * answer from outside this component and invalidates this key when it does.
-   */
-  const queued = useQuery({
-    queryKey: queuedEditKey(note?.id ?? ''),
-    queryFn: (): Promise<QueuedEdit | null> => queuedEditFor(note?.id ?? ''),
-    enabled: Boolean(note),
-    networkMode: 'always',
-    staleTime: 0,
-    retry: false,
-  });
-
-  /*
    * A queued edit the server refused is shown as what it is, with its text.
    *
    * The flush retires an entry answered 409 — the note moved on before the
@@ -607,6 +609,10 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
           ) ?? false,
       });
       if (theirs.version <= held.version) {
+        // One shot: the entry is forgotten and the dirty draft owns the text,
+        // so an edit the server refuses on its merits (400, 413, 422) shows
+        // its error with Try again rather than being re-sent on every visit.
+        await forgetQueued();
         commit({ type: 'keepMine' });
         void saveRef.current();
       }
@@ -614,7 +620,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     return () => {
       gone = true;
     };
-  }, [note, dead, online, api, commit]);
+  }, [note, dead, online, api, commit, forgetQueued]);
 
   return {
     // Derived at the point of use, never copied into the reducer. A second copy
