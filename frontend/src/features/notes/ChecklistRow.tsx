@@ -61,7 +61,7 @@ export function ChecklistRow({
   /** The row's place among the open rows shown, for its name and the grip map. */
   position: number;
   dragging: boolean;
-  /** The depth a sideways drag would give the lifted row on release, drawn while it is in the air. */
+  /** The depth a sideways drag would give this row on release — the lifted row or one it carries — drawn while it is in the air. */
   previewDepth: number | undefined;
   /** Just added by a recording: marked for a moment after the banner's Show. */
   flash?: boolean;

@@ -499,6 +499,7 @@ describe('sub-items', () => {
     expect(done.getAllByRole('checkbox')).toHaveLength(3);
     expect(done.getByRole('checkbox', { name: 'Party' }).closest('li')).not.toHaveAttribute('data-depth');
     expect(done.getByRole('checkbox', { name: 'Plates' }).closest('li')).toHaveAttribute('data-depth', '1');
+    expect(done.getByRole('checkbox', { name: 'Plates' }).closest('li')).toHaveAttribute('aria-level', '2');
     expect(done.getByRole('checkbox', { name: 'Cups' }).closest('li')).toHaveAttribute('data-depth', '1');
     expect(open.queryByRole('checkbox', { name: 'Party' })).toBeNull();
 
@@ -847,6 +848,34 @@ describe('three levels', () => {
     release(-100);
     expect(log.bodies.at(-1)).toBe('- [ ] Party\n  - [ ] Costco\n- [ ] Candles');
     expect(screen.getByText('Now a top-level item')).toHaveAttribute('role', 'status');
+  });
+
+  it('a parent dragged sideways previews its sub-items at their new depths too', () => {
+    const { log } = mount('- [ ] Top\n- [ ] Party\n  - [ ] Plates');
+    const row = dragSideways('Party', 30);
+    expect(row).toHaveAttribute('data-preview-depth', '1');
+    // The child is not lifted, but release moves it, so it is drawn where it goes.
+    const plates = screen.getByRole('textbox', { name: 'Sub-item 3' }).closest('li');
+    expect(plates).toHaveAttribute('data-preview-depth', '2');
+    expect(screen.getByRole('textbox', { name: 'Item 1' }).closest('li')).not.toHaveAttribute('data-preview-depth');
+    release(30);
+    expect(log.bodies).toEqual(['- [ ] Top\n  - [ ] Party\n    - [ ] Plates']);
+  });
+
+  it('a drag asking for more than the sub-items allow moves as far as fits; the arrow keys stay strict', async () => {
+    const TWO = '- [ ] Top\n  - [ ] Sub\n- [ ] Costco\n  - [ ] Meat';
+    const { log, body } = mount(TWO);
+    // Two steps right would put Meat at a fourth level: one is what fits.
+    expect(dragSideways('Costco', 50)).toHaveAttribute('data-preview-depth', '1');
+    expect(screen.getByRole('textbox', { name: 'Sub-item 4' }).closest('li')).toHaveAttribute('data-preview-depth', '2');
+    release(50);
+    expect(log.bodies).toEqual(['- [ ] Top\n  - [ ] Sub\n  - [ ] Costco\n    - [ ] Meat']);
+    // One more press would push Meat past the third level: refused, not cut down.
+    const user = userEvent.setup();
+    screen.getByRole('button', { name: 'Move Costco' }).focus();
+    await user.keyboard('{ArrowRight}');
+    expect(body()).toBe('- [ ] Top\n  - [ ] Sub\n  - [ ] Costco\n    - [ ] Meat');
+    expect(screen.getByText('Its sub-items are already three levels deep')).toHaveAttribute('role', 'status');
   });
 
   it('20 px sideways is short of a step: no preview, nothing written', () => {

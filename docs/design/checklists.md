@@ -432,15 +432,20 @@ and the axis is locked from then on, so a vertical drag that drifts never
 changes a level and a sideways one never re-sorts. Sideways, the row keeps
 its slot and every indent step (`--space-6`, 24 px at a 16 px root, read
 live) to the right is one level in, to the left one level out. The hook
-does not clamp; the editor clamps to where the row may go — out to the top,
-in to one under the row shown above and never past the third level — so
-one release can move several levels (50 px right from the top level under a
-sub-item is two). The lifted row previews what release would do: drawn at
-the depth it would take (`data-preview-depth`, absolute, one rule per level
-that outranks `data-depth`), with a 3 px bar in the accent at its start,
-the indent animating with the motion tokens and snapping under reduced
-motion. It shows nothing when the move is one `shift` would refuse (the
-refusals under "Sub-items"). On release the write is the same `shiftLevel`
+does not clamp; the editor cuts the levels down to the largest move that
+fits — out to the top, in to one under the row shown above, never past the
+third level, and no further than the row's own sub-items allow — so one
+release can move several levels (50 px right from the top level under a
+sub-item is two), and a drag that asks for one level too many moves as far
+as it can. A drag is placed by eye; Tab and the arrows, one level a press,
+refuse instead. The preview shows what release would do: every open row
+whose depth the write would change — the lifted row and the sub-items it
+carries — is drawn at that depth (`data-preview-depth`, absolute, read from
+the same `shiftLevel` write, one rule per level that outranks `data-depth`),
+the lifted row with a 3 px bar in the accent at its start, the indent
+animating with the motion tokens and snapping under reduced motion. It
+shows nothing when not even one level fits (the refusals under
+"Sub-items"). On release the write is the same `shiftLevel`
 Tab and the menu make, saved at once and said once, where it ended; a
 pointer that came back under a step writes nothing. Until round 8 the
 preview was relative (`data-nest-preview` ±1) and its "one out" rule set the
@@ -483,7 +488,8 @@ what it means. From the grip each is said with a fixed sentence ("Nothing
 above to nest under", "Already a sub-item", "Already three levels deep",
 "Cannot nest under a done item", "Its sub-items are already three levels
 deep", and "Already a top-level item" for a step out), and the menu's item
-is disabled. From the field the Tab is left to the browser, so focus moves
+is disabled; a sideways drag is refused only when not even one level
+fits. From the field the Tab is left to the browser, so focus moves
 on and the list is never a keyboard trap.
 
 The row above is the one a person sees, not the body's previous line

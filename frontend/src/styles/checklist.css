@@ -263,8 +263,7 @@ textarea.checklist__text {
 
 /* The lifted row: a step up, the way a card lifts under the pointer, above
    its neighbours while it moves between them. The edge is an outline, not a
-   border, so nothing beside it shifts by a pixel. The indent transition is
-   for the sideways drag's preview below, which steps the padding. */
+   border, so nothing beside it shifts by a pixel. */
 .checklist__row[data-dragging] {
   position: relative;
   z-index: var(--z-content);
@@ -273,7 +272,6 @@ textarea.checklist__text {
   outline: 1px solid var(--color-line-strong);
   box-shadow: var(--shadow-md);
   transform: scale(1.01);
-  transition: padding-inline-start var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -285,21 +283,26 @@ textarea.checklist__text {
 /* The sideways drag's preview: the lifted row is drawn at the depth it would
    take on release — the same step per level a sub-item is set in by — and a
    bar in the accent at its start says it is the level, not the slot, that is
-   changing. The row is already `position: relative` while lifted, and its
-   padding transition animates the step (one frame under reduced motion,
-   where the motion tokens collapse). The depth is absolute, one rule per
-   level, and each outranks every `[data-depth]` rule by one attribute: a
-   relative "one out" set to zero drew a third-level row dragged one level
-   out at the top level, not the second. */
-.checklist__row[data-dragging][data-preview-depth='0'] {
+   changing. The sub-items it carries are drawn at their own new depths,
+   so the whole block shows where release puts it. The lifted row is
+   already `position: relative`, and the padding transition animates the
+   step (one frame under reduced motion, where the motion tokens collapse).
+   The depth is absolute, one rule per level, and each outranks every
+   `[data-depth]` rule: a relative "one out" set to zero drew a third-level
+   row dragged one level out at the top level, not the second. */
+.checklist[data-dragging] .checklist__row {
+  transition: padding-inline-start var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.checklist[data-dragging] .checklist__row[data-preview-depth='0'] {
   padding-inline-start: 0;
 }
 
-.checklist__row[data-dragging][data-preview-depth='1'] {
+.checklist[data-dragging] .checklist__row[data-preview-depth='1'] {
   padding-inline-start: var(--space-6);
 }
 
-.checklist__row[data-dragging][data-preview-depth='2'] {
+.checklist[data-dragging] .checklist__row[data-preview-depth='2'] {
   padding-inline-start: calc(2 * var(--space-6));
 }
 

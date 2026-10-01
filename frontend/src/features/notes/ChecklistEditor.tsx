@@ -357,17 +357,22 @@ export function ChecklistEditor({
   };
 
   /**
-   * A drag's levels, clamped to where the row may go: out to the top, in to
-   * one under the row shown above it and never past `MAX_DEPTH`
-   * ([−d, maxIn − d]). Never clamped to nothing, so a drag that asks for
-   * what cannot be is still refused, and said, rather than dropped silently.
+   * A drag's levels, cut down to the largest move that fits: out to the top,
+   * in to one under the row shown above it, never past `MAX_DEPTH`
+   * ([−d, maxIn − d]), and no further than the row's own sub-items allow — a
+   * drag is placed by eye, so asking for one level too many moves as far as
+   * it can, where Tab and the arrows, one level a press, refuse. When not
+   * even one level fits it stays one, so the release is refused and said
+   * rather than dropped silently.
    */
   const clampLevels = (position: number, levels: number): number => {
     const depth = open[position]?.item.depth ?? 0;
     const above = open[position - 1];
     if (levels < 0) return depth === 0 ? levels : Math.max(levels, -depth);
     if (levels === 0 || !above) return levels;
-    return Math.max(1, Math.min(levels, Math.min(above.item.depth + 1, MAX_DEPTH) - depth));
+    let by = Math.max(1, Math.min(levels, Math.min(above.item.depth + 1, MAX_DEPTH) - depth));
+    while (by > 1 && 'refusal' in plan(open, position, by)) by -= 1;
+    return by;
   };
 
   /**
@@ -442,18 +447,33 @@ export function ChecklistEditor({
     : open;
 
   /**
-   * The depth the lifted row at `position` would take if the sideways drag
-   * let go now, for the row to draw; nothing when the drag is not sideways,
-   * is on another row, would leave it where it is, or asks for what `shift`
-   * would refuse.
+   * The depth every open row would take if the sideways drag let go now, by
+   * body index, for the rows whose depth would change: the lifted row and
+   * the sub-items it carries, so the preview shows the whole block where
+   * release will put it. Read from the very write release makes
+   * (`shiftLevel`), so the two cannot disagree. Empty when no sideways drag
+   * is on or it asks for what `shift` would refuse.
    */
-  const previewDepth = (position: number): number | undefined => {
+  const previewDepths = (): ReadonlyMap<number, number> => {
     const draft = drag.draftShift;
-    const entry = shownOpen[position];
-    if (!draft || !entry || draft.id !== String(entry.index)) return undefined;
-    const target = plan(shownOpen, position, clampLevels(position, draft.levels));
-    return 'depth' in target && target.depth !== entry.item.depth ? target.depth : undefined;
+    const position = draft ? open.findIndex((entry) => String(entry.index) === draft.id) : -1;
+    const entry = open[position];
+    if (!draft || !entry) return new Map();
+    const by = clampLevels(position, draft.levels);
+    if ('refusal' in plan(open, position, by)) return new Map();
+    const after = parseChecklist(shiftLevel(body, entry.index, by, open[position - 1]?.index ?? entry.index));
+    // Open rows keep their order through a level change; done lines may
+    // slip past them in the body, so rows are matched by open position.
+    const shown = (item: ChecklistItem, i: number): number[] => (item.done ? [] : [i]);
+    const afterOpen = after.flatMap(shown);
+    const depths = new Map<number, number>();
+    items.flatMap(shown).forEach((index, k) => {
+      const depth = after[afterOpen[k] ?? -1]?.depth;
+      if (depth !== undefined && depth !== items[index]?.depth) depths.set(index, depth);
+    });
+    return depths;
   };
+  const previews = previewDepths();
 
   /** The grip's menu: the no-drag path to every place a row can go, its level, then the row's delete. */
   const gripMenu = (index: number, position: number, item: ChecklistItem): OverflowMenuItem[] => {
@@ -556,7 +576,7 @@ export function ChecklistEditor({
             index={index}
             position={position}
             dragging={drag.draggingId === String(index)}
-            previewDepth={previewDepth(position)}
+            previewDepth={previews.get(index)}
             flash={flash?.has(item.text.trim()) ?? false}
             hintId={hintId}
             fieldHintId={fieldHintId}

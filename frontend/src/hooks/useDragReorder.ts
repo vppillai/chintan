@@ -128,7 +128,10 @@ export function useDragReorder<T extends string>({
   onCommit: (next: T[], moved: T) => void;
   /** A lift that ended where it began: the pointer tapped the handle of row `id`. */
   onTap?: (id: T) => void;
-  /** A sideways drag released `levels` indent steps right (positive) or left (negative) of where it began. */
+  /**
+   * A sideways drag released `levels` indent steps right (positive) or left
+   * (negative) of where it began.
+   */
   onShift?: (id: T, levels: number) => void;
 }): DragReorder<T> {
   const [draft, setDraft] = useState<T[] | null>(null);
