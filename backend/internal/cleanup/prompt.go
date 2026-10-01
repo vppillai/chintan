@@ -196,6 +196,11 @@ var ErrNotATaskList = fmt.Errorf("cleanup: the model did not return a task list"
 //     "- [x] Make a list." was the model inventing an antecedent for "it"
 //     (owner feedback 2026-09-26). Dropping rather than refusing keeps the
 //     split the model got right;
+//   - every open body line, a prose line with words included, must still be
+//     in the kept answer by words: an item that is the line, a part of it
+//     (one line split into several) or that holds it (several lines merged
+//     into one). One with none is text the model dropped, and the whole
+//     answer is refused: the answer is written over the body;
 //   - every done body line must be accounted for by a done answer item whose
 //     words are the line's, or a sub-sequence of them (a done line the model
 //     tidied), else the whole answer is refused: a lost tick is worse than
@@ -252,6 +257,9 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 		return kept
 	}
 	kept := keep(items)
+	if len(kept) == 0 {
+		return "", dropped, ErrEmptyNoteOutput
+	}
 	reopenParents(kept)
 
 	// Tick safety, over the body's lines and the kept answer.
@@ -332,6 +340,24 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 			return "", dropped, fmt.Errorf("%w: a done item was lost", ErrNotATaskList)
 		}
 	}
+	// Coverage: every open body line (a prose line with words included) is
+	// still in the answer by words — an item that is the line, a part of it
+	// (a line split into several), or that holds it (several lines merged
+	// into one). A line with none is dropped text; the kept answer is written
+	// over the body, so the whole answer is refused rather than the person's
+	// list shortened (review 2026-10-01, BE-1).
+	for line := range bodyOpen {
+		covered := false
+		for _, it := range answer {
+			if llm.VerifySubsequence(it.Text, line) || llm.VerifySubsequence(line, it.Text) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return "", dropped, fmt.Errorf("%w: an open item was lost", ErrNotATaskList)
+		}
+	}
 	check := func(it Item, parent bool) error {
 		w := llm.FoldWords(it.Text)
 		switch {
@@ -359,9 +385,6 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 	}
 	if err := checkAll(kept); err != nil {
 		return "", dropped, err
-	}
-	if len(kept) == 0 {
-		return "", dropped, ErrEmptyNoteOutput
 	}
 	return RenderTaskList(kept), dropped, nil
 }

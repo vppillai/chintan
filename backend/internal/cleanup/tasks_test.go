@@ -155,6 +155,34 @@ func TestSplitOutputRefusesALostReopenedOrInventedTick(t *testing.T) {
 	}
 }
 
+// BE-1 (review 2026-10-01): an answer that drops an open line or a prose
+// line is refused whole, since Tidy up list writes it over the body. A
+// line is kept when its words are in some answer item — a split, a merge
+// and a regroup under a new group all are.
+func TestSplitOutputRefusesALostOpenItemOrProseLine(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, reply, want string
+	}{
+		{"the repro: three open items gone", "- [ ] Milk\n- [ ] Eggs\n- [ ] Bread\n- [ ] Rice", `{"items":[{"text":"Milk"}]}`, ""},
+		{"a prose line gone", "- [ ] Milk\nRemember the coupon\n- [ ] Eggs", `{"items":["Milk","Eggs"]}`, ""},
+		{"an open sub-item gone", "- [ ] Costco\n  - [ ] Meat\n  - [ ] Rice", `{"items":[{"text":"Costco","children":["Meat"]}]}`, ""},
+		{"two lines merged into one", "- [ ] Milk\n- [ ] Milk 2 litres\n- [ ] Eggs", `{"items":["Milk 2 litres","Eggs"]}`, "- [ ] Milk 2 litres\n- [ ] Eggs"},
+		{"one line split into three", "- [ ] Add milk, eggs and protein powder to the shopping list", `{"items":["Milk","Eggs","Protein powder"]}`, "- [ ] Milk\n- [ ] Eggs\n- [ ] Protein powder"},
+		{"a regroup under a new group", "- [ ] Costco\n  - [ ] Meat\n- [ ] chicken from costco and rice from the indian store", `{"items":[{"text":"Costco","children":["Meat","Chicken"]},{"text":"Indian store","children":["Rice"]}]}`, "- [ ] Costco\n  - [ ] Meat\n  - [ ] Chicken\n- [ ] Indian store\n  - [ ] Rice"},
+		{"a prose line kept as an item", "- [ ] Milk\nRemember the coupon\n- [ ] Eggs", `{"items":["Milk","Remember the coupon","Eggs"]}`, "- [ ] Milk\n- [ ] Remember the coupon\n- [ ] Eggs"},
+	} {
+		got, _, err := cleanup.SplitOutput(tc.reply, tc.body)
+		switch {
+		case tc.want == "" && !errors.Is(err, cleanup.ErrNotATaskList):
+			t.Errorf("%s: SplitOutput = %q, %v; want ErrNotATaskList", tc.name, got, err)
+		case tc.want == "" && !strings.HasSuffix(err.Error(), ": an open item was lost"):
+			t.Errorf("%s: error = %v; want the fixed sentence", tc.name, err)
+		case tc.want != "" && (err != nil || got != tc.want):
+			t.Errorf("%s: SplitOutput = %q, %v; want %q", tc.name, got, err, tc.want)
+		}
+	}
+}
+
 // The item cap counts sub-items: five hundred is stored, one more is refused.
 // Nothing at all is the empty verdict, not a task-list one.
 func TestSplitOutputCapsTheListAndRefusesNothing(t *testing.T) {
@@ -205,9 +233,14 @@ func TestSplitOutputKeepsThreeLevels(t *testing.T) {
 	if want := "- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n    - [x] Cups\n  - [ ] Candles\n- [ ] Milk"; err != nil || got != want {
 		t.Errorf("a four-level reply = %q, %v; want %q", got, err, want)
 	}
-	got, dropped, err = cleanup.SplitOutput(`{"items":[{"text":"Party","children":[{"text":"Walmart","children":[{"text":"Plates"},{"text":"Cups","done":true}]},{"text":"Candles"}]},{"text":"Milk"}]}`, body)
-	if want := "- [ ] Party\n  - [ ] Plates\n  - [x] Cups\n  - [ ] Candles\n- [ ] Milk"; err != nil || dropped != 1 || got != want {
+	got, dropped, err = cleanup.SplitOutput(`{"items":[{"text":"Party","children":[{"text":"Walmart","children":[{"text":"Plates"},{"text":"Cups","done":true}]},{"text":"Costco"},{"text":"Candles"}]},{"text":"Milk"}]}`, body)
+	if want := "- [ ] Party\n  - [ ] Plates\n  - [x] Cups\n  - [ ] Costco\n  - [ ] Candles\n- [ ] Milk"; err != nil || dropped != 1 || got != want {
 		t.Errorf("a dropped second-level parent = %q, %d, %v; want %q", got, dropped, err, want)
+	}
+	// The invented group taking the list's own group with it is a lost open
+	// item, not a drop.
+	if got, _, err := cleanup.SplitOutput(`{"items":[{"text":"Party","children":[{"text":"Walmart","children":[{"text":"Plates"},{"text":"Cups","done":true}]},{"text":"Candles"}]},{"text":"Milk"}]}`, body); !errors.Is(err, cleanup.ErrNotATaskList) {
+		t.Errorf("Costco replaced by Walmart = %q, %v; want ErrNotATaskList", got, err)
 	}
 	// Tick safety reaches the third level.
 	if got, _, err := cleanup.SplitOutput(`{"items":[{"text":"Party","children":[{"text":"Costco","children":[{"text":"Plates"},{"text":"Cups"}]},{"text":"Candles"}]},{"text":"Milk"}]}`, body); !errors.Is(err, cleanup.ErrNotATaskList) {

@@ -367,6 +367,14 @@ The answer is checked against the body rather than trusted
   is what catches `Make a list` — the model inventing an antecedent for
   "it" — while keeping the split beside it. A reply with nothing left is
   `nothing usable`;
+- **coverage**, refused whole: every open body line — a prose line with
+  words included — must still be in the kept answer by words: an item that
+  is the line, a part of it (one line split into several) or that holds it
+  (several lines merged into one). A line with none is text the model
+  dropped, and since the answer is written over the body the whole answer
+  is refused (`an open item was lost`) rather than the list shortened.
+  Until 2026-10-01 (BE-1) only ticks were guarded: `Milk / Eggs / Bread /
+  Rice` answered as `Milk` alone was stored;
 - **tick safety**, refused whole: a `- [x]` body line with no done answer
   item whose words are the line's or a sub-sequence of them (a done line
   tidied) is a lost tick; an open answer item with a done body line's words
