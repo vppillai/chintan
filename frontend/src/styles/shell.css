@@ -81,6 +81,71 @@
   color: var(--color-ink);
 }
 
+/*
+ * Record while typing (R8, F3; `components/BannerRecord.tsx`).
+ *
+ * With the keyboard up the tab bar and its disc are under it, so the note
+ * screen shows a mic at the banner's right end while one of the note's fields
+ * has focus. The banner is its own grid row, so the mic cannot cover a
+ * character of the note. It takes the 44 px target out of the banner's
+ * vertical padding (the negative block margin), so the row keeps its height
+ * and nothing below it moves. Shown by CSS alone: `display: none` otherwise
+ * keeps it out of the tab order and away from screen readers. Never in the
+ * accent, which is the record disc's. Desktop has no on-screen keyboard and
+ * so never sets `data-keyboard`.
+ */
+.banner-record {
+  display: none;
+  place-items: center;
+  flex: none;
+  inline-size: var(--layout-touch-target-min);
+  block-size: var(--layout-touch-target-min);
+  margin-block: calc(var(--space-3) * -1);
+  margin-inline-start: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-ink);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.banner-record__disc {
+  display: grid;
+  place-items: center;
+  inline-size: 2.5rem;
+  block-size: 2.5rem;
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  background: var(--color-raised);
+}
+
+.banner-record:active .banner-record__disc {
+  background: var(--color-surface);
+}
+
+:root[data-keyboard]
+  .app[data-screen='note']:has(
+    :is(
+        .note-title-input,
+        .note-body-input,
+        .checklist-editor input,
+        .checklist-editor textarea
+      ):focus
+  )
+  .banner-record,
+:root[data-keyboard] .app[data-screen='note'] .banner-record:focus {
+  display: grid;
+  /* `--motion-duration-fast` is 1 ms under reduced motion: it simply appears. */
+  animation: banner-record-in var(--motion-duration-fast) var(--motion-ease-decelerate);
+}
+
+@keyframes banner-record-in {
+  from {
+    opacity: 0;
+  }
+}
+
 /* --------------------------------------------------------------------------
    Main — the one scrolling region.
    -------------------------------------------------------------------------- */
@@ -893,6 +958,25 @@
   border: 1px solid var(--color-line-strong);
   font-size: var(--font-size-xs);
   color: var(--color-muted);
+}
+
+/*
+ * On the note screen the pill shares the banner with the wordmark and, while
+ * typing, the mic (`.banner-record`). Wrapped onto two lines there it grew
+ * the banner at 360–393 px, so it keeps to one line and ends in an ellipsis;
+ * the status line still speaks the whole sentence.
+ */
+.app[data-screen='note'] .offline-banner {
+  flex-wrap: nowrap;
+  min-inline-size: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.app[data-screen='note'] .offline-banner > span {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* --------------------------------------------------------------------------

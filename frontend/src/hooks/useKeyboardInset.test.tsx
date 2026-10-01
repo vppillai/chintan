@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { KEYBOARD_INSET_PROPERTY, useKeyboardInset } from './useKeyboardInset.ts';
+import { KEYBOARD_ATTRIBUTE, KEYBOARD_INSET_PROPERTY, useKeyboardInset } from './useKeyboardInset.ts';
 
 /**
  * jsdom has no `visualViewport`; this stands one in — an EventTarget with the
@@ -24,7 +24,10 @@ const inset = (): string => document.documentElement.style.getPropertyValue(KEYB
 afterEach(() => {
   install(undefined);
   document.documentElement.style.removeProperty(KEYBOARD_INSET_PROPERTY);
+  document.documentElement.removeAttribute(KEYBOARD_ATTRIBUTE);
 });
+
+const keyboardUp = (): boolean => document.documentElement.hasAttribute(KEYBOARD_ATTRIBUTE);
 
 describe('useKeyboardInset', () => {
   it('writes the part of the window below the visual viewport, and follows it', () => {
@@ -64,6 +67,34 @@ describe('useKeyboardInset', () => {
     expect(inset()).toBe('400px');
     unmount();
     expect(inset()).toBe('');
+  });
+
+  it('marks the keyboard up past 80 px only, and takes the mark with it on unmount', () => {
+    const viewport = new FakeViewport();
+    install(viewport);
+    const { unmount } = renderHook(() => useKeyboardInset());
+    expect(keyboardUp()).toBe(false);
+
+    act(() => {
+      viewport.height = 915 - 81;
+      viewport.dispatchEvent(new Event('resize'));
+    });
+    expect(keyboardUp()).toBe(true);
+
+    // An accessory bar or a zoom rounding, not a keyboard.
+    act(() => {
+      viewport.height = 915 - 80;
+      viewport.dispatchEvent(new Event('resize'));
+    });
+    expect(keyboardUp()).toBe(false);
+
+    act(() => {
+      viewport.height = 515;
+      viewport.dispatchEvent(new Event('resize'));
+    });
+    expect(keyboardUp()).toBe(true);
+    unmount();
+    expect(keyboardUp()).toBe(false);
   });
 
   it('writes nothing where there is no visual viewport to read', () => {

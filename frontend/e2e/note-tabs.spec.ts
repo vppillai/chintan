@@ -516,3 +516,96 @@ test.describe('on a phone', () => {
     });
   });
 });
+
+/**
+ * Record while typing (R8, F3): with the keyboard up, a mic at the banner's
+ * right end, in the banner's own row, so it covers nothing. CDP cannot raise
+ * an on-screen keyboard (R6-NAV-2), so this sets what `useKeyboardInset`
+ * would: the inset and `data-keyboard` on `<html>`.
+ */
+test('with the keyboard up, the banner mic records into the note being typed in', async ({
+  page,
+  api,
+}) => {
+  await page.setViewportSize({ width: 412, height: 915 });
+  await page.goto('/notes/roof-repair');
+  const body = page.getByRole('textbox', { name: 'Note body' });
+  await expect(body).toBeVisible();
+  const banner = page.locator('.app__banner');
+  const mic = banner.getByRole('button', { name: 'Record into this note (while typing)' });
+  const bannerBox = await banner.boundingBox();
+  await expect(mic).toBeHidden();
+
+  // A keyboard is not enough on its own: a note field must have focus.
+  await page.evaluate(() => {
+    document.documentElement.style.setProperty('--keyboard-inset', '400px');
+    document.documentElement.setAttribute('data-keyboard', '');
+  });
+  await expect(mic).toBeHidden();
+
+  await body.focus();
+  await expect(mic).toBeVisible();
+  const micBox = (await mic.boundingBox())!;
+  const after = (await banner.boundingBox())!;
+  // In the banner's row, at its right end, and the row did not grow.
+  expect(after.height).toBe(bannerBox!.height);
+  expect(micBox.y).toBeGreaterThanOrEqual(after.y);
+  expect(micBox.y + micBox.height).toBeLessThanOrEqual(after.y + after.height + 0.5);
+  expect(micBox.width).toBeGreaterThanOrEqual(44);
+  expect(412 - (micBox.x + micBox.width)).toBeCloseTo(16, 0);
+
+  await body.blur();
+  await expect(mic).toBeHidden();
+
+  // Typed words are saved before the recording starts: the editor's
+  // debounced save flushes as the note screen unmounts.
+  await body.focus();
+  await body.press('End');
+  await page.keyboard.type(' Check the gutters too.');
+  await mic.click();
+  await expect(page).toHaveURL(/\/capture\?note=roof-repair$/);
+  await expect(page.locator('.capture__state')).toHaveText('Recording');
+  const patchAt = () =>
+    api.requests.findIndex((request) => request.method === 'PATCH' && request.url === '/v1/notes/roof-repair');
+  await expect.poll(patchAt, { message: 'the body was saved' }).toBeGreaterThanOrEqual(0);
+  expect(api.notes['roof-repair']!.body).toContain('Check the gutters too.');
+
+  await expect(page.locator('.capture__timer')).toHaveText('00:01');
+  await page.getByRole('button', { name: 'Stop' }).click();
+  await page.getByRole('button', { name: 'Send' }).click();
+  const postAt = () =>
+    api.requests.findIndex((request) => request.method === 'POST' && request.url === '/v1/captures');
+  await expect.poll(postAt, { message: 'the recording was sent' }).toBeGreaterThanOrEqual(0);
+  expect(patchAt()).toBeLessThan(postAt());
+});
+
+test('offline on a 360 px phone, the banner mic leaves the offline pill on one line', async ({
+  page,
+  context,
+}) => {
+  await page.setViewportSize({ width: 360, height: 780 });
+  await page.goto('/notes/roof-repair');
+  const body = page.getByRole('textbox', { name: 'Note body' });
+  await expect(body).toBeVisible();
+  await context.setOffline(true);
+  const banner = page.locator('.app__banner');
+  const pill = banner.locator('.offline-banner');
+  await expect(pill).toBeVisible();
+  const bannerBefore = (await banner.boundingBox())!.height;
+  const pillBefore = (await pill.boundingBox())!.height;
+
+  await page.evaluate(() => {
+    document.documentElement.style.setProperty('--keyboard-inset', '400px');
+    document.documentElement.setAttribute('data-keyboard', '');
+  });
+  await body.focus();
+  const mic = banner.getByRole('button', { name: 'Record into this note (while typing)' });
+  await expect(mic).toBeVisible();
+  // The mic squeezed the pill onto two lines at 360–393 px, and the banner grew.
+  expect((await pill.boundingBox())!.height).toBe(pillBefore);
+  expect((await banner.boundingBox())!.height).toBe(bannerBefore);
+  const micBox = (await mic.boundingBox())!;
+  const pillBox = (await pill.boundingBox())!;
+  expect(pillBox.x + pillBox.width).toBeLessThanOrEqual(micBox.x);
+  await context.setOffline(false);
+});
