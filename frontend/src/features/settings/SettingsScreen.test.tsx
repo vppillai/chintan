@@ -414,6 +414,10 @@ describe('the cards', () => {
     expect(more).not.toBeNull();
     expect(more?.open).toBe(false);
     expect(more?.querySelector('summary')).toHaveTextContent('More');
+    // Open, the same line offers to fold it again.
+    const summary = more?.querySelector('summary');
+    expect(summary?.querySelector('.you-card__more-closed')).toHaveTextContent('More');
+    expect(summary?.querySelector('.you-card__more-opened')).toHaveTextContent('Less');
     expect(more).toHaveTextContent(/a note can choose its own under Details/);
     expect(more).toHaveTextContent(/kept indefinitely/);
   });

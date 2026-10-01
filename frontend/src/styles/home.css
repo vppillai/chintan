@@ -561,6 +561,13 @@
   display: none;
 }
 
+/* The summary names what a press does: More while folded, Less while open.
+   Swapped by the disclosure's own state, so no script and no flash. */
+.you-card__more:not([open]) > .you-card__more-summary > .you-card__more-opened,
+.you-card__more[open] > .you-card__more-summary > .you-card__more-closed {
+  display: none;
+}
+
 .you-card__more-body {
   display: grid;
   gap: var(--space-2);
