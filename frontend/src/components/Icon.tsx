@@ -53,7 +53,8 @@ export type IconName =
   | 'checklist'
   | 'alert'
   | 'pin'
-  | 'grip';
+  | 'grip'
+  | 'bindu';
 
 export const PATHS: Record<IconName, string> = {
   // A house: roof, two walls, a door. The Home tab is the way back to the
@@ -139,6 +140,10 @@ export const PATHS: Record<IconName, string> = {
     'M5.25 5h2.5A1.25 1.25 0 0 1 9 6.25v2.5A1.25 1.25 0 0 1 7.75 10h-2.5A1.25 1.25 0 0 1 4 8.75v-2.5A1.25 1.25 0 0 1 5.25 5zM5.5 7.5l1 1 2-2.5M12 7.5h8M5.25 14h2.5A1.25 1.25 0 0 1 9 15.25v2.5A1.25 1.25 0 0 1 7.75 19h-2.5A1.25 1.25 0 0 1 4 17.75v-2.5A1.25 1.25 0 0 1 5.25 14zM12 16.5h8',
   // A ring with a mark in it: something went wrong here. The dot is a
   // zero-length stroke, as in `more`, so it keeps the set's weight.
+  // The brand's open C and its dot (`docs/design/branding/bindu-mark.svg`): a
+  // filing notice for a recording still moving (F9). The dot is a stroked
+  // r=1 ring, which at the 1.75 pen reads as the mark's filled 1.85 dot.
+  bindu: 'M18.4 17.3A8.25 8.25 0 1 1 18.4 6.7M13.6 11a1 1 0 1 0 0 2 1 1 0 1 0 0-2',
   alert: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 8v5M12 16.5v.01',
   // A drawing pin seen side-on: head, shoulder, needle. Worn by a pinned row
   // before its title at 16 px, and by the swipe tray's Pin action.

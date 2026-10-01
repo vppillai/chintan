@@ -131,6 +131,7 @@
   --layout-touch-target-min: 2.75rem; /* 44px */
   --layout-focus-ring-width: 3px;
   --layout-focus-ring-offset: 2px;
+  --layout-notice-glyph: 1.75rem; /* 28px: a filing notice's glyph column */
 
   /* ---- Depth ------------------------------------------------------------
      The elevation model is three planes and a set of shadows (backlog N10).
@@ -241,6 +242,16 @@
      (QA 2026-09-21, finding 8). */
   --color-destructive: var(--color-accent-strong);
 
+  /* A filing notice (F9): a tray pressed into the page, the opposite of the
+     raised note cards under it. Aliases, so the contrast table above holds:
+     on surface, faint is 4.63 here and 5.06 in Nocturne. A darker tray would
+     take faint under AA. */
+  --color-notice: var(--color-surface);
+  --color-notice-line: var(--color-line);
+  --color-notice-glyph: var(--color-muted);
+  --color-notice-alert: var(--color-destructive);
+  --shadow-notice: var(--shadow-inset);
+
   --color-overlay: rgb(26 25 23 / 38%);
   --color-selection: rgb(194 65 12 / 18%);
 
@@ -327,6 +338,11 @@
   --color-on-accent: #0a0c0b;
   --color-accent-soft: rgb(184 241 53 / 14%);
   --color-destructive: var(--color-ink);
+  --color-notice: var(--color-surface);
+  --color-notice-line: var(--color-line);
+  --color-notice-glyph: var(--color-muted);
+  --color-notice-alert: var(--color-destructive);
+  --shadow-notice: var(--shadow-inset);
 
   --color-overlay: rgb(10 12 11 / 62%);
   --color-selection: rgb(184 241 53 / 22%);
@@ -372,6 +388,11 @@
     --color-on-accent: #0a0c0b;
     --color-accent-soft: rgb(184 241 53 / 14%);
     --color-destructive: var(--color-ink);
+    --color-notice: var(--color-surface);
+    --color-notice-line: var(--color-line);
+    --color-notice-glyph: var(--color-muted);
+    --color-notice-alert: var(--color-destructive);
+    --shadow-notice: var(--shadow-inset);
 
     --color-overlay: rgb(10 12 11 / 62%);
     --color-selection: rgb(184 241 53 / 22%);
