@@ -18,6 +18,7 @@ import { OfflineBanner } from '@/offline/OfflineBanner.tsx';
 import { UpdatePrompt } from '@/pwa/UpdatePrompt.tsx';
 import { usePushWakeup } from '@/pwa/usePushWakeup.ts';
 
+import { BannerRecord } from './BannerRecord.tsx';
 import { RecordingIndicator } from './RecordingIndicator.tsx';
 import { StatusRegion } from './StatusRegion.tsx';
 import { TabBar } from './TabBar.tsx';
@@ -69,7 +70,8 @@ export function AppShell() {
 
   useBackGuard();
   // Where the on-screen keyboard is, for the scroll container's padding
-  // (`shell.css` `.app__main`) and the note sheet's cap (`notes.css`).
+  // (`shell.css` `.app__main`) and the note sheet's cap (`notes.css`), and
+  // whether it is up at all, for the banner's mic (`BannerRecord`).
   useKeyboardInset();
   usePasskeyReturn();
   useRouteFocus(mainRef);
@@ -145,6 +147,8 @@ export function AppShell() {
         <header className="app__banner">
           {screen !== 'library' && <Wordmark />}
           <OfflineBanner />
+          {/* Record while typing, shown by CSS only with the keyboard up (R8, F3). */}
+          {screen === 'note' && <BannerRecord />}
         </header>
 
         <main

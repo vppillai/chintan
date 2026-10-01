@@ -246,6 +246,25 @@ scroll position stable while panning with the keyboard up, since the
 property is rewritten on every visual-viewport scroll — and if an iPhone
 still hides the caret the next step is a small `useCaretInView` on input.
 
+**Recording while typing (R8, F3).** With the keyboard up, the tab bar and
+its disc are under it. So `useKeyboardInset` also sets `data-keyboard` on
+`<html>` while the inset is over 80 px (an accessory bar or a zoom rounding
+is not a keyboard), and the note screen renders `BannerRecord` at the
+banner's right end: a 40 px disc in a 44 px target, raised and lined, never
+in the accent. CSS alone shows it, only while the keyboard is up and the
+title, the body or a checklist field has focus. The banner is its own grid
+row and the target takes its height out of the row's padding, so the mic
+cannot cover text and nothing reflows. Its `pointerdown` is prevented so
+the field keeps focus until the click; the click opens
+`/capture?note=<id>`, the editor's debounced save flushes as the screen
+unmounts (the PATCH goes before the capture's POST,
+`e2e/note-tabs.spec.ts`), and `/capture` returns to the note at its place
+(R7-6b). It is not rendered on an archived note, and never shows on a
+desktop. Manual iPhone check: iOS sometimes pans the layout viewport up on
+focus, which carries the banner, and the mic with it, off the top; the mic
+is then simply absent, as before. A `position: fixed` variant would overlay
+content, so it is not done without asking.
+
 ## Find
 
 A bar under the strip — query, "3 of 12", previous, next, close — that

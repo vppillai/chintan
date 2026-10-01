@@ -31,6 +31,14 @@ import { useEffect } from 'react';
 
 export const KEYBOARD_INSET_PROPERTY = '--keyboard-inset';
 
+/**
+ * Set on `<html>` while the keyboard is up, for rules that only apply then
+ * (the banner's mic, `shell.css` `.banner-record`; R8, F3). Over 80 px, so an
+ * accessory bar or a rounding at a zoom step does not count as a keyboard.
+ */
+export const KEYBOARD_ATTRIBUTE = 'data-keyboard';
+const KEYBOARD_MIN_PX = 80;
+
 export function useKeyboardInset(): void {
   useEffect(() => {
     const viewport = window.visualViewport;
@@ -50,6 +58,7 @@ export function useKeyboardInset(): void {
       if (inset === last) return;
       last = inset;
       root.style.setProperty(KEYBOARD_INSET_PROPERTY, `${String(inset)}px`);
+      root.toggleAttribute(KEYBOARD_ATTRIBUTE, inset > KEYBOARD_MIN_PX);
     };
     update();
     viewport.addEventListener('resize', update);
@@ -60,6 +69,7 @@ export function useKeyboardInset(): void {
       viewport.removeEventListener('scroll', update);
       window.removeEventListener('resize', update);
       root.style.removeProperty(KEYBOARD_INSET_PROPERTY);
+      root.removeAttribute(KEYBOARD_ATTRIBUTE);
     };
   }, []);
 }
