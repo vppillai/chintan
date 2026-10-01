@@ -4,6 +4,9 @@ import { Link, useLocation } from 'react-router';
 import { ROUTES } from '@/app/routes.ts';
 import { isPlainClick, useTabNavigation } from '@/app/useTabNavigation.ts';
 import { holdProgress, type HoldNotice } from '@/features/capture/holdGesture.ts';
+// Static on purpose. Lazy, it moved 0.6 kB out of the main chunk and had
+// rolldown split `jsx-runtime` into a chunk of its own, one more request
+// every launch for the same bytes (review 2026-10-01, FE-2, measured).
 import { Waveform } from '@/features/capture/Waveform.tsx';
 import { formatElapsed } from '@/features/capture/machine.ts';
 import { useCaptureStore } from '@/features/capture/store.ts';
