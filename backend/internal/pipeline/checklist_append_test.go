@@ -605,3 +605,32 @@ func TestReplaceChecklistItemsKeepsAThreeLevelBlock(t *testing.T) {
 		t.Errorf("replaceChecklistItems = %q, want the body unchanged %q", got, body)
 	}
 }
+
+// Review of #191: when every old line stays as a shared parent (here both
+// Costco and Meat, because of the line typed under Meat), the recording's
+// new words still go in, after the shared parent's block (DB6-7). Before,
+// no line was taken, the body came back unchanged and Rice was lost.
+func TestReplaceChecklistItemsWritesANewChildWhenEveryOldLineIsShared(t *testing.T) {
+	body := service.CaptureMarker("c_1") + "\n- [ ] Costco\n  - [ ] Meat\n    - [ ] Chicken thighs\n- [ ] Milk"
+	got := replaceChecklistItems(body, "c_1", []string{"Costco", "  Meat"}, "- [ ] Costco\n  - [ ] Meat\n  - [ ] Rice")
+	if want := service.CaptureMarker("c_1") + "\n- [ ] Costco\n  - [ ] Meat\n    - [ ] Chicken thighs\n  - [ ] Rice\n- [ ] Milk"; got != want {
+		t.Errorf("replaceChecklistItems = %q, want %q", got, want)
+	}
+	// A new top-level item goes right after the shared block.
+	got = replaceChecklistItems(body, "c_1", []string{"Costco", "  Meat"}, "- [ ] Costco\n  - [ ] Meat\n- [ ] Bread")
+	if want := service.CaptureMarker("c_1") + "\n- [ ] Costco\n  - [ ] Meat\n    - [ ] Chicken thighs\n- [ ] Bread\n- [ ] Milk"; got != want {
+		t.Errorf("replaceChecklistItems = %q, want %q", got, want)
+	}
+}
+
+// DB6-9 is the owner's and stays open: a blank line or a marker ends a
+// parent's block for the merge, as before three levels. This pins the known
+// cost, so a change to it is a decision and not an accident: the Rice under
+// the later recording's marker is not found, and a second one is added.
+func TestMergeParentBlockStillEndsAtABlankLine(t *testing.T) {
+	body := "- [ ] Costco\n  - [ ] Meat\n\n" + service.CaptureMarker("c_2") + "\n  - [ ] Rice"
+	got, _, _ := mergeChecklistItems(body, []cleanup.Item{item("Costco", "Rice")})
+	if want := "- [ ] Costco\n  - [ ] Meat\n  - [ ] Rice\n\n" + service.CaptureMarker("c_2") + "\n  - [ ] Rice"; got != want {
+		t.Errorf("merge = %q, want %q", got, want)
+	}
+}

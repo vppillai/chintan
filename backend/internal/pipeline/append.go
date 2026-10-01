@@ -558,7 +558,10 @@ func replaceChecklistItems(body, captureID string, previous []string, text strin
 	// stays, and the fresh item joins it in the merge below. At every depth,
 	// so a sub-item typed under one of the recording's sub-items keeps its
 	// parent rather than landing under whatever line the block is written
-	// above.
+	// above. A shared parent released this way is still one of the
+	// recording's old lines: it was found, so the person did not delete the
+	// recording's items.
+	shared := -1
 	for i := range lines {
 		if !take[i] {
 			continue
@@ -566,24 +569,37 @@ func replaceChecklistItems(body, captureID string, previous []string, text strin
 		for j := i + 1; j < len(lines) && depth[j] > depth[i]; j++ {
 			if !take[j] {
 				take[i] = false
+				if shared < 0 && old[i] {
+					shared = i
+				}
 				break
 			}
 		}
 	}
-	oldSeen := false
-	for i := range lines {
-		oldSeen = oldSeen || (take[i] && old[i])
-	}
-	if !oldSeen {
+	if !slices.Contains(old, true) {
 		return body
 	}
 	// The place the block goes back is held by a line that is not an item,
 	// so the merge's insertions above it cannot move it and a parent's block
-	// ends at it, as it ends at a marker.
+	// ends at it, as it ends at a marker. It is where the first taken line
+	// stood or, when every old line stayed as a shared parent, right after
+	// the first one's block (DB6-7), so a new item is not lost for want of a
+	// place: regenerating Costco › Meat to Costco › Meat, Rice when a line
+	// typed under Meat keeps both of them still writes Rice.
 	const placeholder = "\x00"
+	after := -1
+	if !slices.Contains(take, true) {
+		after = shared + 1
+		for after < len(lines) && depth[after] > depth[shared] {
+			after++
+		}
+	}
 	kept := make([]string, 0, len(lines)+1)
 	var removed []string
 	for i, line := range lines {
+		if i == after {
+			kept = append(kept, placeholder)
+		}
 		if !take[i] {
 			kept = append(kept, line)
 			continue
@@ -592,6 +608,9 @@ func replaceChecklistItems(body, captureID string, previous []string, text strin
 			kept = append(kept, placeholder)
 		}
 		removed = append(removed, line)
+	}
+	if after == len(lines) {
+		kept = append(kept, placeholder)
 	}
 	text = keepTick(strings.Join(removed, "\n"), text)
 	merged, rest, _ := mergeChecklistItems(strings.Join(kept, "\n"), cleanup.ItemsFromLines(text))
@@ -715,10 +734,14 @@ func mergeLeaf(lines []string, it cleanup.Item, counts *mergeCounts) bool {
 }
 
 // mergeParent joins an item with children to the top-level line with its
-// words. False when there is none. A recording's parent is top level and its
-// children one under it (ParseItems), so a child is looked for among the
-// line's direct sub-items only: a deeper line with the same words is a
-// different thing in a different group.
+// words. False when there is none. The line's block is the item lines right
+// after it that are deeper than it, at any depth; a marker, a blank, prose or
+// another top-level line ends it (DB6-9, the owner's, is whether a blank or a
+// marker should). A child is looked for among the line's direct sub-items
+// only, depth 1, since a recording's children are one under its parent
+// (ParseItems): a deeper line with the same words is a different thing in a
+// different group. A child not found is added after the block's last line,
+// at depth 1.
 func mergeParent(lines []string, it cleanup.Item, counts *mergeCounts) ([]string, bool) {
 	want := llm.FoldWords(it.Text)
 	depth := depths(lines)
@@ -733,8 +756,6 @@ func mergeParent(lines []string, it cleanup.Item, counts *mergeCounts) ([]string
 		return lines, false
 	}
 	counts.joined++
-	// The block: the parent and the sub-item lines right after it, at any
-	// depth. A marker, a blank, prose or a top-level item ends it.
 	end := at
 	for end+1 < len(lines) && depth[end+1] > 0 {
 		end++
@@ -762,10 +783,7 @@ func mergeParent(lines []string, it cleanup.Item, counts *mergeCounts) ([]string
 			box = "  - [x] "
 		}
 		lines = slices.Insert(lines, end+1, box+strings.Join(strings.Fields(c.Text), " "))
-		// A sub-item one under a top-level line, after the block's last
-		// line, is the depth ParseLines reads it at, and moves no line after
-		// it: the next is a marker, a blank, prose or top level.
-		depth = slices.Insert(depth, end+1, 1)
+		depth = depths(lines)
 		end++
 		touched = touched || !c.Done
 	}
