@@ -151,7 +151,9 @@ fi
 # deployment driven entirely through GitHub Actions never needs them here; a
 # local build, the test suites and scripts/bootstrap.sh do. Reported, not
 # required.
-go_mod_version="$(sed -n 's/^go \([0-9.]*\).*/\1/p' "$REPO_ROOT/backend/go.mod" | head -n 1)"
+# The toolchain line is the exact patch every build uses; the go line is only
+# the language floor.
+go_mod_version="$(sed -n 's/^toolchain go\([0-9.]*\).*/\1/p' "$REPO_ROOT/backend/go.mod" | head -n 1)"
 if command -v go >/dev/null 2>&1; then
     go_ver="$(go version 2>/dev/null | sed -n 's/^go version go\([0-9.]*\).*/\1/p')"
     record "go" ok "go $go_ver (go.mod wants $go_mod_version; GOTOOLCHAIN=auto fetches it when older)"

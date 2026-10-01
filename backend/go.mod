@@ -9,9 +9,18 @@ module github.com/vppillai/chintan/backend
 // Punycode-encoded label in golang.org/x/net/idna, reached the same way as the
 // crypto/tls fix above). Lowering it re-opens all three.
 //
-// Every CI and deploy job resolves its Go from this line via setup-go's
-// go-version-file, so this is the only place the version is written down.
+// Every CI and deploy job resolves its Go from the two lines below via
+// setup-go's go-version-file, so this is the only place the version is written
+// down. The toolchain line pins the patch: without it `go 1.26` meant whatever
+// the machine had — CI got 1.26.8 from the runner's tool cache while a laptop
+// on 1.26.0 built against nineteen stdlib advisories 1.26.8 fixes, so
+// govulncheck's answer depended on the machine. setup-go reads the toolchain
+// directive in preference to the go line, and an older local Go downloads
+// exactly this one under GOTOOLCHAIN=auto (the default). Bump it to the newest
+// patch when Dependabot or a security notice says to.
 go 1.26
+
+toolchain go1.26.8
 
 require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
