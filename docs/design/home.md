@@ -40,14 +40,19 @@ record, with the two directions not taken, is `docs/design/branding/`.
 
 Between the field and the first day sits the filing section
 (`features/capture/FilingRow.tsx`), whose rules are `capture-ux.md`,
-"Receipts on Home". On a phone it is kept short (R7-7a): rows that need the
-person — "which note?", a failure — stay open, each with the recording's
-excerpt as a muted second line; a single receipt is one line, plus an
-excerpt line when there is one, "Filed into
-“Roof repair” · 2 min ›" or "Started “Plumber”" for a note the recording
+"Receipts on Home". It is a notice, not a note (F9): an h2 "Filing" in the
+day groups' label style, then one tray pressed into the page
+(`--color-notice`, `--shadow-notice`) holding every row, divided by
+hairlines, with a glyph before each row's text and `--space-6` below it, so
+it reads apart from the raised note cards under it. On a phone it is kept
+short (R7-7a): rows that need the person — "which note?", a failure — stay
+open, each with the recording's excerpt as a muted second line; a single
+receipt is one line, plus an excerpt line when there is one, "✓ Filed into
+“Roof repair” · 2 min ×" or "+ Started “Plumber”" for a note the recording
 made; two or more receipts are one summary row, "3 filed into 2 notes ›",
-that opens in place beside "Clear all". A receipt's × shows on the hovered
-or focused row; under a finger the swipe tray puts one away.
+that opens in place beside "Clear all". The × is always drawn, on every
+pointer, which supersedes R7-7a's hidden × (F9); the swipe tray is a second
+way to put a receipt away.
 
 ## Order and groups
 

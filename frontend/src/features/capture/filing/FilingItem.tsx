@@ -1,5 +1,5 @@
 import { isTerminalStatus, type CaptureWire } from '@/api/schema.ts';
-import { Icon } from '@/components/Icon.tsx';
+import { Icon, type IconName } from '@/components/Icon.tsx';
 import { SwipeRow } from '@/components/SwipeRow.tsx';
 import { formatDurationShort } from '@/features/notes/groups.ts';
 
@@ -10,8 +10,10 @@ import {
   describe,
   describeAgoShort,
   isStuck,
+  noticeKind,
   retryAccepted,
   stageIndex,
+  type NoticeKind,
   type ReceiptGroup,
 } from './model.ts';
 
@@ -98,15 +100,43 @@ export function receiptTitle(receipt: ReceiptGroup, noteTitle: string | undefine
   return count > 1 ? `${String(count)} filed${filed}` : `Filed${filed}`;
 }
 
+const GLYPHS: Record<NoticeKind, IconName> = {
+  moving: 'bindu',
+  needs: 'route',
+  failed: 'alert',
+  filed: 'check',
+  started: 'plus',
+};
+
+/**
+ * The status cue before a notice's text (F9): what kind of row this is, at a
+ * glance, in the tray's first column. Decoration only — the Icon is
+ * `aria-hidden` and the title says the same in words.
+ */
+export function NoticeGlyph({ kind }: { kind: NoticeKind }) {
+  return (
+    <span className="filing-row__glyph">
+      <Icon name={GLYPHS[kind]} size={18} />
+    </span>
+  );
+}
+
+/** The ×. One name everywhere, "Dismiss", and always drawn (F9 supersedes R7-7a's hidden ×). */
+function DismissButton({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <button type="button" className="filing-row__dismiss" aria-label="Dismiss" onClick={onDismiss}>
+      <Icon name="close" size={18} />
+    </button>
+  );
+}
+
 /*
- * A receipt is one control and one line (R7-7a): the title, cut with an
- * ellipsis, then "· 2 min", then the chevron. The row itself opens the
- * note — the chevron's ::after stretches over it (capture.css) — and the
- * title stays first in the head, outside the button, so the live region a
- * moving row rendered is the node the receipt updates. The × is shown only
- * on the hovered or focused row; on a phone the swipe tray and "Clear all"
- * are the ways to put a receipt away, and the × stays a real 44 px button
- * a keyboard or screen reader reaches, revealed when it has focus.
+ * A receipt is one line (R7-7a): the title, cut with an ellipsis, then
+ * "· 2 min", and the × at the end. The row itself opens the note: the
+ * zero-size "Open the note" button's ::after stretches over it (capture.css),
+ * and the title stays first in the head, outside the button, so the live
+ * region a moving row rendered is the node the receipt updates. There is no
+ * chevron (F9): three trailing controls were what squeezed the title.
  */
 function receiptBody({
   receipt,
@@ -125,47 +155,41 @@ function receiptBody({
 }) {
   const titleId = `filing-title-${receipt.newestId}`;
   const ago = describeAgoShort(receipt.latestAt, now);
+  const kind = noticeKind(receipt);
   return (
-    <article
-      className="filing-row filing-row--receipt"
-      data-status="appended"
-      data-started={receipt.createdNote || undefined}
-    >
-      <div className="filing-row__head">
-        <p
-          id={titleId}
-          className="filing-row__title"
-          role={live ? 'status' : undefined}
-          aria-live={live ? 'polite' : undefined}
-        >
-          {receipt.createdNote && (
-            <Icon name="plus" size={16} className="filing-row__started-icon" />
+    <article className="filing-row filing-row--receipt" data-status="appended" data-kind={kind}>
+      <NoticeGlyph kind={kind} />
+      <div className="filing-row__body">
+        <div className="filing-row__head">
+          <p
+            id={titleId}
+            className="filing-row__title"
+            role={live ? 'status' : undefined}
+            aria-live={live ? 'polite' : undefined}
+          >
+            {receiptTitle(receipt, noteTitle)}
+          </p>
+          {ago && (
+            <span className="filing-row__duration numeric">
+              <span aria-hidden="true">· </span>
+              {ago}
+              {ago !== 'now' && <span className="visually-hidden"> ago</span>}
+            </span>
           )}
-          {receiptTitle(receipt, noteTitle)}
-        </p>
-        {ago && (
-          <span className="filing-row__duration numeric">
-            <span aria-hidden="true">· </span>
-            {ago}
-            {ago !== 'now' && <span className="visually-hidden"> ago</span>}
+        </div>
+        {receipt.excerpt && <p className="filing-row__excerpt">{receipt.excerpt}</p>}
+        <button
+          type="button"
+          className="filing-row__receipt"
+          aria-labelledby={`${titleId} ${titleId}-open`}
+          onClick={onOpen}
+        >
+          <span id={`${titleId}-open`} className="visually-hidden">
+            Open the note
           </span>
-        )}
+        </button>
       </div>
-      {receipt.excerpt && <p className="filing-row__excerpt">{receipt.excerpt}</p>}
-      <button
-        type="button"
-        className="filing-row__receipt"
-        aria-labelledby={`${titleId} ${titleId}-open`}
-        onClick={onOpen}
-      >
-        <Icon name="chevron-right" size={18} />
-        <span id={`${titleId}-open`} className="visually-hidden">
-          Open the note
-        </span>
-      </button>
-      <button type="button" className="filing-row__dismiss" aria-label="Dismiss" onClick={onDismiss}>
-        <Icon name="close" size={18} />
-      </button>
+      <DismissButton onDismiss={onDismiss} />
     </article>
   );
 }
@@ -209,32 +233,33 @@ function captureBody({
   const excerpt = (needsTarget || actionable) && capture.excerpt ? capture.excerpt : null;
 
   return (
-    <article className="filing-row" data-status={capture.status} data-stuck={stuck || undefined}>
-      <div className="filing-row__head">
-        <p className="filing-row__title" role="status" aria-live="polite">
-          {describe(capture, stuck, recordedHere)}
-          {running && stage && !stuck && !waiting && (
-            <span className="visually-hidden">{` — ${stage.label}`}</span>
-          )}
-        </p>
-        {duration && <span className="filing-row__duration numeric">{duration}</span>}
-      </div>
+    <article className="filing-row" data-status={capture.status} data-kind={noticeKind(capture)}>
+      <NoticeGlyph kind={noticeKind(capture)} />
+      <div className="filing-row__body">
+        <div className="filing-row__head">
+          <p className="filing-row__title" role="status" aria-live="polite">
+            {describe(capture, stuck, recordedHere)}
+            {running && stage && !stuck && !waiting && (
+              <span className="visually-hidden">{` — ${stage.label}`}</span>
+            )}
+          </p>
+          {duration && <span className="filing-row__duration numeric">{duration}</span>}
+        </div>
 
-      {excerpt && <p className="filing-row__excerpt">{excerpt}</p>}
+        {excerpt && <p className="filing-row__excerpt">{excerpt}</p>}
 
-      {running && <FilingStages capture={capture} />}
+        {running && <FilingStages capture={capture} />}
 
-      {(actionable || capture.status === 'no_content') && (
-        <div className="filing-row__actions">
-          {/*
-            A real Retry, wired to POST /v1/captures/{id}/retry, so a failed
-            capture is never a dead end with a toast. Also offered once a
-            non-terminal capture has sat long enough that the server will
-            start a fresh run — RetryCapture resumes from whichever artifact
-            already exists, so it is safe to call on a capture that never
-            actually failed, only stalled.
-          */}
-          {retryable && (
+        {retryable && (
+          <div className="filing-row__actions">
+            {/*
+              A real Retry, wired to POST /v1/captures/{id}/retry, so a failed
+              capture is never a dead end with a toast. Also offered once a
+              non-terminal capture has sat long enough that the server will
+              start a fresh run — RetryCapture resumes from whichever artifact
+              already exists, so it is safe to call on a capture that never
+              actually failed, only stalled.
+            */}
             <button
               type="button"
               className="filing-row__action"
@@ -243,35 +268,36 @@ function captureBody({
             >
               <span>{retrying ? 'Retrying…' : 'Retry'}</span>
             </button>
-          )}
+          </div>
+        )}
 
-          {/*
-            A stopped capture needs a way off the screen: nothing will ever
-            refetch it away on its own, and a row that only says what went
-            wrong would otherwise sit at the top of the library for ever.
-          */}
-          <button type="button" className="filing-row__action" onClick={onDismiss}>
-            <span>Dismiss</span>
-          </button>
-        </div>
-      )}
+        {retryError && (
+          <p className="filing-row__error" role="alert">
+            {retryError}
+          </p>
+        )}
 
-      {retryError && (
-        <p className="filing-row__error" role="alert">
-          {retryError}
-        </p>
-      )}
+        {/*
+          The row asks "Which note should this go in?" and must render a way to
+          answer it. `useSetCaptureTarget` wrapped the contract's target endpoint
+          and was once called from nowhere, so the capture — and the thought in
+          it — was stuck permanently.
+
+          Mounted only for `needs_target`, which is what keeps the notes list off
+          the wire for a capture that is merely still transcribing.
+        */}
+        {needsTarget && <TargetPrompt capture={capture} />}
+      </div>
 
       {/*
-        The row asks "Which note should this go in?" and must render a way to
-        answer it. `useSetCaptureTarget` wrapped the contract's target endpoint
-        and was once called from nowhere, so the capture — and the thought in
-        it — was stuck permanently.
-
-        Mounted only for `needs_target`, which is what keeps the notes list off
-        the wire for a capture that is merely still transcribing.
+        A stopped capture needs a way off the screen: nothing will ever
+        refetch it away on its own, and a row that only says what went wrong
+        would otherwise sit at the top of the library for ever. Not on a row
+        asking which note: putting that away would hide a recording that is
+        in no note yet, with nowhere else to find it — answering is its way
+        off the screen.
       */}
-      {needsTarget && <TargetPrompt capture={capture} />}
+      {(actionable || capture.status === 'no_content') && <DismissButton onDismiss={onDismiss} />}
     </article>
   );
 }

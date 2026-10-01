@@ -88,9 +88,11 @@ paragraph, then into the textarea with the caret at its start; on a checklist
 into the first added row's field — and "Added text shown" is said politely,
 so the keyboard and a screen reader land there too. The note itself comes back at the offset
 it was left at (`RESTORE_SCROLL`, `useScrollRestore`), not at its title. A
-failed or stuck capture keeps the row's Retry and Dismiss; a dismissal is per
+failed or stuck capture keeps the row's Retry and its ×; a dismissal is per
 device (`dismissed.ts`), so it does not return with the note. The banner is
-not drawn on the Recordings tab, whose own row wears the same strip.
+the library's tray around its one row (F9), with no heading, and the "Added
+at the end · Show" line sits in the same tray with the receipt's check. It
+is not drawn on the Recordings tab, whose own row wears the same strip.
 
 Where the contract said `captureReturnPath(noteId, sent)` the code has one
 parameter: once every exit went to the note, `sent` decided nothing. And the
@@ -161,19 +163,41 @@ asking "which note?", stuck past ten minutes — never grouped, never folded
 and always above the fold; then the receipts, one per note the rest landed
 in, newest landing first.
 
+The section is a notice, not a note (F9, owner 2026-09-30): an h2 "Filing"
+(the region's name, `aria-labelledby`) over one inset tray — `--color-notice`
+(surface) with `--shadow-notice` (the inset shadow), no border — holding
+every row, divided by `--color-notice-line` hairlines. Each row is three
+columns, each part placed by name: a 28 px glyph (`--layout-notice-glyph`),
+the text, and a 44 px ×. The glyph says the kind (`noticeKind` in
+`filing/model.ts`, `data-kind` on the row): the Bindu mark for a row still
+moving, `route` (ink) for "which note?", `alert` (`--color-notice-alert`)
+for failed, capped, stuck or a failed upload — muted for `no_content`, where
+nothing went wrong — `check` for a receipt and the fold, `plus` for a note
+the recording started. The glyphs are `aria-hidden`; the title says the same
+in words. R7's receipt grid set a row but no column on its chevron and ×, so
+the grid placed them first and the title dropped to a second line; the
+explicit columns, and an e2e check that the title and the × share a line
+(`layout.spec.ts`), keep that from recurring.
+
 A receipt is one line, plus an excerpt line when there is one (R7-7a,
 owner 2026-09-30): the title cut with an
 ellipsis — "Filed into “Roof repair”", "3 filed into “Kitchen rebuild”", or
-"Started “Plumber”" with the plus glyph when the capture's `created_note`
+"Started “Plumber”" when the capture's `created_note`
 says the note was made for it (R7-7c), so a misroute into a fresh note is
 visible — then "· 2 min" (`describeAgoShort`: now, min, h, d; a screen
-reader hears "ago"), then the chevron. Before this the time, chevron and ×
-columns squeezed the title to three lines, and three receipts left room for
-about one note at 390 × 844. The × shows only on the hovered or focused
-row: under a mouse it fades in in its own column; under a finger it takes no
-room, and the row's swipe tray (Dismiss) and "Clear all" put a receipt away.
-It stays a real 44 px button that a keyboard or screen reader reaches, and
-appears once it has focus. One receipt is a row. Two or more fold into one
+reader hears "ago"), then the ×. There is no chevron (F9): the whole row
+opens the note, and the time, chevron and × columns were what squeezed the
+title to three lines. The × is always drawn, under a finger too, which
+supersedes R7-7a's hidden × (F9 asked for notices "clearly identifiable as
+dismissible"); the width is paid back by the chevron's column and the gaps
+between rows, both gone. It is named "Dismiss" on every row. A failed or
+stuck row has Retry and the ×, which replaced its text "Dismiss" button; a
+`no_content` row has the × alone; a row asking "which note?" has no ×, since
+putting it away would hide a recording that is in no note yet — answering is
+its way off the screen. This device's failed upload keeps "Discard" as a
+word, never an ×: it deletes the audio, and an × here means "put away". The
+row's swipe tray (Dismiss) and "Clear all" are the other ways to put a
+receipt away. One receipt is a row. Two or more fold into one
 summary row, "3 filed into 2 notes ›" — a button with `aria-expanded` that
 opens the receipts in place — beside a "Clear all" that dismisses every one
 of them. Rows inside the fold carry no live region of their own; a landing
@@ -195,8 +219,8 @@ until the capture is transcribed — is a muted second line under "Which note
 should this go in?", under a failed, capped or stuck row (the note's banner
 included), and under a receipt, in the fold's expanded view too.
 
-Opening a receipt — the chevron, or the row, which the chevron's `::after`
-stretches over — refreshes the note, dismisses every capture in the group
+Opening a receipt — the row, which a zero-size "Open the note" button's
+`::after` stretches over, its focus ring drawn on the row — refreshes the note, dismisses every capture in the group
 and navigates to it; the × dismisses without navigating. Dismissal is per
 device (`dismissed.ts`, `localStorage`, the newest two hundred ids), because
 `appended` rows stay in `GET /v1/captures` by contract and there is no
