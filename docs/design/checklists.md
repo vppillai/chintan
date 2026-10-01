@@ -618,9 +618,10 @@ server picks `tasks` for a checklist, and keeps the request in module state
 (`useTidyList.ts`: the view as it was, and when), so it survives a tab
 switch and leaving the note within the session. "Tidying the list…" stands
 above the rows, which stay editable. The note is polled on the
-`cleanPollInterval` ladder by a timer of its own — TanStack restarts an
-observer's `refetchInterval` on every update to the query, and a filing
-recording's poll rewrites the note every 1.5 s — until `cleanSettled`, then
+`cleanPollInterval` ladder by `usePollNote`, a timer of its own shared with
+the plain note's Regenerate — TanStack restarts an observer's
+`refetchInterval` on every update to the query, and a filing recording's
+poll rewrites the note every 1.5 s — until `cleanSettled`, then
 one of four things happens:
 
 - **Fresh** (`!stale`, the editor's body equal to the server's, mode

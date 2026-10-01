@@ -282,7 +282,7 @@ export function useRegenerateCleaned(note: Pick<NoteDetailWire, 'id' | 'cleaned'
     if (current?.error) setNotice(current.error);
   }
 
-  usePollNote(note.id, queued ? () => cleanPollInterval(Date.now() - queued.since) : null);
+  usePollNote(note.id, queued?.since ?? null, cleanPollInterval);
 
   useEffect(() => {
     if (!queued) return;
