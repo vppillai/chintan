@@ -1,5 +1,5 @@
 /* --------------------------------------------------------------------------
-   Checklist notes — the Items tab, the Split up list, the row's progress
+   Checklist notes — the Items tab, the row's progress
    -------------------------------------------------------------------------- */
 
 /* The same card the body textarea is: a recess in the page, holding rows. The
@@ -390,28 +390,16 @@ textarea.checklist__text {
   color: var(--color-ink);
 }
 
-/* The Split up tab's editor lives in the cleaned view's own card. Its rows
-   are `inert` while a regeneration is pending and while the proposal is
-   older than the note (CleanedPanel), and a browser gives inert content no
-   look of its own, so the words, the boxes and the Done actions take the
-   tertiary ink that disabled controls wear (`.cleaned__action[disabled]`)
-   until Regenerate or Use this list; the grip is that ink at rest already.
-   Both themes follow, since it is the token. */
-.cleaned__body[inert] .checklist__text,
-.cleaned__body[inert] .checklist__mark,
-.cleaned__body[inert] .checklist__done-action {
-  color: var(--color-faint);
+/* "Tidying the list…" above the rows while a tidy runs (useTidyList). The
+   rows stay editable under it: the result is written only if the list is
+   unchanged when it lands. */
+.checklist-editor__status {
+  margin-block-end: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
 }
 
-/* A done row's box is filled with ink by `:checked` above, which the colour
-   alone leaves at full strength beside the faint words — and Done is open
-   by default, so the ticked boxes are on screen. */
-.cleaned__body[inert] .checklist__box:checked + .checklist__mark rect {
-  fill: var(--color-faint);
-  stroke: var(--color-faint);
-}
-
-/* Use this list · Regenerate, on the header's right. */
+/* The cleaned view's Regenerate, on the header's right. */
 .cleaned__actions {
   display: flex;
   flex-wrap: wrap;

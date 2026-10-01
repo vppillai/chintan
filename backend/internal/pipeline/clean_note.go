@@ -112,6 +112,12 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 	// has already set cleaned_stale on the row, but this run is about to
 	// overwrite that row with a view of the OLDER body, so the flag has to be
 	// derived from what was actually cleaned rather than copied from the row.
+	//
+	// The row's version is kept too, read before the body: an append that
+	// lands after the ETag re-read below but before this run's row write
+	// still bumps the version, and that write would otherwise store the view
+	// of the older body as current over the append's stale mark.
+	versionAtRead := note.Version
 	raw, etag, err := p.cfg.Objects.GetWithETag(ctx, note.S3MarkdownKey)
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return fmt.Errorf("pipeline: clean-note: get note body: %w", err)
@@ -209,7 +215,7 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 		n.CleanedBody = text
 		n.CleanedMode = mode
 		n.CleanedAt = model.FormatTime(p.now())
-		n.CleanedStale = stale
+		n.CleanedStale = stale || n.Version != versionAtRead
 		n.CleanedError = ""
 	})
 	if err != nil {
@@ -372,7 +378,15 @@ func (p *Pipeline) autoCleanAfterAppend(ctx context.Context, tenantID string, no
 // worker regenerates a view of its own accord: after an append to a note with
 // auto_clean, and after a regeneration of a note that has a view. trigger is
 // the NoteCleanRequested dimension.
+//
+// Never for a checklist (R8-F8): its items are split at capture, so a view
+// regenerated after each recording was a model call for a proposal nobody
+// adopted. A checklist is tidied only when asked ("Tidy up list"), and an
+// old row that still says auto_clean is ignored rather than refused.
 func (p *Pipeline) cleanNoteAfter(ctx context.Context, tenantID string, note model.NoteIndex, trigger string) {
+	if note.Kind == model.NoteKindChecklist {
+		return
+	}
 	mode := service.EffectiveCleanMode(note)
 	stamped, _, err := service.RecordCleanRequest(ctx, p.cfg.Store, tenantID, note, mode, p.now(), false)
 	if err != nil {

@@ -32,7 +32,9 @@ export function cleanPollInterval(elapsedMs: number): number | false {
 export const CLEANED_MODE_LABELS: Record<CleanedMode, string> = {
   structured: 'Structured',
   polished: 'Polished',
-  tasks: 'Split up',
+  // Only ever seen on a plain note converted back from a checklist that was
+  // tidied: the view it still carries is that list (R8-F8).
+  tasks: 'Tidied list',
 };
 
 /**
@@ -52,16 +54,18 @@ export const CLEANED_MODE_HINTS: Record<CleanedMode, string> = {
 /**
  * Whether the worker has answered a regeneration that was queued while the
  * view looked like `before`: a view where there was none, a new
- * `generated_at`, a stale view made current, or an error to show.
+ * `generated_at`, a stale view made current, or a new error to show.
  */
 export function cleanSettled(
   before: CleanedWire | null,
   after: CleanedWire | null | undefined,
 ): boolean {
   if (!after) return false;
-  if (after.error) return true;
   if (!before) return true;
   if (after.generated_at !== before.generated_at) return true;
+  // Only a new error: the one the view already carried is the last run's,
+  // and taking it for this run's answer settled every retry at once.
+  if (after.error && after.error !== before.error) return true;
   return before.stale && !after.stale;
 }
 

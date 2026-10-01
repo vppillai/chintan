@@ -44,7 +44,7 @@ constants.
 | Cleanup | Clean one transcript faithfully as it is appended | `cleanup.SystemPrompt()`, `cleanup.UserPrompt` (`backend/internal/cleanup/prompt.go`) | the cleaned text | none (as long as the recording) |
 | Checklist items | The items one recording adds to a checklist, grouped as spoken | `cleanup.ItemsPrompt` (`backend/internal/cleanup/items.go`), composing the shared `checklistItemRules` | `{"items":[{"text","children"}]}` → `cleanup.ParseItems` (a one-level tree, `cleanup.Item`) | 4× the input, floor 768 |
 | Whole-note, structured / polished | The Cleaned tab: the whole body as one document | `cleanup.NotePrompt(mode, body, language)` (`cleanup/prompt.go`) | Markdown → `cleanup.NoteOutput` | 1.5× the input, floor 256 |
-| Whole-note, tasks | Split up: the list as it stands → the list it was meant to be | `cleanup.TasksPrompt(body, title, language)`, `noteTasksSystemPrompt`, composing `checklistItemRules` | `{"items":[{"text","done","children"}]}` → `cleanup.SplitOutput` | 3× the input, floor 512 |
+| Whole-note, tasks | Tidy up list (once the Split up tab): the list as it stands → the list it was meant to be | `cleanup.TasksPrompt(body, title, language)`, `noteTasksSystemPrompt`, composing `checklistItemRules` | `{"items":[{"text","done","children"}]}` → `cleanup.SplitOutput` | 3× the input, floor 512 |
 | Ask | Answer a question from the person's notes | `ask.Prompt.Render` (`backend/internal/ask/ask.go`) | `{"answer","sources","grounded"}` → `ask.ParseAnswer` | 3,000 tokens |
 
 One prompt went on 2026-09-27 (round-5 decisions, PR-D5): the per-capture
@@ -53,6 +53,9 @@ drifted between recordings while the whole-note Polished view already does
 the job on the whole. The whole-note *tasks* mode (the checklist's Split up
 tab) was proposed for deletion in the same round (PR-D4) and the owner
 reversed that on 2026-09-29: it stays, and improving it is a round-6 item.
+Round 8 (F8) moved it out of its tab into the ⋮ menu's Tidy up list, which
+writes the answer into the body with Undo, and stopped `auto_clean` running
+it after each recording.
 
 ### Routing
 
@@ -305,7 +308,7 @@ view stale; a later request in another mode supersedes the run. **Metrics:**
 
 ### Whole-note (tasks)
 
-The checklist's mode (Split up), the same call path as above
+The checklist's mode (Tidy up list; the Split up tab before round 8), the same call path as above
 (`Pipeline.CleanNote`) with its own prompt, user prompt and cap. **Sent:**
 "the list as it stands → the list it was meant to be": the body's format
 (one item a line, `- [ ] ` / `- [x] `, a sub-item two spaces in, two more for

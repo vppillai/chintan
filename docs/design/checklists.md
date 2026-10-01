@@ -90,7 +90,7 @@ the raw syntax and was rewritten to `- [ ]   - [x] Candles` on the first
 save. The worker used to append at the end of the body with no indent, so
 a filed item was top level by construction; since 2026-09-29 it writes a
 group the person spoke — "eggs from Walmart" — as a parent line with its
-things two spaces in ("The append rule" below), and Split up proposes the
+things two spaces in ("The append rule" below), and Tidy up list writes the
 list in the same shape. The editor gives a new item the depth of the item
 it follows, nests and un-nests on request ("Sub-items" below), and a moved
 item takes the depth of the slot it lands in and carries its sub-items with
@@ -127,7 +127,7 @@ is the extraction's `maxDepth` and one prompt sentence, gated by
 `TestLiveEval/items`),
 `{"items":[{"text":"Walmart","children":[{"text":"Eggs"}]},{"text":"Milk"}]}`.
 What an item is lives in one rule block, `cleanup.checklistItemRules`,
-shared with Split up's prompt (`docs/design/prompts.md`): one thing the
+shared with the tasks prompt behind Tidy up list (`docs/design/prompts.md`): one thing the
 person wants, in their own words, language and script, quantity kept; every
 word about the list rather than on it left out — "add", "to my list", the
 list's own name, also when the recording opens with that name to file it
@@ -141,7 +141,7 @@ returned as spoken; garbling fixed and fillers dropped, nothing else
 changed, nothing lost. A model that answers the old shape, bare strings,
 still parses as flat items; a grandchild is flattened into the children,
 after its parent. "One level only: a child has no children" is the items
-prompt's own rule, not the shared block's, so Split up can keep a list's
+prompt's own rule, not the shared block's, so Tidy up list can keep a list's
 three levels. It runs in the `cleaning` status, under the cleanup
 op and deadline, and stores the tree one line per item at `clean_key`, a
 child's line two spaces in per level (`cleanup.RenderItems`), so a retry does
@@ -354,8 +354,7 @@ the owner's `Add milk, eggs and protein powder to the shopping list` into
 2026-09-29).
 
 The answer is checked against the body rather than trusted
-(`cleanup.SplitOutput`), because adopting the view (the first act in Split
-up, or Use this list) writes it over the body:
+(`cleanup.SplitOutput`), because Tidy up list writes it over the body:
 
 - it must parse as items (`ParseItems`' shape, at most 500 counting
   sub-items, nested at most three levels, a deeper item flattened into the
@@ -398,7 +397,9 @@ The stored view is task-list lines, two spaces of indent per level, in
 `cleaned_body` as before; `stale` and `auto_clean` are unchanged. The owner
 decided on 2026-09-29 to keep Split up and improve it — this is round 6's
 half of that (`docs/backlog.md`, "Round 6"); the round-5 proposal to drop it
-(PR-D4) was reversed before it merged.
+(PR-D4) was reversed before it merged. Round 8 (F8) kept the mode and moved
+it out of a tab into Tidy up list ("Tidy up" below), and turned
+`auto_clean` off for a checklist.
 
 ## Editing the list
 
@@ -550,7 +551,7 @@ together on release; a parent dropped one slot down stands on its own
 sub-item's slot, which the draft can show but nothing can mean, and it goes
 back where it was rather than past the next row as the menu's step would
 (a drag is placed by eye, and a jump past what the eye placed it on is the
-surprise). The worker and Split up write the person's own groups as
+surprise). The worker and Tidy up list write the person's own groups as
 sub-items ("The append rule"); export and the search text are unchanged.
 
 Done items keep their line where it stands; the Done section is the view's
@@ -562,7 +563,7 @@ flips every `[x]` to `[ ]` in place (`uncheckAll`). Delete done drops every
 done line, and a done parent's sub-items with it (`removeDone`), and offers
 Undo in the shell's toast for six seconds — no typed word and no dialog
 (OF-DEL): Undo writes the previous body back and saves, unless the list
-changed since (see Split up). A tick, which moves the row out of sight
+changed since (see Tidy up). A tick, which moves the row out of sight
 into Done, offers an Undo for four seconds as "<item> done" (R7-13), the
 item's words cut at forty characters: Undo writes the body from before the
 tick back, so the row returns to its place, and only while the body is
@@ -571,7 +572,7 @@ it says "The list changed since — nothing undone." rather than undo that
 act too. So only the last tick is undoable. Reopening a done row offers
 none, and the status line still says "Marked done". The tick's toast is
 weak (`ToastNotice.weak`): it never takes the place of a standing Delete
-done or adoption Undo, so a tick right after Delete done leaves that Undo
+done or Tidy Undo, so a tick right after Delete done leaves that Undo
 standing, and the tick is said by the status line alone. Done rows have no grip, because their order
 is the body's and nothing shows it; a drag among them would move lines
 whose places are invisible.
@@ -602,51 +603,60 @@ does not exist and the menu is two taps away — so the handle that already
 moves a row moves it sideways too, with the axis decided in the first 10 px
 and a preview before anything is written ("Editing the list" above).
 
-### Split up
+### Tidy up
 
-The Split up tab shows the worker's `tasks` proposal in the Items editor
-itself — the same rows, grips, boxes, fields, add row and Done (decision
-R6-CL-D1, option a, 2026-09-29) — so the proposal can be read as it would be
-lived with, and taken with whatever act comes first. The first act there — a
-tick, a drag, a Tab, a keystroke — replaces the body with the proposal and
-applies that act in the same save; the caption above the rows says so
-("Ticking, moving or editing here replaces your list with the split
-version."), Use this list takes it outright, and either way the shell's
-toast offers Undo for six seconds (the OF-DEL pattern: no question first for
-what can be undone), which writes the body as it stood back, saves, and
-shows the proposal again until the note refetches: neither save wrote the
-view itself (`service/notes.go` clears `stale` only for a body byte-equal to
-it, trailing whitespace aside, and the adopted body has the act applied), so
-from the next refetch — the detail query's 30 s `staleTime`, or reopening
-the note — the tab shows the stale notice over inert rows, and Use this list
-still takes the proposal. From then on the tab shows the body — the split
-list with the changes made since (`adoptedSplits`, per proposal) — and an
-act there is an ordinary edit, saved as the Items tab saves it. A proposal
-older than the note, and one a regeneration is about to replace, is drawn
-`inert` (one attribute on the wrapper, not a prop through every control)
-with the stale notice above it, until Regenerate or Use this list; a stale
-proposal taken by an act would put a list that predates the note's later
-changes over the body in one save. `inert` also removes the rows from the
-accessibility tree — the disabled boxes before round 6 could still be read
-by a screen reader; a stale or pending proposal cannot — so a screen-reader
-user has the stale notice for why, and Use this list and Regenerate as the
-two controls left. Delete done as the first act adopts like any other: the
-editor shows its own "N done items deleted" toast before it writes, so the
-adoption's toast lands last and is the one standing, and its Undo restores
-the list as it stood (DB6-2). Either Undo — the adoption's, and Delete
-done's in the editor — refuses when the note's body is no longer what that
-Undo's act wrote, saying "The list changed since — nothing undone." rather
-than writing a captured body over a recording that filed in by refetch
-inside the six seconds. The body it compares is read from the note editor's
-own mirror (`NoteEditor.current`, handed to the editor as `currentBody`),
-not from the panel or the editor: the toast is the shell's and stands
-through a tab switch, which unmounts them, so a body they mirrored would
-stay equal to the one they last wrote and the Undo would go through. The
-person's own acts since do not block it, so Undo still takes back the
-adoption and the ticks since (DB6-3). The editor is `{ noteId, body,
-currentBody, onChange, onSave }` and knows nothing of whose body it is: the
-Items tab hands it the note editor, Split up hands it `adopt`. The find bar
-still counts nothing in this tab.
+A checklist has two tabs, Items · Recordings (R8-F8, 2026-09-30, superseding
+R6-CL-D1 a). The Split up tab — the worker's `tasks` proposal drawn in a
+second Items editor, whose first act replaced the body — is gone, and with
+it `adoptedSplits`, the `inert` stale rows, the caption and Use this list. A
+remembered or linked `?tab=cleaned` on a checklist lands on Items.
+
+In its place the ⋮ menu has **Tidy up list** (after Pin; only for a
+checklist with an open item; off offline and while one runs, when it reads
+"Tidying…"). It calls the same `POST /v1/notes/{id}/clean`, where the
+server picks `tasks` for a checklist, and keeps the request in module state
+(`useTidyList.ts`: the view as it was, and when), so it survives a tab
+switch and leaving the note within the session. "Tidying the list…" stands
+above the rows, which stay editable. The note is polled on the
+`cleanPollInterval` ladder by a timer of its own — TanStack restarts an
+observer's `refetchInterval` on every update to the query, and a filing
+recording's poll rewrites the note every 1.5 s — until `cleanSettled`, then
+one of four things happens:
+
+- **Fresh** (`!stale`, the editor's body equal to the server's, mode
+  `tasks`): the view is written as the body and saved, and the toast says
+  "List tidied: N lines → M items." with Undo for six seconds (OF-DEL). Undo
+  writes the list back, under the `UNDO_STALE` rule: it refuses when the
+  body is no longer the tidied one ("The list changed since — nothing
+  undone."), read from the note editor's own mirror (`NoteEditor.current`)
+  because the toast outlives any panel.
+- **The same** (equal to the body, trailing whitespace aside): "Already
+  tidy." and no write.
+- **Changed meanwhile** (stale, or a draft that differs): "The list changed
+  while tidying — nothing replaced." with Tidy again.
+- **Failed** (`cleaned_error`, a refused request, or a minute with no
+  answer): "Couldn't tidy the list." with Try again.
+
+There is no preview before it lands; the Undo is the preview, and
+`SplitOutput`'s guards (below) refuse an answer that drops, invents or
+re-ticks an item. The result is applied only by the device that asked, and
+only while the list is unchanged; elsewhere it sits unused in
+`cleaned_body`.
+
+**Prose to list.** The Details switch PATCHes `kind: checklist` with the
+`proseToChecklist` body exactly as before, so no word is lost; once that
+save has landed, and if any item has two or more words, it starts a tidy.
+Its toast reads "Made a checklist: N paragraphs → M items.", and Undo gives
+back the paragraph items. A list turned back into prose before the answer
+lands drops it.
+
+**No auto-clean for a checklist.** `auto_clean` is ignored for a checklist
+— stored, not refused, so an old row is harmless — in both places the
+worker regenerates a view of its own accord (`pipeline.cleanNoteAfter`,
+after an append or a regeneration, and `service.autoCleanAfterBodyWrite`,
+after a recording is moved or deleted): its items are split at capture
+(`extractItems`), so a view per recording was a model call for a proposal
+nobody adopted.
 
 ## Why the body stays the single source of truth
 

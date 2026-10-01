@@ -57,8 +57,10 @@ query carried into the next note is one the user may want there too.
 
 ## The three tabs
 
-Text · Cleaned · Recordings (N); on a checklist note, Items · Split up ·
-Recordings (N). The count includes an upload still on its way. `useNoteTab`
+Text · Cleaned · Recordings (N); on a checklist note, Items · Recordings (N)
+— no Cleaned tab, since Tidy up list in the ⋮ writes the `tasks` view into
+the body (R8-F8, `checklists.md` "Tidy up"), and a `?tab=cleaned` there
+lands on Items. The count includes an upload still on its way. `useNoteTab`
 decides which is open: the URL's `?tab=` first — a deep link is an explicit
 request, and the capture screen's "Record into this" lands on
 `?tab=recordings` — then the tab this session last used for the note

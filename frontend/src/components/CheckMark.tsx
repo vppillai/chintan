@@ -25,7 +25,7 @@ export function Check({ checked, name, onChange }: { checked: boolean; name: str
 /**
  * The box a finger sees, on its own: the `.checklist__box` input before it
  * in the same label is what the stylesheet reads the state from, so any
- * label built that way — the Items rows, the Split up rows, the switches in
+ * label built that way — the Items rows, the switches in
  * the Cleaned tab and Details — shows the one drawn box.
  */
 export function CheckMark() {

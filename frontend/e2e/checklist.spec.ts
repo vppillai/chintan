@@ -14,8 +14,8 @@ function values(list: Locator): Promise<string[]> {
 /**
  * Checklist notes, end to end against the stubbed API: the Checklists chip
  * on Home, the Items tab with its open and done rows, the Details switch
- * that converts a note and sends `kind` with the body, and the Split up tab
- * whose one mode the server applies unasked.
+ * that converts a note and sends `kind` with the body, and Tidy up list in
+ * the ⋮, whose one mode the server applies unasked.
  */
 
 test('Home has a Checklists chip after All that filters the library through the URL', async ({
@@ -54,7 +54,7 @@ test('the Items tab ticks, adds, edits and deletes items through the note’s ow
   seedShopping(api);
   await page.goto('/notes/shopping');
   const tabs = page.getByRole('tablist', { name: 'Note views' }).getByRole('tab');
-  await expect(tabs).toHaveText(['Items', 'Split up', 'Recordings (0)']);
+  await expect(tabs).toHaveText(['Items', 'Recordings (0)']);
   await expect(page.getByText('1 of 3 done')).toBeVisible();
 
   const items = page.getByRole('list', { name: 'Items' });
@@ -128,91 +128,33 @@ test('Details turns a note into a checklist and back, sending kind with the conv
   await expect.poll(() => api.notes['roof-repair']?.kind).toBe('note');
 });
 
-test('Split up has no mode picker, and is the Items editor over the proposal: the first tick adopts the split list, with Undo; later acts edit it', async ({
+test('Tidy up list in the ⋮ writes the split list into the body, with Undo that puts the list back', async ({
   page,
   api,
 }) => {
   seedShopping(api);
+  // A remembered or linked Cleaned tab lands on Items: a checklist has none.
   await page.goto('/notes/shopping?tab=cleaned');
-  await expect(page.getByRole('tab', { name: 'Split up' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('group', { name: 'Cleaned view mode' })).toHaveCount(0);
-  await expect(page.getByText('Not split up yet')).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Items' })).toHaveAttribute('aria-selected', 'true');
+  const items = page.getByRole('list', { name: 'Items' });
+  await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
 
-  await page.getByRole('button', { name: 'Generate' }).click();
-  // The real editor over the proposal: grips, fields, the add row, Done.
-  const split = page.getByRole('region', { name: 'Split up' });
-  const rows = split.getByRole('list', { name: 'Items' });
-  await expect(rows).toBeVisible({ timeout: 10_000 });
-  await expect.poll(() => values(rows)).toEqual(['Milk', 'Bread', 'butter', '']);
-  await expect(rows.getByRole('button', { name: /^Move / })).toHaveCount(3);
-  await expect(split.getByRole('region', { name: 'Done (1)' }).getByRole('checkbox', { name: 'Eggs' })).toBeChecked();
-  await expect(page.getByText(/generated just now · split up/i)).toBeVisible();
-  const caption = page.getByText('Ticking, moving or editing here replaces your list with the split version.');
-  await expect(caption).toBeVisible();
+  await noteAction(page, 'Tidy up list');
+  await expect(page.locator('.checklist-editor__status')).toHaveText('Tidying the list…');
   // The request named no mode; the server applied `tasks` itself.
   const clean = api.requests.find((r) => r.method === 'POST' && r.url === '/v1/notes/shopping/clean');
   expect(clean).toBeTruthy();
 
-  // No native box anywhere: the control is a real checkbox hidden under its
-  // 44 px label, and the box beside it is drawn.
-  const butter = rows.getByRole('checkbox', { name: 'butter' });
-  await expect(butter).toHaveCSS('opacity', '0');
-  const target = await butter.locator('..').boundingBox();
-  expect(target?.height).toBeGreaterThanOrEqual(44);
-  expect(target?.width).toBeGreaterThanOrEqual(44);
+  // The rows are replaced in place, Eggs still done, and the body saved once.
+  await expect.poll(() => values(items), { timeout: 10_000 }).toEqual(['Milk', 'Bread', 'butter', '']);
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [ ] butter');
+  expect(saves(api)).toBe(1);
+  await expect(page.getByText('List tidied: 3 lines → 4 items.')).toBeVisible();
+  await expect(page.locator('.checklist-editor__status')).toHaveCount(0);
 
-  // The first tick adopts the split list and ticks butter, in one PATCH, and
-  // Undo waits in the shell's toast.
-  await butter.click();
-  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [x] butter');
-  expect(api.requests.filter((r) => r.method === 'PATCH' && r.url === '/v1/notes/shopping')).toHaveLength(1);
-  await expect(split.getByRole('region', { name: 'Done (2)' }).getByRole('checkbox', { name: 'butter' })).toBeChecked();
-  await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
-  await expect(caption).toHaveCount(0);
-  await expect(page.getByText(/your list · split up just now/i)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Use this list' })).toHaveCount(0);
-
-  // The next act edits the body it made, not another replacement: the ×
-  // under a done item deletes it, and butter stays done.
-  await split.getByRole('button', { name: 'Delete Eggs' }).click();
-  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [ ] Bread\n- [x] butter');
-
-  // Away and back, the tab shows the body, still ticked; Regenerate stays and
-  // Use this list does not: the body already is this list.
-  await page.getByRole('tab', { name: 'Items' }).click();
-  await expect.poll(() => values(page.getByRole('list', { name: 'Items' }))).toEqual(['Milk', 'Bread', '']);
-  await page.getByRole('tab', { name: 'Split up' }).click();
-  await expect(split.getByRole('region', { name: 'Done (1)' }).getByRole('checkbox', { name: 'butter' })).toBeChecked();
-  await expect(page.getByText('Ticking, moving or editing here replaces your list with the split version.')).toHaveCount(0);
-  await expect(page.getByText('The note changed since this was generated.')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Use this list' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Regenerate' })).toBeVisible();
-});
-
-test('a stale proposal on Split up is drawn as what it is, inert: its words and boxes take the tertiary ink', async ({
-  page,
-  api,
-}) => {
-  seedShopping(api);
-  // Split before the note's last change, as the server marks it.
-  api.notes['shopping']!.cleaned = {
-    body: '- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [ ] butter',
-    mode: 'tasks',
-    generated_at: new Date().toISOString(),
-    stale: true,
-  };
-  await page.goto('/notes/shopping?tab=cleaned');
-  const split = page.getByRole('region', { name: 'Split up' });
-  await expect(split.getByText('The note changed since this was generated.')).toBeVisible();
-  const body = split.locator('.cleaned__body');
-  await expect(body).toHaveAttribute('inert', '');
-  // A browser gives inert content no look of its own (DB6-20): the rows read
-  // as the add row's plus does, the tertiary ink, not as live ink and boxes.
-  const faint = await body.locator('.checklist__add-mark').evaluate((el) => getComputedStyle(el).color);
-  await expect(body.locator('textarea.checklist__text').first()).toHaveCSS('color', faint);
-  await expect(body.locator('.checklist__mark').first()).toHaveCSS('color', faint);
-  // The done row's box is filled, not only coloured: the fill is that ink too.
-  await expect(body.locator('.checklist__box:checked + .checklist__mark rect')).toHaveCSS('fill', faint);
+  await page.getByRole('button', { name: 'Undo' }).click();
+  await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [x] Eggs\n- [ ] Bread and butter');
 });
 
 /** The PATCHes the note has received. */
@@ -612,12 +554,9 @@ for (const viewport of SHOT_VIEWPORTS) {
       await expect(page.getByRole('heading', { name: 'Done (2)' })).toBeVisible();
       await shot('items');
 
-      await page.getByRole('tab', { name: 'Split up' }).click();
-      await page.getByRole('button', { name: 'Generate' }).click();
-      await expect(page.getByRole('region', { name: 'Split up' }).getByRole('list', { name: 'Items' })).toBeVisible({
-        timeout: 10_000,
-      });
-      await shot('split-up');
+      await noteAction(page, 'Tidy up list');
+      await expect(page.getByText(/^List tidied:/)).toBeVisible({ timeout: 10_000 });
+      await shot('tidied');
     });
   }
 }

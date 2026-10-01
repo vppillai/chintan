@@ -428,3 +428,30 @@ func TestADetailsSaveWithTheSameBodyDoesNotMarkTheViewStale(t *testing.T) {
 		t.Error("a save with the same body marked the cleaned view stale")
 	}
 }
+
+// A checklist's auto_clean is ignored (R8-F8): deleting a recording still
+// marks the view stale, but no clean is handed over — a checklist is tidied
+// only when asked.
+func TestDeletingARecordingDoesNotAutoCleanAChecklist(t *testing.T) {
+	h := newEditHarness(t)
+	worker := &stubInvoker{}
+	h.captures.WithInvoker(worker)
+
+	n := h.note("u", "Shopping", CaptureMarker("c_1")+"\n- [ ] milk\n\n"+CaptureMarker("c_2")+"\n- [ ] eggs")
+	n.Kind = model.NoteKindChecklist
+	if _, err := h.store.PutNote(h.ctx, "u", n); err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
+	n = h.withCleanedView("u", n, true, "")
+	h.appended("u", n.ID, "c_1", "2026-01-01T09:00:00.000000000Z")
+	h.appended("u", n.ID, "c_2", "2026-01-01T10:00:00.000000000Z")
+	if err := h.captures.DeleteCapture(h.ctx, "u", "c_1"); err != nil {
+		t.Fatalf("DeleteCapture: %v", err)
+	}
+	if !h.get("u", n.ID).CleanedStale {
+		t.Error("the view was not marked stale")
+	}
+	if len(worker.calls) != 0 {
+		t.Errorf("worker was invoked %v for a checklist", worker.calls)
+	}
+}

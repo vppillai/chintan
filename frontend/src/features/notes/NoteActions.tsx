@@ -20,10 +20,12 @@ import { isStuck } from '@/features/capture/filing/model.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 
 import type { NotePanelKind } from './NoteDrawer.tsx';
+import { parseChecklist } from './checklist.ts';
+import { useStartTidy, useTidying } from './useTidyList.ts';
 
 /**
- * The note's actions: Details · Share · Pin (or Unpin) · Regenerate from
- * recordings… · Delete (or Restore · Delete forever), behind the ⋮ in the
+ * The note's actions: Details · Share · Pin (or Unpin) · Tidy up list (a
+ * checklist's) · Regenerate from recordings… · Delete (or Restore · Delete forever), behind the ⋮ in the
  * header, and the two disclosures they open in a drawer at the foot of the
  * screen. Pin is here as well as on the row (2026-09-24, B) because the note
  * is where the person decides it is worth keeping at the top; an archived
@@ -105,6 +107,13 @@ export function NoteMenu({
   // said one — and a zero with no line under the menu looks like nothing
   // happened.
   const nothingToRegenerate = regenerate.isSuccess && regenerate.data.captures === 0;
+  // Tidy up list (R8-F8, `useTidyList.ts`): only for a checklist with an open
+  // item, since the model splits and groups what is still to do; off while
+  // one runs and offline, like Regenerate.
+  const startTidy = useStartTidy();
+  const tidying = useTidying(note.id);
+  const tidyable =
+    note.kind === 'checklist' && parseChecklist(note.body).some((item) => !item.done);
 
   const busy =
     archive.isPending ||
@@ -129,6 +138,17 @@ export function NoteMenu({
               pin.mutate({ note, pinned: !note.pinned });
             },
           },
+          ...(tidyable
+            ? [
+                {
+                  label: tidying ? 'Tidying…' : 'Tidy up list',
+                  disabled: busy || !online || tidying,
+                  onSelect: () => {
+                    startTidy(note.id);
+                  },
+                },
+              ]
+            : []),
           {
             label: regenerating ? 'Regenerating…' : 'Regenerate from recordings…',
             disabled: busy || !online || regenerating || regenerable === 0,

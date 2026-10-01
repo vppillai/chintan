@@ -23,10 +23,11 @@ import {
   uncheckAll,
   type ChecklistItem,
 } from './checklist.ts';
+import { useTidying } from './useTidyList.ts';
 
 /**
- * A checklist body as rows to tick off: the Items tab, and the Split up tab
- * over its proposal.
+ * A checklist body as rows to tick off: the Items tab. While a Tidy up list
+ * runs (`useTidyList`) a status line above the rows says so.
  *
  * Open items first, in body order, each a grip, a real checkbox and a text
  * field that wraps and grows with its words (`ChecklistRow`); an "Add an
@@ -97,9 +98,8 @@ import {
  * Every change is one `onChange(body)`, and a tick, a move and a delete
  * call `onSave` at once, as a discrete act does, while typing saves on blur.
  * The Items tab hands those to the note editor, so a change rides the note's
- * own autosave, conflict prompt and offline queue; the Split up tab hands
- * them to `adopt`, which makes the first of them replace the body with the
- * proposal. Nothing here knows about the server, or whose body this is.
+ * own autosave, conflict prompt and offline queue. Nothing here knows about
+ * the server, or whose body this is.
  *
  * Keyboard: Enter in an item starts a new one under it — a parent's first
  * sub-item when it has any (`insertItemAfter`); Backspace in an emptied item
@@ -132,6 +132,7 @@ export function ChecklistEditor({
   onSave: () => void;
 }) {
   const items = useMemo(() => parseChecklist(body), [body]);
+  const tidying = useTidying(noteId);
   const hintId = useId();
   const fieldHintId = useId();
   const [announcement, setAnnouncement] = useState('');
@@ -222,10 +223,8 @@ export function ChecklistEditor({
      * A tick moves the row out of sight into Done, so a mistaken one gets an
      * Undo (R7-13). Shorter than Delete done's toast: a tick is small, and
      * the next tick replaces it, so only the last tick is undoable. Weak: it
-     * never takes the place of a standing Delete done or adoption Undo,
-     * which would leave those items with no way back. The toast goes before
-     * the write for the same reason as Delete done's: in Split up the write
-     * is the adoption, whose own toast must land last. Undo writes the whole
+     * never takes the place of a standing Delete done or Tidy Undo, which
+     * would leave those items with no way back. Undo writes the whole
      * body back, so the row returns to its place — and only while the body
      * is still exactly the tick's: after any later act, the person's own
      * included, it refuses rather than undo that act too.
@@ -522,12 +521,6 @@ export function ChecklistEditor({
     const previous = body;
     const count = done.length;
     const message = `${String(count)} done item${count === 1 ? '' : 's'} deleted`;
-    // The toast before the write. In Split up the write is the adoption,
-    // whose own toast then lands last and is the one left standing: its
-    // Undo restores the list as it stood before the proposal, which this
-    // one cannot, and `showToast` replaces whatever was showing, so shown
-    // after it this one would have hidden it (DB6-2). In the Items tab the
-    // order is invisible.
     showToast({
       message,
       action: {
@@ -561,6 +554,16 @@ export function ChecklistEditor({
           </p>
         </>
       )}
+      {/* Seen above the rows; heard through a live region that is always
+          mounted, since one inserted with its text is often not announced. */}
+      {tidying && (
+        <p className="checklist-editor__status" aria-hidden="true">
+          Tidying the list…
+        </p>
+      )}
+      <p className="visually-hidden" role="status">
+        {tidying ? 'Tidying the list…' : ''}
+      </p>
       <ul
         ref={listRef}
         className="checklist"
