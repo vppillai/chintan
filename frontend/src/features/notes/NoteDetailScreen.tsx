@@ -67,19 +67,20 @@ import { useNoteEditor, type NoteEditor } from './useNoteEditor.ts';
  * A note.
  *
  * Top to bottom: the way back with Find and the note's ⋮ menu, the title, one
- * line of metadata, then a strip of segments — Text · Cleaned · Recordings (N)
- * — and the one panel it selects. The strip sticks under the banner while the
+ * line of metadata, then a strip of segments — Text · Cleaned · Recordings (N),
+ * or Items · Recordings (N) for a checklist — and the one panel it selects. The strip sticks under the banner while the
  * panel scrolls, so the recordings are one tap away from anywhere in a long
  * note rather than a screen or five below its last paragraph, which is where
  * they sat when body and recordings were one page. The text is the document;
  * the cleaned view is the worker's rewrite of the whole of it; the recordings
  * are its sources.
  *
- * Nothing else stands between the strip and the tab bar: the action bar that
- * did (Details · Share · Archive · Record into this) took a third of a phone
- * with the header and the meta, and its Record sat 30 px above the tab bar's
- * mic. The mic records into this note while it is open, and the three actions
- * are in the header's menu (review 2026-09-21, T6).
+ * No action bar stands between the strip and the tab bar: the one that did
+ * (Details · Share · Archive · Record into this) took a third of a phone with
+ * the header and the meta, and its Record sat 30 px above the tab bar's mic.
+ * The mic records into this note while it is open, the actions are in the
+ * header's ⋮ menu (review 2026-09-21, T6), and Details and Share open as a
+ * sheet at the foot (`NoteDrawer`), where the conflict banner also stands.
  */
 export function NoteDetailScreen() {
   const { id } = useParams<{ id: string }>();

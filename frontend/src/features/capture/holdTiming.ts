@@ -5,8 +5,9 @@
  * runner cannot load, and a literal there drifted from the constant here.
  *
  * Distances are measured from the press point, not the disc's edge. Measured
- * from the edge of the old `/talk` disc, a slide-to-cancel needed 80 px
- * beyond a disc as wide as the phone, which is off the screen (R8, F6).
+ * from the edge of the retired full-screen talk disc, which was as wide as
+ * the phone, a slide-to-cancel needed 80 px beyond it — off the screen (R8,
+ * F6).
  */
 
 /** A press longer than this is a hold; a shorter one is a tap. */

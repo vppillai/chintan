@@ -157,7 +157,7 @@ export function Recordings({
   useEffect(() => {
     onSelectingChange?.(selecting);
     // Leaving the panel mid-selection — another tab, another note — ends
-    // the selection, and the screen's action bar has to be told to come back.
+    // the selection, and the screen's drawer has to be told to come back.
     return () => {
       onSelectingChange?.(false);
     };
