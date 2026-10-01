@@ -90,7 +90,3 @@ func CaptureIsPending(s model.CaptureStatus) bool {
 		return false
 	}
 }
-
-// SanitizeTitle bounds a dictated title to one line. Exported for the worker,
-// which honours titles the router took from speech.
-func SanitizeTitle(title string) string { return sanitizeNoteTitle(title) }

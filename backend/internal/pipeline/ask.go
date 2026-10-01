@@ -31,7 +31,7 @@ const TaskAsk = "ask"
 // provider's words or anything from a note.
 const (
 	askProviderFail = "the answer could not be produced; try again"
-	askSpendCapped  = "daily provider spend cap reached"
+	askSpendCapped  = spendCappedVerdict
 	askTooLong      = "the answer was too long"
 )
 

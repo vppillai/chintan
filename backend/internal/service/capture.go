@@ -14,6 +14,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/routing"
 	"github.com/vppillai/chintan/backend/internal/upload"
 )
 
@@ -639,7 +640,7 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 		return &capture, ErrCaptureInFlight
 	}
 
-	newNoteTitle = sanitizeNoteTitle(newNoteTitle)
+	newNoteTitle = routing.SanitizeTitle(newNoteTitle)
 
 	switch {
 	case noteID != "":

@@ -19,14 +19,6 @@ type Span struct {
 	EndWord   int `json:"end_word"`
 }
 
-// MaxInstructionWords bounds how many words the router may remove in total.
-//
-// A routing or naming instruction is a few words ("add this to my roof repair
-// note", "create a note titled Portugal trip"); a span much longer than that is
-// the router mistaking dictation for instruction, and dictation removed from
-// the note is lost while a stray instruction word in it is trivial to fix.
-const MaxInstructionWords = 24
-
 var (
 	// ErrSpanMalformed means a span does not describe this transcript: a
 	// negative or out-of-range index, or an end that is not after its start.

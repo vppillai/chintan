@@ -34,7 +34,7 @@ const (
 	cleanNoteTooLong       = "the note is too long to clean as one document (limit 150 KB)"
 	cleanNoteOutputTooLong = "the cleaned text was too long to store (limit 200 KB)"
 	cleanNoteUnusable      = "the cleanup model returned nothing usable"
-	cleanNoteSpendCapped   = "daily provider spend cap reached"
+	cleanNoteSpendCapped   = spendCappedVerdict
 	cleanNoteProviderFail  = "the cleanup provider failed; try again"
 )
 
