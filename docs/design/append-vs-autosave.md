@@ -110,6 +110,25 @@ is a plain 409 and the normal conflict prompt is the right outcome. The reason
 is a fixed string the frontend matches, like `type` for the spend cap. Fixture:
 `problemAppendInProgress` in `frontend/src/api/__fixtures__/responses.ts`.
 
+## The version the editor saves on (#201)
+
+The editor's PATCH carries the note's `version`, and three things bump it
+without touching the words: a clean request the moment it is accepted, the
+worker's answer to it, and the poll that brings either. `useNoteEditor.ts`
+therefore has one rule in three places: **the version moves only when the
+words did not.** The sync effect, on a newer `note`, resets a settled editor
+to it, and otherwise rebases the draft onto the new version when the
+server's text is what this editor last saved (`sameText`); the 409 path
+fetches the server's copy and, under the same test, rebases and resends once
+(`rebased`); and `adopt(fresh)` is that rule on demand, for a caller holding
+a copy it knows is the server's own. `useApplyTidy` (`useTidyList.ts`) is
+that caller: a child's effect runs before the editor's own sync effect has
+seen the poll that brought the tidy's answer, so writing the answer and
+saving left on the pre-clean version and came back 409 before every Tidy
+(R8-P1, the live QA of 30 September) — it adopts the poll's copy first. A
+real change on the server, words and all, still meets the version check and
+the conflict prompt.
+
 ## What is still open
 
 A worker killed between the stamp and the body write leaves the stamp on the

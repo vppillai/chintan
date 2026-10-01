@@ -24,7 +24,8 @@ const TaskRegenerateNote = "regenerate-note"
 
 // RegenerateNote re-cleans noteID's recordings with the current prompts and
 // puts each recording's new words where its old ones stand, then regenerates
-// the whole-note cleaned view when the note has one. It never transcribes:
+// the whole-note cleaned view when a plain note has one (never a checklist:
+// cleanNoteAfter returns at once for one, R8-F8). It never transcribes:
 // every recording resumes from its stored transcript, exactly as a retry
 // resumes a capture whose RawKey is set.
 //
@@ -35,8 +36,8 @@ const TaskRegenerateNote = "regenerate-note"
 // infrastructure fault returns the error, Lambda retries the task, the
 // recordings already appended are skipped by their status and the one left
 // mid-way — cleaned, or at appending with its claim handed back — is
-// resumed where it stood (regenerationInFlight). The whole-note view is
-// regenerated once, at the end, rather than after each append: with
+// resumed where it stood (regenerationInFlight). A plain note's whole-note
+// view is regenerated once, at the end, rather than after each append: with
 // auto_clean every append would have queued a run, and each run but the
 // last would have been superseded after its model call was billed.
 //

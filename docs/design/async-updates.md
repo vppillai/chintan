@@ -125,7 +125,7 @@ operations.
 already reads two SSM paths; this is a third. The public key goes in
 `config/instances/<name>.yaml`, through a template Parameter, to the API's
 `VAPID_PUBLIC_KEY` environment variable, so the API keeps reading nothing
-from SSM. `scripts/push-keys.sh --apply` generates the P-256 pair, puts the
+from SSM. `scripts/vapid-keys.sh --apply` generates the P-256 pair, puts the
 private key and prints the public one.
 
 **Worker.** `pipeline/notify.go`, hooked after `finishAppend` and where a
