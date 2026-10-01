@@ -234,3 +234,34 @@ Everything round 6 proposed is on prod and on the Pages site, reviewed twice and
 **Prod health:** across the eight backend deploys since 08:00 UTC the two Lambdas logged one WARN and one ERROR, both ours: the QA pass using its revoked device key on purpose ("device key refused", 09:22Z) and one provider 529 on the battery's dry-run capture during the #157 deploy window (09:06Z; that capture went to failed with Try again, as designed; the real runs had zero failures). Every deploy's staging smoke and prod gate passed.
 
 **Method notes, for the record:** the stack driver now retargets an upper PR to `main` before its base PR merges (GitHub closes a PR whose base branch disappears — that is what happened to #152); the conflict resolver keeps both sides of `docs/reviews/README.md` as it does for the backlog. Costs and alarms unchanged; the CloudTrail small-object question stays "leave it" as you decided.
+
+## 30 Sept — round 7: the whole-codebase review, items 1–21 shipped
+
+You approved items 1–21 of the review (performance, architecture, frontend, UX, AI pipeline). All of them are merged behind CI, the staging smoke and the prod gate, and live on prod and the Pages site. Each PR had an independent review, and every review asked for changes before merge. Where an item still had an open choice, I took the recommendation: 90-day note history, folded receipts, tick Undo as a toast, the capture pill renamed only, and cleanup skipped under 12 words. The Mac restarted twice under load mid-round; nothing was lost, and agents now run at most three at a time.
+
+**What shipped**
+- **Data safety.** A move now writes the paragraph into the target before cutting it from the source, so a crash leaves a duplicate, never a loss (#180). Malayalam and Hindi words no longer compare equal across vowel signs, and emoji titles still match (#180). There is one checklist-line parser, checked against a fixture the frontend reads too (#180). Old versions of note bodies are kept 90 days instead of 7 (#176). The exactly-once append branches have tests (#180), and the append completion is idempotent (#163, round 6).
+- **Deploys.** A gateway 5xx alarm was added. A failed smoke now rolls both Lambda aliases back automatically, and the worker gets its own smoke test (#176).
+- **Captures.** An upload cut off by closing the app can be cleared once its link has expired (#177). Worker tasks have one dispatch, so a new task can't be silently dropped (#177). Routed note creation survives a crash without making a second note (#178). Whisper gets your note names as a spelling hint (#175). Silence, a tone, or Whisper's stock "Thank you." on silence ends as no content instead of a junk note (#175, #186). On prod, Whisper reported no chance of silence on a silent file, so the score-based gate in #186 missed it; a follow-up treats a transcript that is only a stock silence phrase as no content outright (#188, confirmed on prod: silence and a tone end as no content, "Thank you Anu for the flowers" is still filed). A recording that is only "Thank you." on its own is therefore not filed.
+- **Speed.** Dictations under 12 words skip the cleanup call and get a safe tidy: "3 eggs" stays "3 eggs". The worker and the note page make fewer reads (#179).
+- **Note screen.** Find shows one block again. Back keeps your place in Home, Archive and notes. "Added at the end · Show" jumps to and highlights a recording added to a long note. Ticking an item offers Undo, and a tick never replaces a Delete-done Undo (#181).
+- **Home.** Receipts are one line and fold into "N filed into M notes". Filing rows show a short excerpt of what was said. A capture that made a new note says "Started “X”". A server error shows Retry instead of looking like being offline. The capture pill reads "Chintan decides" (#182).
+- **Frontend upkeep.** An installed app picks up a deploy when it comes back to the foreground. Polling is lighter: the Cleaned view pauses while hidden, an open note polls only its in-flight captures, and lists refresh their first page (#183).
+- **Routing eval.** Record/replay mode, a shared `decide()` function, and pass rates with intervals in the live eval (#178). The replay test skips until you record once (below).
+
+**Reverted on its gate.** The router's checklist marker on candidate lines (R7-10a) took row 21 to 2/3 and row 32 to 2/3 on the post-deploy battery. Per the rule agreed before it shipped, it was reverted alone (#185). It comes back only with live-eval pass rates on your key.
+
+**Live QA and batteries** (`docs/reviews/2026-09-30/qa-r7-live.md`, #184). The UX pass held at phone and desktop sizes in both themes. Items scored 15 of 16. The no-regression routing sweep scored 23 of 25: row 12 once took a Malayalam sentence as its title, and row 15 still asks. The stranded test capture from yesterday is deleted. The QA's desktop "Show hides the paragraph" finding was a measurement taken mid-scroll; a regression test now pins the real behaviour (#187).
+
+**Done for you:** `scripts/setup.sh` was re-run on orb at your request, so the deploy role can now invoke the worker smoke on every deploy.
+
+**Needs you**
+1. Record the routing replay set once, then commit what it writes. Re-record whenever a prompt changes:
+   `cd backend && LIVE_LLM=1 LLM_API_KEY=… LLM_RECORD=testdata/eval/recordings go test ./internal/provider -run 'TestLiveEval/route' -v -count=1`
+2. Decide on an explicit "always a new note" choice in the capture pill (R7-14a). Today the pill only says "Chintan decides".
+3. On your phone, check three things:
+   - After Show, focus moves into the text; does the keyboard popping up bother you?
+   - A hold on a note row.
+   - The caret above a real keyboard.
+4. Still open from the review, each needing your call: storing the ring's own transcript as a fallback; a separate, stronger model for routing only; the AI key in GitHub secrets so the eval can run from CI; and the double-blind decisions from round 6, listed in the section above.
+5. Your 30 Sept feedback (nine points: deeper checklists, app-like Back, record while typing, swipe animation, push-to-talk on the record button with slide-to-lock and slide-to-cancel, the home-screen PTT, Split up's purpose, notification banners) is in design now as round 8; its specs and any taste calls will follow in their own section.
