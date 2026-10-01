@@ -17,6 +17,8 @@
 #   agent       the chintan-agent-boundary policy exists (scripts/bootstrap-agent.sh)
 #   bootstrap   the chintan-bootstrap stack exists (scripts/setup.sh)
 #   secrets     /chintan/<instance>/groq_api_key and llm_api_key exist in SSM
+#   web push    /chintan/<instance>/vapid_private_key and vapid_public_key exist,
+#               when the instance's config leaves web_push on (the default)
 #   stacks      which of the instance's stacks from config/instances/*.yaml exist
 #
 # A check the current credentials are not allowed to make is reported as
@@ -284,6 +286,24 @@ if [ "$HAVE_AWS" = 1 ]; then
             record "secret $key" unknown "ssm:DescribeParameters is denied to these credentials"
         fi
     done
+
+    # Web Push is optional, but on by default: with web_push on and no pair,
+    # the app says notifications are not set up, which is a step missed rather
+    # than a choice. Off, the pair is the owner's business and not checked.
+    if command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1 &&
+        web_push_enabled "$INSTANCE"; then
+        vapid_names="/chintan/${INSTANCE}/vapid_private_key,/chintan/${INSTANCE}/vapid_public_key"
+        if found="$(aws_probe ssm describe-parameters --parameter-filters "Key=Name,Option=Equals,Values=${vapid_names}" --query 'length(Parameters)' --output text)"; then
+            if [ "$found" = 2 ]; then
+                record "web push" ok "VAPID pair under /chintan/${INSTANCE}/"
+            else
+                record "web push" missing "web_push is on but the VAPID pair under /chintan/${INSTANCE}/ is incomplete ($found of 2)"
+                suggest "scripts/vapid-keys.sh --instance $INSTANCE --region $REGION --apply"
+            fi
+        else
+            record "web push" unknown "ssm:DescribeParameters is denied to these credentials"
+        fi
+    fi
 
     # The instance's stacks, as config/instances/*.yaml resolves them.
     prod_stack="$(stack_name "$INSTANCE" prod)"

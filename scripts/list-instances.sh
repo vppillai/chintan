@@ -43,6 +43,15 @@
 #                 stack writes the certificate's validation record and the API
 #                 alias itself. Refused without api_host. Reaches the template
 #                 as DnsZoneId.
+#   web_push      true | false. Default: true. On, scripts/setup.sh and
+#                 scripts/bootstrap.sh install the instance's VAPID key pair
+#                 (scripts/vapid-keys.sh --apply) when it is missing, and
+#                 scripts/doctor.sh reports a missing pair. Off, none of them
+#                 touch it, and an instance without a pair answers
+#                 GET /v1/push/key 404 so the app offers no switch; a pair
+#                 already in SSM is not deleted. The pair lives under
+#                 /chintan/<name>/, so every config sharing a `name` must agree.
+#                 Not a template parameter; emitted as the entry's `web_push`.
 #
 # None of the three may contain ", <, > or &. Vite writes them into
 # frontend/index.html by plain substitution (%VITE_APP_NAME% in <title>, the
@@ -182,6 +191,22 @@ YAML
         *) die "self-test FAILED: api_host did not reach the parameters: $params" ;;
     esac
     ok "self-test: hosts are bare, app_host is one value for the site, api_host reaches the stack"
+
+    # web_push: a boolean, on by default, and one value per instance name.
+    printf 'name: one\ndisplay_name: One\ndescription: Fine.\n' >"$tmp/config/instances/one.yaml"
+    rm -f "$tmp/config/instances/two.yaml"
+    got="$(CHINTAN_REPO_ROOT="$tmp" "${BASH_SOURCE[0]}" | jq -r '.[0].web_push')"
+    [ "$got" = "true" ] || die "self-test FAILED: web_push defaulted to '$got', expected true"
+    printf 'name: one\ndisplay_name: One\ndescription: Fine.\nweb_push: "no"\n' >"$tmp/config/instances/one.yaml"
+    if CHINTAN_REPO_ROOT="$tmp" "${BASH_SOURCE[0]}" --format text >/dev/null 2>&1; then
+        die "self-test FAILED: a string web_push resolved"
+    fi
+    printf 'name: one\ndisplay_name: One\ndescription: Fine.\nweb_push: false\n' >"$tmp/config/instances/one.yaml"
+    printf 'name: one\nenvironment: staging\ndisplay_name: One\ndescription: Fine.\n' >"$tmp/config/instances/two.yaml"
+    if CHINTAN_REPO_ROOT="$tmp" "${BASH_SOURCE[0]}" --format text >/dev/null 2>&1; then
+        die "self-test FAILED: two configs of one name disagreeing on web_push resolved"
+    fi
+    ok "self-test: web_push defaults on, is a boolean, and is one value per instance name"
     exit 0
 fi
 
@@ -229,6 +254,7 @@ KNOWN_FIELDS = {
     "api_host",
     "app_host",
     "dns_zone_id",
+    "web_push",
 }
 
 # A bare hostname: labels of lowercase letters, digits and hyphens, at least
@@ -319,6 +345,10 @@ for path in sorted(config_dir.glob("*.yaml")):
     if dns_zone_id and not api_host:
         sys.exit(f"{path}: 'dns_zone_id' without 'api_host' has nothing to write; remove it or set api_host")
 
+    web_push = doc.get("web_push", True)
+    if not isinstance(web_push, bool):
+        sys.exit(f"{path}: 'web_push' must be true or false (got {web_push!r})")
+
     unknown = sorted(set(doc) - KNOWN_FIELDS)
     if unknown:
         sys.exit(
@@ -377,6 +407,7 @@ for path in sorted(config_dir.glob("*.yaml")):
             "short_name": short_name,
             "description": description,
             "app_host": app_host,
+            "web_push": web_push,
             "parameters": parameters,
         }
     )
@@ -398,6 +429,16 @@ if len(hosts) > 1:
         f"configs disagree on app_host ({', '.join(sorted(hosts))}); "
         f"GitHub Pages has one custom domain per site"
     )
+
+# The VAPID pair is per name, not per stack (/chintan/<name>/), so staging and
+# prod of one instance share it and cannot want different things for it.
+push_by_name = {}
+for e in out:
+    if push_by_name.setdefault(e["instance"], e["web_push"]) != e["web_push"]:
+        sys.exit(
+            f"configs named {e['instance']!r} disagree on web_push; the VAPID pair under "
+            f"/chintan/{e['instance']}/ is shared by all of them, so set the same value in each"
+        )
 
 json.dump(out, sys.stdout)
 PY
