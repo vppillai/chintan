@@ -5,9 +5,83 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
+
+// emitCalls returns every obs metric call in the non-test sources under
+// backend (internal and cmd), one string per call, joined across lines: the rollup
+// calls, the plain ones (Count, Emit, Duration) and the metric names each
+// names. A call that spans lines — purge's Emit lists its two metrics one
+// per line — used to be invisible to a line-by-line scan, which is how an
+// alarmed metric could hide behind a plain Emit.
+func emitCalls(t *testing.T) (rolled, plain []string, names []string) {
+	t.Helper()
+	call := regexp.MustCompile(`obs\.(Count|CountWithRollup|Duration|Emit|EmitWithRollup)\(`)
+	name := regexp.MustCompile(`(?:obs\.(?:Count|CountWithRollup|Duration)\(ctx, |Name:\s*)"(\w+)"`)
+	seen := map[string]bool{}
+	err := filepath.WalkDir("../..", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		src := string(raw)
+		for _, loc := range call.FindAllStringIndex(src, -1) {
+			// The call runs from its opening parenthesis to the matching one.
+			depth, end := 0, loc[1]-1
+			for i := loc[1] - 1; i < len(src); i++ {
+				if src[i] == '(' {
+					depth++
+				} else if src[i] == ')' {
+					if depth--; depth == 0 {
+						end = i
+						break
+					}
+				}
+			}
+			text := src[loc[0] : end+1]
+			if strings.Contains(text, "WithRollup(") {
+				rolled = append(rolled, text)
+			} else {
+				plain = append(plain, text)
+			}
+			for _, m := range name.FindAllStringSubmatch(text, -1) {
+				seen[m[1]] = true
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk the sources: %v", err)
+	}
+	for n := range seen {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return rolled, plain, names
+}
+
+// alarmedMetrics is every Chintan-namespace metric an alarm in the template
+// reads, as a set of exact names.
+func alarmedMetrics(t *testing.T) map[string]bool {
+	t.Helper()
+	raw, err := os.ReadFile("../../../infrastructure/template.yaml")
+	if err != nil {
+		t.Fatalf("read the template: %v", err)
+	}
+	out := map[string]bool{}
+	for _, m := range regexp.MustCompile(`(?m)^\s+Namespace: Chintan\n\s+MetricName: (\w+)`).FindAllStringSubmatch(string(raw), -1) {
+		out[m[1]] = true
+	}
+	if len(out) == 0 {
+		t.Fatal("found no Chintan-namespace alarm in the template; the pattern is stale")
+	}
+	return out
+}
 
 // TestEveryAlarmedMetricIsRolledUp ties the template's Chintan-namespace
 // alarms to the code that emits their metrics.
@@ -24,44 +98,40 @@ import (
 // that is missing. So no alarmed metric may be emitted through plain Count
 // anywhere.
 func TestEveryAlarmedMetricIsRolledUp(t *testing.T) {
-	raw, err := os.ReadFile("../../../infrastructure/template.yaml")
-	if err != nil {
-		t.Fatalf("read the template: %v", err)
+	rolled, plain, _ := emitCalls(t)
+	for m := range alarmedMetrics(t) {
+		if !strings.Contains(strings.Join(rolled, "\n"), `"`+m+`"`) {
+			t.Errorf("an alarm reads Chintan/%s with no dimensions, but nothing emits it through CountWithRollup", m)
+		}
+		if strings.Contains(strings.Join(plain, "\n"), `"`+m+`"`) {
+			t.Errorf("Chintan/%s is alarmed, but at least one site still emits it through Count, Duration or Emit, which the alarm's dimensionless sum never sees", m)
+		}
 	}
-	alarmed := regexp.MustCompile(`(?m)^\s+Namespace: Chintan\n\s+MetricName: (\w+)`).FindAllStringSubmatch(string(raw), -1)
-	if len(alarmed) == 0 {
-		t.Fatal("found no Chintan-namespace alarm in the template; the pattern is stale")
-	}
+}
 
-	var rolled, plain strings.Builder
-	err = filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return err
-		}
-		src, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		for _, line := range strings.Split(string(src), "\n") {
-			switch {
-			case strings.Contains(line, "WithRollup("):
-				rolled.WriteString(line + "\n")
-			case strings.Contains(line, "obs.Count(") || strings.Contains(line, "obs.Emit("):
-				plain.WriteString(line + "\n")
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk the sources: %v", err)
+// TestEveryEmittedMetricIsAlarmedOrListed is the reverse direction: every
+// metric name the code emits is either alarmed in the template or listed,
+// with its reader, in docs/ops/metrics.md. Rounds 6–8 each added counters
+// nothing read — write-only EMF that cost a metric identity apiece and told
+// nobody anything (review 2026-10-01, BE-3; decision D6). A new counter
+// therefore arrives with its alarm or with the sentence that says who reads
+// it, or does not arrive.
+func TestEveryEmittedMetricIsAlarmedOrListed(t *testing.T) {
+	_, _, names := emitCalls(t)
+	if len(names) < 20 {
+		t.Fatalf("found only %d metric names in the sources; the pattern is stale", len(names))
 	}
-
-	for _, m := range alarmed {
-		if !strings.Contains(rolled.String(), `"`+m[1]+`"`) {
-			t.Errorf("an alarm reads Chintan/%s with no dimensions, but nothing emits it through CountWithRollup", m[1])
-		}
-		if strings.Contains(plain.String(), `"`+m[1]+`"`) {
-			t.Errorf("Chintan/%s is alarmed, but at least one site still emits it through Count or Emit, which the alarm's dimensionless sum never sees", m[1])
+	alarmed := alarmedMetrics(t)
+	page, err := os.ReadFile("../../../docs/ops/metrics.md")
+	if err != nil {
+		t.Fatalf("read docs/ops/metrics.md: %v", err)
+	}
+	for _, n := range names {
+		// A table row, not a mention: the page's prose names the alarmed
+		// metrics too, and a sentence is not a listing with a reader.
+		listed := regexp.MustCompile("(?m)^\\| `" + n + "` \\|").Match(page)
+		if !alarmed[n] && !listed {
+			t.Errorf("Chintan/%s is emitted but no alarm reads it and docs/ops/metrics.md does not list it: alarm it, list it with its reader, or delete it (D6)", n)
 		}
 	}
 }

@@ -80,6 +80,54 @@ func TestVerifySubsequenceKeepsIndicVowelSigns(t *testing.T) {
 	}
 }
 
+// The five chillus spelled as consonant + virama + ZWJ and spelled as their
+// atomic letters are one word to a reader and were two to every matcher
+// (review 2026-09-21, T58). Folding puts both spellings on the atomic side.
+func TestFoldScriptJoinsTheTwoChilluSpellings(t *testing.T) {
+	for _, tc := range []struct{ old, atomic string }{
+		{"അവന്\u200d", "അവൻ"},
+		{"കാര്\u200d", "കാർ"},
+		{"കാല്\u200d", "കാൽ"},
+		{"അവള്\u200d", "അവൾ"},
+		{"കാണ്\u200d", "കാൺ"},
+	} {
+		if got := FoldScript(tc.old); got != tc.atomic {
+			t.Errorf("FoldScript(%q) = %q, want %q", tc.old, got, tc.atomic)
+		}
+		if got := FoldScript(tc.atomic); got != tc.atomic {
+			t.Errorf("FoldScript(%q) changed an atomic chillu to %q", tc.atomic, got)
+		}
+	}
+	if got := FoldScript("ക\u200cഷ"); got != "കഷ" {
+		t.Errorf("a stray non-joiner survived: %q", got)
+	}
+	if got := FoldScript("plain ascii"); got != "plain ascii" {
+		t.Errorf("text with no joiner was changed: %q", got)
+	}
+}
+
+// Words folds the script before it splits (D7, 2026-10-01): a dictated and a
+// typed Malayalam item compare as one item in every check built on
+// FoldWords, a joiner no longer cuts a word in two, and Latin text is
+// untouched — the fold does not make "milk" and "milks" one word.
+func TestWordsFoldChilluAndJoiners(t *testing.T) {
+	for _, tc := range []struct{ a, b string }{
+		{"അവന്\u200d വന്നു", "അവൻ വന്നു"},
+		{"കാര്\u200d", "കാർ"},
+		{"ക\u200dഷ", "കഷ"},
+	} {
+		if got, want := FoldWords(tc.a), FoldWords(tc.b); got != want || len(Words(tc.a)) != len(Words(tc.b)) {
+			t.Errorf("FoldWords(%q) = %q, FoldWords(%q) = %q; want equal", tc.a, got, tc.b, want)
+		}
+	}
+	if got := FoldWords("Buy Milk!"); got != "buy milk" {
+		t.Errorf("FoldWords(Latin) = %q", got)
+	}
+	if FoldWords("milk") == FoldWords("milks") {
+		t.Error("the fold made milk and milks one word")
+	}
+}
+
 func TestExtractJSONObject(t *testing.T) {
 	t.Parallel()
 

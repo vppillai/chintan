@@ -172,7 +172,7 @@ five to seven letters ("dentist", "house") waits on the owner (triage
 2026-09-29). On the path that is about to create a
 note the active list is read once more and the same rule run over it, so two
 same-second ring captures naming a list nobody has yet make one list, not
-two (R6-RT-3; `RouterCreateDeduped`); a `new` checklist is created as one, `Kind` written
+two (R6-RT-3); a `new` checklist is created as one, `Kind` written
 on the row in the same `PutNote` as the language, so the same run extracts
 its items rather than cleaning the sentence into a plain note — the owner's
 "add milk to the shopping list" with no such list had become the item "Add
@@ -192,9 +192,10 @@ rule that reads it; the no-speech scores and the hint and short-dictation
 bounds (rules 13 and 14) are named from there and live with the transcription
 and the cleanup. `TestRoutingBoundsAreRegistered` (`routing/bounds_test.go`)
 lists the fourteen rules and their bounds and refuses a constant without a
-row, so a new rule registers its number before it ships; and a new rule waits
-for a recorded replay case (decision D8, 2026-10-01), as prompt text already
-does.
+row. The gate (decision D8, 2026-10-01): no new rescue rule or bound ships
+without a recorded replay case (R7-9, §Record and replay) and a line in
+`routing/bounds.go`, as the revert rule (R7-10a) already holds prompt text
+to.
 
 **Metrics.** `RouterSpansDiscarded{Reason=missing_field|malformed|too_long|empty_content|not_derived}`,
 `RouterTitleMatchedExistingNote` (11 of 86 routes in the week measured under
@@ -204,10 +205,10 @@ R6-RT-1 and R6-RT-7, because the prefix and `spoken_name` rescues count
 under the same name; a `MatchedBy` dimension is follow-up R6-RT-10),
 `RouterNewNoteKind{Kind=note|checklist}` (how often the model answers
 `checklist` for a new note, without a battery run),
-`RouterRetried{Reason}`, `RouterTimedOut{Attempt}`,
-`RouterCreateDeduped` (the pre-create re-check found the note a sibling
-capture had just made),
-`TargetedInstructionCheck{Outcome=no_cue|removed|nothing_removed|failed}`.
+`RouterRetried{Reason}`, `RouterTimedOut{Attempt}`. The dedupe and the
+instruction check have no counter since D6 (2026-10-01): the decision line
+below says what happened; the short-dictation tidy logs one INFO line,
+`short dictation tidied without a cleanup call` (§Cleanup).
 
 **The decision line.** `route` logs one INFO line `routing decided` per
 routed capture (`logRoutingDecision`), counts and enumerations only, so a
@@ -222,8 +223,8 @@ until the same day, so a deduped capture read as a new note nothing matched
 code took the model's unsure suggestion because its name was spoken as one,
 `none` for a new note nothing matched), `outcome` — what `route` did with
 the decision: append, needs_target, new, deduped (the pre-create re-check
-found the note a sibling capture had just made; counted as
-`RouterCreateDeduped` alone, never as `RouterTitleMatchedExistingNote` too)
+found the note a sibling capture had just made; never counted as
+`RouterTitleMatchedExistingNote`)
 or new_after_missing (the model's note was archived or gone by the time it
 was read) — `candidates`, `transcript_words`, `title_words` (0 for an append),
 `spans` (as the reply carried them), `removed_words`, `checklist` (the
@@ -236,7 +237,8 @@ README's "nothing derived from speech reaches a log" holds.
 Runs for every non-verbatim capture into a plain note (`Pipeline.clean`,
 `pipeline/clean.go`) of at least twelve words; a verbatim note bypasses it
 (`CaptureCleanupBypassed`). A shorter dictation makes no call
-(`shortDictationWords`, R7-15; `CaptureCleanupTidied`): `tidyDictation`
+(`shortDictationWords`, R7-15; one INFO line `short dictation tidied
+without a cleanup call` with the word count): `tidyDictation`
 collapses the whitespace, capitalises the first letter where the script
 has case, and adds a full stop when no sentence mark ends it, and that is
 stored as the clean text. In the week to 2026-09-30, 59% of cleanup calls
@@ -347,8 +349,8 @@ the list's order, `done` and `children` left out when false or empty.
 line. **Guards** (`cleanup.SplitOutput`): `ParseItems`' shape at most 500
 counting sub-items (`MaxChecklistItems`), nested at most three levels, a
 deeper item flattened into the third after its parent; an item whose words are not the
-body's words in order (`llm.VerifySubsequence`) is dropped and counted
-(`TasksItemsDropped`), a dropped parent's children lifted — "- [x] Make a
+body's words in order (`llm.VerifySubsequence`) is dropped and logged as
+a count, a dropped parent's children lifted — "- [x] Make a
 list." was the model inventing an antecedent (owner feedback 2026-09-26);
 tick safety, the whole answer refused: a `- [x]` body line with no done
 answer item whose words equal it or are a sub-sequence of it, an open
@@ -403,11 +405,13 @@ near-silence Whisper can answer with its prompt as the transcript. Longer
 silence can still be answered that way, with confident log-probs that pass
 the silence gate, so a transcript that is only hint names, or with two
 pieces or more a run of the prompt's words, ends as `no_content` with the
-transcript kept (`echoesHints`, `CaptureHintEcho`). A store fault reading
+transcript kept (`echoesHints`; `gate=hint_echo` on the `transcribed
+capture` log line). A store fault reading
 the notes is logged and the recording is transcribed without hints.
 
 **The silence gate.** Before routing, `provider.Transcription.NoSpeech`
-ends a capture as `no_content`, transcript kept (`CaptureNoSpeech`), when
+ends a capture as `no_content`, transcript kept (`gate=no_speech` on the
+`transcribed capture` line), when
 the transcript has no letter or digit (R7-10c), when every sentence of it
 is a stock silence phrase — "Thank you.", "Thanks for watching!", "you",
 "bye", a subtitle credit (`silenceHallucinations`) — whatever the scores

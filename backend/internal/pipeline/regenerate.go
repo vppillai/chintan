@@ -186,7 +186,6 @@ func (p *Pipeline) dropReplacedItems(ctx context.Context, tenantID string, captu
 	if !written {
 		return nil
 	}
-	obs.Count(ctx, "ChecklistItemsWithdrawn", map[string]string{"Stage": string(service.StatusCleaning)})
 	if _, err := service.RefreshNoteIndex(ctx, p.cfg.Store, p.cfg.Objects, tenantID, note.ID, service.RefreshOptions{
 		Now:         p.now,
 		RequireBody: true,
@@ -203,7 +202,7 @@ func (p *Pipeline) dropReplacedItems(ctx context.Context, tenantID string, captu
 func (w *Worker) handleRegenerateNote(ctx context.Context, task Invocation) error {
 	if task.TenantID == "" || task.NoteID == "" {
 		obs.Log(ctx).Error("discarding a regenerate-note invocation that names no note")
-		obs.Count(ctx, "WorkerMessagesDiscarded", map[string]string{"Reason": "unparseable"})
+		obs.CountWithRollup(ctx, "WorkerMessagesDiscarded", map[string]string{"Reason": "unparseable"})
 		return nil
 	}
 	id, ok := obs.SanitizeCorrelationID(task.CorrelationID)

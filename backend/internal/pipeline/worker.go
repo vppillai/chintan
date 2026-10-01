@@ -104,7 +104,7 @@ func (w *Worker) Handle(ctx context.Context, raw json.RawMessage) error {
 		// fills the DLQ with the same parse failure. Log it and let it go.
 		obs.Log(ctx).Error("discarding an unparseable invocation",
 			slog.String("error", err.Error()))
-		obs.Count(ctx, "WorkerMessagesDiscarded", map[string]string{"Reason": "unparseable"})
+		obs.CountWithRollup(ctx, "WorkerMessagesDiscarded", map[string]string{"Reason": "unparseable"})
 		return nil
 	}
 	if len(refs) == 0 {
@@ -152,7 +152,7 @@ func (w *Worker) Handle(ctx context.Context, raw json.RawMessage) error {
 func (w *Worker) handleCleanNote(ctx context.Context, task Invocation) error {
 	if task.TenantID == "" || task.NoteID == "" {
 		obs.Log(ctx).Error("discarding a clean-note invocation that names no note")
-		obs.Count(ctx, "WorkerMessagesDiscarded", map[string]string{"Reason": "unparseable"})
+		obs.CountWithRollup(ctx, "WorkerMessagesDiscarded", map[string]string{"Reason": "unparseable"})
 		return nil
 	}
 	id, ok := obs.SanitizeCorrelationID(task.CorrelationID)
@@ -177,7 +177,7 @@ func (w *Worker) handleCleanNote(ctx context.Context, task Invocation) error {
 func (w *Worker) handleAsk(ctx context.Context, task Invocation) error {
 	if task.TenantID == "" || task.AskID == "" {
 		obs.Log(ctx).Error("discarding an ask invocation that names no question")
-		obs.Count(ctx, "WorkerMessagesDiscarded", map[string]string{"Reason": "unparseable"})
+		obs.CountWithRollup(ctx, "WorkerMessagesDiscarded", map[string]string{"Reason": "unparseable"})
 		return nil
 	}
 	id, ok := obs.SanitizeCorrelationID(task.CorrelationID)

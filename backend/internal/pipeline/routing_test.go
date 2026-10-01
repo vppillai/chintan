@@ -765,9 +765,6 @@ func TestASiblingCaptureCreatingTheSameNoteIsAppendedToNotDuplicated(t *testing.
 			t.Errorf("note body = %q, want %q in it", body, want)
 		}
 	}
-	if !strings.Contains(metrics.String(), `"RouterCreateDeduped"`) {
-		t.Error("RouterCreateDeduped was not counted")
-	}
 	if strings.Contains(metrics.String(), `"RouterTitleMatchedExistingNote"`) {
 		t.Error("the dedupe was also counted as RouterTitleMatchedExistingNote, which inflates the metric the prompt change is judged by")
 	}

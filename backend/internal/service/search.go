@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/vppillai/chintan/backend/internal/ask"
+	"github.com/vppillai/chintan/backend/internal/llm"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
 )
@@ -233,9 +233,9 @@ func (s *SearchService) Search(ctx context.Context, userID, q string, opts repos
 }
 
 // searchTerms splits a query into lowercase terms, bounded in length, spelled
-// the way SearchText stored the body (ask.FoldScript).
+// the way SearchText stored the body (llm.FoldScript).
 func searchTerms(q string) []string {
-	q = strings.ToLower(strings.TrimSpace(ask.FoldScript(q)))
+	q = strings.ToLower(strings.TrimSpace(llm.FoldScript(q)))
 	if runes := []rune(q); len(runes) > MaxSearchQueryRunes {
 		q = string(runes[:MaxSearchQueryRunes])
 	}
@@ -259,8 +259,8 @@ func matchNote(note model.NoteIndex, terms []string) (SearchHit, bool) {
 	// way (review 2026-09-21, T58). The snippet keeps its case for the
 	// excerpt; folding only re-spells chillus, so it is still the user's
 	// words as they read them.
-	title := strings.ToLower(ask.FoldScript(note.Title))
-	snippetText := ask.FoldScript(note.Snippet)
+	title := strings.ToLower(llm.FoldScript(note.Title))
+	snippetText := llm.FoldScript(note.Snippet)
 	snippet := strings.ToLower(snippetText)
 	// Already lowercased and folded when it was stored. A note written before
 	// the field existed has none, and falls back to the snippet alone until
@@ -279,7 +279,7 @@ func matchNote(note model.NoteIndex, terms []string) (SearchHit, bool) {
 			found = true
 		}
 		for _, alias := range note.Aliases {
-			if strings.Contains(strings.ToLower(ask.FoldScript(alias)), term) {
+			if strings.Contains(strings.ToLower(llm.FoldScript(alias)), term) {
 				fields[MatchAlias] = true
 				score += 4
 				found = true
@@ -287,7 +287,7 @@ func matchNote(note model.NoteIndex, terms []string) (SearchHit, bool) {
 			}
 		}
 		for _, tag := range note.Tags {
-			if strings.Contains(strings.ToLower(ask.FoldScript(tag)), term) {
+			if strings.Contains(strings.ToLower(llm.FoldScript(tag)), term) {
 				fields[MatchTag] = true
 				score += 4
 				found = true

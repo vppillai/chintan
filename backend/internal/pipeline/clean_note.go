@@ -171,7 +171,7 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 			slog.Bool("stage_deadline", stalled),
 			slog.String("error", err.Error()))
 		if stalled {
-			obs.Count(ctx, "ProviderTimedOut", map[string]string{"Stage": "clean_note"})
+			obs.CountWithRollup(ctx, "ProviderTimedOut", map[string]string{"Stage": "clean_note"})
 		}
 		return fmt.Errorf("pipeline: clean-note: provider call ran out of time: %w", err)
 	}
@@ -187,9 +187,8 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 		text, err = cleanup.NoteOutput(cleaned.Text)
 	}
 	if dropped > 0 {
-		// Counts only: the dropped lines are the model's words about the note.
+		// The count only: the dropped lines are the model's words about the note.
 		log.Warn("clean-note: dropped tasks whose words are not in the note", slog.Int("dropped", dropped))
-		obs.Count(ctx, "TasksItemsDropped", nil)
 	}
 	if err != nil {
 		log.Warn("clean-note: the model returned nothing usable")
@@ -393,7 +392,7 @@ func (p *Pipeline) cleanNoteAfter(ctx context.Context, tenantID string, note mod
 		obs.Log(ctx).Error("could not record the auto-clean request; the cleaned view stays stale",
 			slog.String("note_id", note.ID),
 			slog.String("error", err.Error()))
-		obs.Count(ctx, "NoteCleanInvokeFailures", map[string]string{"Trigger": trigger})
+		obs.CountWithRollup(ctx, "NoteCleanInvokeFailures", map[string]string{"Trigger": trigger})
 		return
 	}
 	if p.cfg.CleanInvoker != nil {
@@ -402,7 +401,7 @@ func (p *Pipeline) cleanNoteAfter(ctx context.Context, tenantID string, note mod
 			obs.Log(ctx).Error("could not hand the note to the worker for auto-clean; the cleaned view stays stale",
 				slog.String("note_id", note.ID),
 				slog.String("error", err.Error()))
-			obs.Count(ctx, "NoteCleanInvokeFailures", map[string]string{"Trigger": trigger})
+			obs.CountWithRollup(ctx, "NoteCleanInvokeFailures", map[string]string{"Trigger": trigger})
 			return
 		}
 		obs.Count(ctx, "NoteCleanRequested", map[string]string{"Mode": string(mode), "Trigger": trigger})
