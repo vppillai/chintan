@@ -549,3 +549,59 @@ func TestARetryOfAnInterruptedFirstChecklistAppendKeepsASiblingsMergedChild(t *t
 		t.Errorf("extraction calls = %d, want none: the items were stored", n)
 	}
 }
+
+// Three levels (round 8, F1): a ticked third-level line named again is
+// wanted again, and so is every group it stands under — a done item has no
+// open descendant. Before, only a sub-item's parent was reopened, and only a
+// top-level one.
+func TestMergeLeafReopensEveryAncestor(t *testing.T) {
+	const body = "- [x] Party\n  - [x] Costco\n    - [x] Milk\n- [ ] Bread"
+	got, rest, counts := mergeChecklistItems(body, []cleanup.Item{item("milk")})
+	if want := "- [ ] Party\n  - [ ] Costco\n    - [ ] Milk\n- [ ] Bread"; got != want || len(rest) != 0 || counts.reopened != 1 {
+		t.Errorf("merge = %q, rest %+v, %+v; want %q", got, rest, counts, want)
+	}
+}
+
+// A recording's parent joins a top-level line and its children are that
+// line's direct sub-items: a third-level line with a child's words is a
+// different thing in a different group, so the child is added rather than
+// taken for it. New children go after the block's last line, whatever its
+// depth.
+func TestMergeParentMatchesDirectChildrenOnly(t *testing.T) {
+	const body = "- [ ] Costco\n  - [ ] Party\n    - [x] Meat\n- [ ] Milk"
+	got, _, _ := mergeChecklistItems(body, []cleanup.Item{item("Costco", "Meat", "Party")})
+	if want := "- [ ] Costco\n  - [ ] Party\n    - [x] Meat\n  - [ ] Meat\n- [ ] Milk"; got != want {
+		t.Errorf("merge = %q, want %q", got, want)
+	}
+}
+
+// parentOf is the nearest shallower item line above, across a marker or a
+// blank, as the editor reads the body.
+func TestParentOfAtDepthTwo(t *testing.T) {
+	lines := strings.Split("- [ ] Party\n  - [ ] Costco\n"+service.CaptureMarker("c_1")+"\n    - [ ] Plates\n  - [ ] Candles\n- [ ] Milk", "\n")
+	for i, want := range []int{-1, 0, -1, 1, 0, -1} {
+		if got := parentOf(lines, i); got != want {
+			t.Errorf("parentOf(%d) = %d, want %d", i, got, want)
+		}
+	}
+}
+
+// Two spaces per level, up to the third: a deeper line is clamped, not
+// dropped.
+func TestChecklistItemsKeepsTwoLevelsOfIndent(t *testing.T) {
+	if got, want := checklistItems("Party\n  Costco\n    Plates\n      Paper ones"), "- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n    - [ ] Paper ones"; got != want {
+		t.Errorf("checklistItems = %q, want %q", got, want)
+	}
+}
+
+// Regenerating a recording whose sub-item holds a third-level line typed by
+// hand: the sub-item has a line under it that is not the recording's, so it
+// stays with that line, and the list comes back as it was. Before, the
+// sub-item came out and the typed line was left under the next item.
+func TestReplaceChecklistItemsKeepsAThreeLevelBlock(t *testing.T) {
+	body := service.CaptureMarker("c_1") + "\n- [ ] Costco\n  - [ ] Meat\n    - [ ] Chicken thighs\n- [ ] Milk"
+	got := replaceChecklistItems(body, "c_1", []string{"Costco", "  Meat", "Milk"}, "- [ ] Costco\n  - [ ] Meat\n- [ ] Milk")
+	if got != body {
+		t.Errorf("replaceChecklistItems = %q, want the body unchanged %q", got, body)
+	}
+}
