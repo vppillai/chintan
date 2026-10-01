@@ -254,10 +254,12 @@ every word about the list rather than on it left out, the list's own name
 included and also as a spoken prefix that files the recording ("Shopping
 list eggs from Walmart"); "X and Y" split, in doubt split; **group as the
 person grouped** — a place, a person, an occasion or a category the things
-are named under is the parent, one level, never invented, never the list's
-own name; a remove/tick/change request returned as spoken; garbling fixed
+are named under is the parent, never invented, never the list's own name; a remove/tick/change request returned as spoken; garbling fixed
 and fillers dropped, nothing invented, nothing lost; `LanguageRule`,
-`DataRule`. Then the reply shape and six examples (about 170 tokens), the
+`DataRule`. Then the items prompt's own "One level only: a child has no
+children" — its own, not the shared block's, since a list may hold three
+levels and Split up keeps them, while the extraction stays at one (round 8
+owner decision 2, default "no"). Then the reply shape and six examples (about 170 tokens), the
 owner's two sentences of 2026-09-29 first: "Add milk, eggs and protein
 powder to the shopping list" → Milk, Eggs, Protein powder; "add buying eggs
 from Walmart and meat from Costco in the shopping list" → Walmart › Eggs,
@@ -268,8 +270,8 @@ out when there are none, `[]` when the recording only told the app what to
 do. **Guards** (`cleanup.ParseItems`): a JSON object with an `items` array
 whose elements are objects `{text, children?, done?}` or bare strings (the
 pre-2026-09-29 shape, so a model that answers the old way degrades to flat
-items, never to unusable); a grandchild clamped to a child of the top-level
-item (CL-D1); at most 100 items counting children (`MaxItemsPerRecording`);
+items, never to unusable); a grandchild flattened into the children, after
+its parent; at most 100 items counting children (`MaxItemsPerRecording`);
 each text collapsed to one line and cut at 2,000 runes
 (`MaxChecklistItemRunes`), an item with no text dropped and its children
 lifted; nothing checks the words against the transcript or the title, since
@@ -306,13 +308,15 @@ view stale; a later request in another mode supersedes the run. **Metrics:**
 The checklist's mode (Split up), the same call path as above
 (`Pipeline.CleanNote`) with its own prompt, user prompt and cap. **Sent:**
 "the list as it stands → the list it was meant to be": the body's format
-(one item a line, `- [ ] ` / `- [x] `, a sub-item two spaces in), the shared
-`checklistItemRules` above, and three rules a whole list needs — every
+(one item a line, `- [ ] ` / `- [x] `, a sub-item two spaces in, two more for
+each level, at most three levels), the shared `checklistItemRules` above,
+and four rules a whole list needs — every
 line's meaning kept (a line already one thing word for word, a line holding
 several things one item each, a sentence spoken to the app the things it
 named); the list's groups kept and an item put under an existing group when
 its words say so ("chicken from Costco" under Costco), two lines naming one
-thing one item; done stays done, an open line never marked done, a
+thing one item; every item kept at its level, up to three, and no level
+added that the list does not have; done stays done, an open line never marked done, a
 duplicate merged into an open item if either was open — then the reply
 shape and one worked example, the owner's live case beside an existing
 Costco (about 540 tokens in all). The user prompt opens `The list is
@@ -323,7 +327,8 @@ body. **Reply:** `{"items":[{"text":"…","done":false,"children":[…]},…]}` 
 the list's order, `done` and `children` left out when false or empty.
 **Cap:** 3× the input, floor 512 (`TasksMaxTokens`): a JSON object per
 line. **Guards** (`cleanup.SplitOutput`): `ParseItems`' shape at most 500
-counting sub-items (`MaxChecklistItems`); an item whose words are not the
+counting sub-items (`MaxChecklistItems`), nested at most three levels, a
+deeper item flattened into the third after its parent; an item whose words are not the
 body's words in order (`llm.VerifySubsequence`) is dropped and counted
 (`TasksItemsDropped`), a dropped parent's children lifted — "- [x] Make a
 list." was the model inventing an antecedent (owner feedback 2026-09-26);
@@ -332,7 +337,10 @@ answer item whose words equal it or are a sub-sequence of it, an open
 answer item equal to a done body line unless the body also had it open
 (duplicates merge, open wins) or, childless, a sub-sequence of a done line
 and of no open one, a done answer item equal to no done body line, a done
-answer item equal to an open body line when no open answer item is. The pre-2026-09-29 prompt ("granular, actionable tasks", the person's
+answer item equal to an open body line when no open answer item is — every
+check at every depth; and a done answer item with an open item under it is
+stored open, a done line with its words exempt from the lost-tick and
+reopened checks (DB6-11, "the parent reopens"). The pre-2026-09-29 prompt ("granular, actionable tasks", the person's
 words, done lines verbatim and in order) is what split the owner's `Add
 milk, eggs and protein powder to the shopping list` into "Add milk to…",
 "Add eggs to…", "Add protein powder…"; PR-D4 had proposed dropping the mode

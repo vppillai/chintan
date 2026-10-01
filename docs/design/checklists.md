@@ -40,13 +40,14 @@ pattern in `checklist.ts`) and the backend (`cleanup.ParseLine`, used by
 tabs, a tab counting as two spaces; `- [`; a box of a space (open), `x` or
 `X` (done); `]`; at most one space; then the text as written. So `- [ ]Milk`
 is an item, `\t- [x] Candles` is a done sub-item, and ` - [ ] Plates` (one
-space) is top level. An indent of two columns or more is one level down,
-clamped as below; a trailing `\r` is not part of the text. Any other
+space) is top level. Every two columns of indent is one level down, clamped
+as below; a trailing `\r` is not part of the text. Any other
 non-blank line is prose. The rule is pinned by example in
 `backend/internal/cleanup/testdata/checklist-lines.json`, which the Go
 suite (`cleanup/items_test.go`) and the Vitest suite (`checklist.test.ts`)
 both assert, so a change to one reader that the other does not share fails
-a test. Until R7-19 (2026-09-30) the backend required the space after the
+a test; its `max_depth` is asserted against both `cleanup.MaxDepth` and
+`MAX_DEPTH`, so the two constants cannot drift either. Until R7-19 (2026-09-30) the backend required the space after the
 box and read depth only from a two-space prefix, so a line typed `- [ ]Milk`
 was an item in the editor and prose to the worker, and its tick never
 carried. Three differences are left on purpose, since they change no
@@ -59,15 +60,25 @@ tick or reopen in the worker writes the line back in the normal form
 (`- [x] ` with its one space).
 
 A sub-item is two spaces of indent under its parent — `  - [ ] Plates` under
-`- [ ] Party` — and there is one level of them (`MAX_DEPTH = 1` in
-`checklist.ts`; owner decision CL-D1, 2026-09-27, Keep parity: a spoken list
-is a handful of items, and nothing in a voice-first product produces depth
-three). The frontend parser (`parseChecklist`) reads the indent as a depth
-clamped to the parent's plus one and to `MAX_DEPTH` — a jump of two levels
-reads as one, a third level written elsewhere reads as the second and
-flattens to it on the first save here, a child with no parent is top level —
-and writes it back as two spaces per level, so a one-level body indented in
-another editor round-trips byte for byte. Until 2026-09-26 such a line
+`- [ ] Party` — and two more for each level below it, three levels in all:
+top, sub-item, sub-sub-item (`MAX_DEPTH = 2` in `checklist.ts`,
+`cleanup.MaxDepth` in Go; owner feedback F1, round 8, 2026-09-30, which
+replaced CL-D1's one level of 2026-09-27 — that decision named "a real list
+asks" as its own trigger, and one did). Not four: a fourth level leaves
+about twelve characters of text at 320 px. Both parsers read the indent as
+a depth clamped to the item before's plus one and to the maximum — a jump of
+two levels reads as one, a fourth level written elsewhere reads as the third
+and flattens to it on the first save (clamped, never dropped), a child with
+no parent is top level — and write it back as two spaces per level, so a
+body indented in another editor round-trips byte for byte. The Go form is
+`cleanup.ParseLines`, which every depth read in `pipeline/append.go` goes
+through (`depths`); a line that is not an item — a capture marker, a blank,
+prose — does not reset its clamp, so a marker between a parent and the
+sub-item a later recording merged under it does not cut them apart.
+`cleanup.ParseLine` alone returns the indent's raw level. Every body from
+before three levels is at depth 0 or 1 and reads exactly as it did; the one
+change in meaning is a line indented four or more columns under a sub-item,
+now a sub-sub-item (no owner list had one). Until 2026-09-26 such a line
 missed the item pattern altogether: it showed as an open row whose text was
 the raw syntax and was rewritten to `- [ ]   - [x] Candles` on the first
 save. The worker used to append at the end of the body with no indent, so
@@ -89,7 +100,9 @@ merge find a recording's earlier items by their words whatever their indent,
 and a regenerated block is written with the recording's own indent — a
 sub-item the person made by hand comes back at the depth the recording gives
 it, and a typed sub-item that followed a removed parent nests under the line
-now above it (the parser clamps an orphan, so nothing breaks); and the row's
+now above it (the parser clamps an orphan, so nothing breaks), while a line
+that still has one of the person's own lines under it, at any depth, stays
+where it is with that line; and the row's
 "3 of 7 done" counts every item whatever its depth, as Keep's count does.
 Export and the search text see the raw lines, indent and all, which is
 Markdown.
@@ -101,7 +114,11 @@ named, one open line each — `- [ ] Chickpeas`, `- [ ] Green gram` — grouped
 as the person grouped them, and nothing else. The items come from one model
 call in place of the transcript cleanup (`Pipeline.extractItems`,
 `cleanup.ItemsPrompt`): the prompt reads the **raw** transcript with the
-list's title beside it and answers a one-level tree,
+list's title beside it and answers a one-level tree (a list may hold three,
+but the extraction makes one — round 8 owner decision 2, default "no", since
+over-nesting speech is the risk and no spoken case has asked; turning it on
+is the extraction's `maxDepth` and one prompt sentence, gated by
+`TestLiveEval/items`),
 `{"items":[{"text":"Walmart","children":[{"text":"Eggs"}]},{"text":"Milk"}]}`.
 What an item is lives in one rule block, `cleanup.checklistItemRules`,
 shared with Split up's prompt (`docs/design/prompts.md`): one thing the
@@ -112,15 +129,17 @@ list's own name, also when the recording opens with that name to file it
 and protein powder to the shopping list" is Milk, Eggs, Protein powder and
 never "Add milk" (owner, 2026-09-29); "X and Y" split; **group as the person
 grouped** — a place, a person, an occasion or a category the things are
-named under is the parent, the things its children, one level, never
-invented and never the list's own name; a remove/tick/change request
+named under is the parent, the things its children, never invented and never
+the list's own name; a remove/tick/change request
 returned as spoken; garbling fixed and fillers dropped, nothing else
 changed, nothing lost. A model that answers the old shape, bare strings,
-still parses as flat items; a grandchild is clamped to a child of the
-top-level item (CL-D1). It runs in the `cleaning` status, under the cleanup
+still parses as flat items; a grandchild is flattened into the children,
+after its parent. "One level only: a child has no children" is the items
+prompt's own rule, not the shared block's, so Split up can keep a list's
+three levels. It runs in the `cleaning` status, under the cleanup
 op and deadline, and stores the tree one line per item at `clean_key`, a
-child's line two spaces in (`cleanup.RenderItems`), so a retry does not call
-again.
+child's line two spaces in per level (`cleanup.RenderItems`), so a retry does
+not call again.
 
 Until 2026-09-26 the item was the cleaned transcript on one line, and which
 words those were depended on the router's span removal, which knows filing
@@ -210,16 +229,19 @@ only the rest goes under the recording's
 marker, in the recording's order. Three rules:
 
 - an item **with children** whose words match a **top-level** line, open or
-  done, joins that block: each child not already under it is added after
-  the block's last line, a child already there and done is reopened, and a
-  done parent that gained or reopened a child is reopened (a parent with an
-  open part is not done — the editor's own rule). "chicken from Costco" over
-  a list that has Costco › Meat gives Costco › Meat, Chicken, not a second
-  Costco;
+  done, joins that block (the line and every deeper line after it): each
+  child that is not already one of the line's **direct** sub-items is added
+  after the block's last line, whatever that line's depth — a sub-sub-item
+  with a child's words is a different thing in a different group — a
+  direct sub-item already there and done is reopened, and a done parent
+  that gained or reopened a child is reopened (a parent with an open part
+  is not done — the editor's own rule). "chicken from Costco" over a list
+  that has Costco › Meat gives Costco › Meat, Chicken, not a second Costco;
 - an item **without children** whose words match **any** line is not added
-  again: open, it is a duplicate and dropped; done, it is reopened, and a
-  reopened sub-item reopens its parent, because "add milk" over a ticked
-  Milk means milk is wanted again;
+  again: open, it is a duplicate and dropped; done, it is reopened, and so
+  is every line it stands under, up to the top (`parentOf` walked to the
+  top level), because "add milk" over a ticked Milk means milk is wanted
+  again and a done item has no open descendant;
 - matching folds case, punctuation and whitespace (`llm.FoldWords`, the one
   fold every reader uses; a combining mark such as an Indic vowel sign or
   virama is part of its word, so പാൽ and പുൽ, or दाल and दिल, are two
@@ -298,12 +320,13 @@ not run, and comes back into force if the note becomes a checklist again.
 
 The prompt (`cleanup.TasksPrompt`, `noteTasksSystemPrompt`) is "the list
 as it stands → the list it was meant to be": it composes the shared item
-rules above and adds the three a whole list needs — every line's meaning is
+rules above and adds the four a whole list needs — every line's meaning is
 kept, a line that is already one thing word for word, a line holding
 several things one item each, a sentence spoken to the app the things it
 named; the groups the list has are kept and an item joins an existing group
 when its own words say so ("chicken from Costco" under Costco), two lines
-naming one thing are one item; done stays done, an open line is never
+naming one thing are one item; every item keeps its level, up to three, and
+no level is added that the list does not have; done stays done, an open line is never
 marked done, and a duplicate merges into an open item if either was open.
 Its user prompt names the list's title first, so the list's own name is
 never an item — the ring speaks the title before every line ("Business
@@ -320,12 +343,13 @@ The answer is checked against the body rather than trusted
 up, or Use this list) writes it over the body:
 
 - it must parse as items (`ParseItems`' shape, at most 500 counting
-  sub-items) — else the fixed verdict `the cleanup model returned nothing
+  sub-items, nested at most three levels, a deeper item flattened into the
+  third after its parent) — else the fixed verdict `the cleanup model returned nothing
   usable` and the previous view is kept;
 - an item whose words are not the body's words, in order
   (`llm.VerifySubsequence`; a group's name — Walmart, Party — is a body
   word), is dropped and `TasksItemsDropped` counts it, a dropped parent's
-  children lifted to the top level; the rest of the answer is stored. This
+  children lifted to its level; the rest of the answer is stored. This
   is what catches `Make a list` — the model inventing an antecedent for
   "it" — while keeping the split beside it. A reply with nothing left is
   `nothing usable`;
@@ -341,9 +365,17 @@ up, or Use this list) writes it over the body:
   words that no open answer item has closed the open one of a pair. A view
   that changed a tick is worse than the view it would replace. A line with
   no letter or digit is no item to any of this (`itemText`), so a typed
-  `- [x] —` blocks nothing.
+  `- [x] —` blocks nothing. The checks run at every depth;
+- **a done item has no open descendant** (DB6-11, settled 2026-09-30 as "the
+  parent reopens", the owner's default): a done answer item with an open
+  item under it is stored open, so `- [x] Costco` › `- [x] Meat` beside
+  `- [ ] chicken from costco` tidies to an open Costco › Meat (done),
+  Chicken, whether the model reopened Costco or left it done. The lost-tick
+  and reopened checks exempt exactly that: a done line whose words are an
+  open answer item with an open item under it. The editor's `toggleItem` and
+  the merge keep the same rule.
 
-The stored view is task-list lines, a sub-item indented two spaces, in
+The stored view is task-list lines, two spaces of indent per level, in
 `cleaned_body` as before; `stale` and `auto_clean` are unchanged. The owner
 decided on 2026-09-29 to keep Split up and improve it — this is round 6's
 half of that (`docs/backlog.md`, "Round 6"); the round-5 proposal to drop it
@@ -380,7 +412,7 @@ across than along and the drag is sideways, else it is the reorder above —
 and the axis is locked from then on, so a vertical drag that drifts never
 changes a level and a sideways one never re-sorts. Sideways, the row keeps
 its slot and every indent step (`--space-6`, 24 px at a 16 px root) to the
-right is one level in, to the left one level out, clamped to the one level
+right is one level in, to the left one level out, one level per release
 there is; the lifted row previews what release would do — set in or out by
 the step, with a 3 px bar in the accent at its start (`data-nest-preview`)
 — and shows nothing when the move is one `nest` would refuse: the first
@@ -397,7 +429,7 @@ Tab and Shift+Tab in the field are unchanged. The pinned group passes no
 
 ### Sub-items
 
-One level, as Keep has, and Keep's keys: Tab in an item's field makes it a
+Up to three levels (`MAX_DEPTH`, "Data model"), and Keep's keys: Tab in an item's field makes it a
 sub-item of the open row shown above it, Shift+Tab brings it up a level; the
 grip's menu carries the same two as "Make a sub-item" and "Move up a level"
 for a finger and for anyone who does not know the keys, 44 px each and named
@@ -408,8 +440,8 @@ reader in the field never hears the grip's description. A sub-item is set
 in by one spacing step (`data-depth`, `--space-6`) with the same drawn box
 and grip after it; the indent alone says "part of the row above". The first
 open item can never be a sub-item — it has nothing to nest under — and a
-Tab that can change nothing (that row, a row already a sub-item, Shift+Tab
-at the top level) is left to the browser, so focus moves on and the list is
+Tab that can change nothing (that row, a row already as deep as the row
+above allows, Shift+Tab at the top level) is left to the browser, so focus moves on and the list is
 never a keyboard trap.
 
 The row above is the one a person sees, not the body's previous line
@@ -422,17 +454,20 @@ row sitting in Done: indented under Milk on screen, orphaned when Milk was
 ticked, and pulled under Eggs when Eggs was reopened. Under a sub-item, Tab
 makes a sibling under the same parent. Up a level (`unnest`) is in place,
 and the sub-items that followed under the same parent become the row's own,
-as an outliner does. A parent made a sub-item takes its children along as
-its siblings, the one level being the limit; the same clamp applies when a
-parent is dropped on a sub-item's slot. The sideways drag on the grip and
+as an outliner does. A parent made a sub-item takes its children one level
+down with it, and an indent that would push one of them past the third
+level is refused (`canNest`); a parent dropped on a sub-item's slot is
+clamped instead, since a drop is placed by eye. `shiftLevel` is the one
+function for a change of level; `nestUnder` and `unnest` are its one-step
+forms. The sideways drag on the grip and
 →/← on it ("Editing the list" above) go through the same two functions, so
 every path nests the same way and refuses the same rows.
 
 Ticking a parent ticks its sub-items — the parent is the whole job, and a
 finished job has no open parts — and the whole block is held for the tick's
 beat and moves to Done together, its depth kept, so a finished parent reads
-as a block there too. Reopening a sub-item reopens its parent, because a
-parent with an open part is not done. Reopening a parent leaves its
+as a block there too. Reopening a sub-item reopens every item it stands
+under, because a parent with an open part is not done. Reopening a parent leaves its
 sub-items as they are (the choice CL-D2 asked to be stated): they were
 finished on their own terms, nothing about the parent says otherwise, and
 the person can tick the parent again once the reopened part is done — Keep's
@@ -469,8 +504,7 @@ sub-item's slot, which the draft can show but nothing can mean, and it goes
 back where it was rather than past the next row as the menu's step would
 (a drag is placed by eye, and a jump past what the eye placed it on is the
 surprise). The worker and Split up write the person's own groups as
-sub-items ("The append rule"); export and the search text are unchanged. A
-third level is `MAX_DEPTH` plus one `data-depth` rule in `checklist.css`.
+sub-items ("The append rule"); export and the search text are unchanged.
 
 Done items keep their line where it stands; the Done section is the view's
 grouping, not the body's. It is a disclosure — the `<h2>` holds a button
@@ -510,12 +544,10 @@ usual choice.
 Rejected: items as rows, or order metadata beside the body — the state of a
 task in two places, see below; hold-to-lift on the row as the pinned group
 has — a row's words are a field, and a hold on them should select words, not
-lift the row, so the grip is where every pointer lifts; unlimited nesting
-depth (CL-D1, 2026-09-27) — one level is what a spoken list needs and what
-Keep offers, deeper lists want an outline UI (collapse, guide lines per
-level) and make the 500-rune snippet count and the `tasks` view harder to
-reason about, and a third level is one constant plus CSS if a real list ever
-asks. The drag-right gesture to nest was on this list in round 5 (Tab and
+lift the row, so the grip is where every pointer lifts; nesting past three
+levels (round 8, F1, which replaced CL-D1's one level) — a fourth leaves
+about twelve characters of text at 320 px and wants an outline UI
+(collapse, guide lines per level), and no list has asked for it. The drag-right gesture to nest was on this list in round 5 (Tab and
 the menu cover keyboard and finger; a horizontal threshold on a vertical
 drag is a second gesture to learn) and came off it on 2026-09-29 at the
 owner's asking: a spoken list is nested with a thumb, on a phone, where Tab

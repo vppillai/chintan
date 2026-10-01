@@ -1678,7 +1678,8 @@ components:
           description: |
             What the body is. `note` is free-form Markdown. `checklist` is
             GitHub task-list lines — `- [ ] text` open, `- [x] text` done, a
-            sub-item indented two spaces under the line above it, one level;
+            sub-item indented two spaces under the line above it, two more per
+            level, at most three levels;
             blank lines are ignored — and nothing else. A recording filed into
             a checklist is appended as the items extracted from it, a one-level
             tree (at most 100 items counting sub-items, each at most 2,000
