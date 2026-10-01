@@ -342,7 +342,12 @@
   transition: box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-/* "‹ Slide to cancel": drifts with half the finger's travel and fades toward the line. */
+/*
+ * "‹ Slide to cancel": drifts with half the finger's travel and fades toward
+ * the line, but never closer than the gutter to the screen's left edge.
+ * `--cancel-rest-left` is its resting left edge, set by TabBar; unset, the
+ * floor is far enough away to change nothing.
+ */
 .tab-bar__cancel {
   display: flex;
   align-items: center;
@@ -353,7 +358,7 @@
   line-height: var(--line-height-tight);
   color: var(--color-muted);
   opacity: calc(1 - 0.6 * var(--hold-cancel));
-  translate: calc(var(--hold-dx) * 0.5) 0;
+  translate: max(calc(var(--hold-dx) * 0.5), calc(var(--space-4) - var(--cancel-rest-left, 100vw))) 0;
 }
 
 /* Close to the line it turns destructive and shows the bin. */

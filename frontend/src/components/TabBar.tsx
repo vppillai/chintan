@@ -1,4 +1,4 @@
-import { useCallback, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router';
 
 import { ROUTES } from '@/app/routes.ts';
@@ -13,6 +13,22 @@ import { useReducedMotion } from '@/hooks/useReducedMotion.ts';
 import { Icon, type IconName } from './Icon.tsx';
 import { RecordButton } from './RecordButton.tsx';
 import { useRecordTarget } from './useRecordTarget.ts';
+
+/**
+ * Gives the "‹ Slide to cancel" hint its resting left edge in the viewport,
+ * which the CSS clamps its drift against. The hint is centred in its slot,
+ * so how far it may travel left depends on its own width and the screen's,
+ * which CSS cannot know; without the floor a 390 px phone clipped it at the
+ * screen edge once the finger was some 80 px left of the disc (R8-P2).
+ * `offsetLeft` ignores the drift's `translate`, so this reads the rest
+ * position whenever it runs.
+ */
+function pinCancelHint(hint: HTMLElement | null): void {
+  const bar = hint?.offsetParent;
+  if (!hint || !bar) return;
+  const left = bar.getBoundingClientRect().left + bar.clientLeft + hint.offsetLeft;
+  hint.style.setProperty('--cancel-rest-left', `${String(left)}px`);
+}
 
 interface Tab {
   label: string;
@@ -161,6 +177,16 @@ export function TabBar() {
         ? 'Recording'
         : '';
 
+  /*
+   * Measured again when the bin appears near the line: it widens the
+   * centred hint, which moves its resting left edge by half the bin.
+   */
+  const near = holding && progress.cancel >= 0.6;
+  const cancelHint = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    pinCancelHint(cancelHint.current);
+  }, [holding, near]);
+
   // The finger's offset and the progress toward each line, for the CSS.
   const style = holding
     ? ({
@@ -217,9 +243,10 @@ export function TabBar() {
 
       {holding && (
         <span
+          ref={cancelHint}
           className="tab-bar__slot tab-bar__slot--start tab-bar__cancel"
           aria-hidden="true"
-          data-near={progress.cancel >= 0.6 || undefined}
+          data-near={near || undefined}
         >
           <Icon name="trash" size={20} className="tab-bar__cancel-glyph" />
           <span>‹ Slide to cancel</span>

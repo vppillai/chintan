@@ -153,8 +153,9 @@ effects. The numbers are `holdTiming.ts`'s, measured from the press point:
   while locked. Space is not taken globally, because it pages the content.
 
 What the bar draws: while held, the disc follows the finger at 1.2× with the
-accent ring, the Home slot reads "‹ Slide to cancel" (fading, and
-destructive with a bin from 60 % of the way), the You slot shows the live
+accent ring, the Home slot reads "‹ Slide to cancel" (drifting with half
+the finger's travel but never closer than 16 px to the screen's edge,
+fading, and destructive with a bin from 60 % of the way), the You slot shows the live
 level, and a lock pill stands above the disc. The tabs keep their boxes,
 hidden and inert, so the bar keeps its height and nothing in `.app__main`
 moves. The clock pill rides the bar's top edge where "Into this note" sits,
