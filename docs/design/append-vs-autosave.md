@@ -67,7 +67,10 @@ race made deterministic.
    re-reads and stamps again. Two captures appending to one note wait on each
    other's stamp for up to `Config.AppendStampWait` (10 s by default) before
    stamping over it, so the row's one stamp always names the write in flight;
-   only a holder that died mid-append is ever stamped over.
+   only a holder that died mid-append is ever stamped over. A move of a
+   recording into a note is a second stamper of that note (`moveInto`, R9-BE2):
+   it stamps the target before copying the paragraph in, clears the stamp with
+   the target's refresh, and refuses the move rather than stamp over a worker's.
 2. **Clear after indexing.** `RefreshNoteIndex` (`ClearAppendStampFor`) clears
    the two attributes in the same `PutNote` that publishes the paragraph's
    snippet and search text,

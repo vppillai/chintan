@@ -197,9 +197,10 @@ var ErrNotATaskList = fmt.Errorf("cleanup: the model did not return a task list"
 //     (owner feedback 2026-09-26). Dropping rather than refusing keeps the
 //     split the model got right;
 //   - every open body line, a prose line with words included, must still be
-//     in the kept answer by words: an item that is the line, a part of it
-//     (one line split into several) or that holds it (several lines merged
-//     into one). One with none is text the model dropped, and the whole
+//     in the kept answer by words: an open item that is the line, a part of
+//     it (one line split into several) or that holds it (several lines
+//     merged into one); a done item does not count, since it would be the
+//     line closed. One with none is text the model dropped, and the whole
 //     answer is refused: the answer is written over the body;
 //   - every done body line must be accounted for by a done answer item whose
 //     words are the line's, or a sub-sequence of them (a done line the model
@@ -343,13 +344,15 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 	// Coverage: every open body line (a prose line with words included) is
 	// still in the answer by words — an item that is the line, a part of it
 	// (a line split into several), or that holds it (several lines merged
-	// into one). A line with none is dropped text; the kept answer is written
-	// over the body, so the whole answer is refused rather than the person's
-	// list shortened (review 2026-10-01, BE-1).
+	// into one). Only an open answer item counts: a done one with the line's
+	// words is the model closing it ("- [x] Milk", "- [ ] Milk 2 litres"
+	// answered as a done Milk). A line with none is dropped text; the kept
+	// answer is written over the body, so the whole answer is refused rather
+	// than the person's list shortened (review 2026-10-01, BE-1).
 	for line := range bodyOpen {
 		covered := false
 		for _, it := range answer {
-			if llm.VerifySubsequence(it.Text, line) || llm.VerifySubsequence(line, it.Text) {
+			if !it.Done && (llm.VerifySubsequence(it.Text, line) || llm.VerifySubsequence(line, it.Text)) {
 				covered = true
 				break
 			}

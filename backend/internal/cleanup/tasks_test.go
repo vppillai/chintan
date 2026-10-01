@@ -158,7 +158,8 @@ func TestSplitOutputRefusesALostReopenedOrInventedTick(t *testing.T) {
 // BE-1 (review 2026-10-01): an answer that drops an open line or a prose
 // line is refused whole, since Tidy up list writes it over the body. A
 // line is kept when its words are in some answer item — a split, a merge
-// and a regroup under a new group all are.
+// and a regroup under a new group all are. Only an open answer item covers
+// a line: a done one with its words is the line closed.
 func TestSplitOutputRefusesALostOpenItemOrProseLine(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, reply, want string
@@ -166,6 +167,8 @@ func TestSplitOutputRefusesALostOpenItemOrProseLine(t *testing.T) {
 		{"the repro: three open items gone", "- [ ] Milk\n- [ ] Eggs\n- [ ] Bread\n- [ ] Rice", `{"items":[{"text":"Milk"}]}`, ""},
 		{"a prose line gone", "- [ ] Milk\nRemember the coupon\n- [ ] Eggs", `{"items":["Milk","Eggs"]}`, ""},
 		{"an open sub-item gone", "- [ ] Costco\n  - [ ] Meat\n  - [ ] Rice", `{"items":[{"text":"Costco","children":["Meat"]}]}`, ""},
+		{"an open line closed into a done one that holds it", "- [x] Milk\n- [ ] Milk 2 litres", `{"items":[{"text":"Milk","done":true}]}`, ""},
+		{"an open line closed into a done part of it", "- [x] Eggs\n- [ ] Buy eggs", `{"items":[{"text":"Eggs","done":true}]}`, ""},
 		{"two lines merged into one", "- [ ] Milk\n- [ ] Milk 2 litres\n- [ ] Eggs", `{"items":["Milk 2 litres","Eggs"]}`, "- [ ] Milk 2 litres\n- [ ] Eggs"},
 		{"one line split into three", "- [ ] Add milk, eggs and protein powder to the shopping list", `{"items":["Milk","Eggs","Protein powder"]}`, "- [ ] Milk\n- [ ] Eggs\n- [ ] Protein powder"},
 		{"a regroup under a new group", "- [ ] Costco\n  - [ ] Meat\n- [ ] chicken from costco and rice from the indian store", `{"items":[{"text":"Costco","children":["Meat","Chicken"]},{"text":"Indian store","children":["Rice"]}]}`, "- [ ] Costco\n  - [ ] Meat\n  - [ ] Chicken\n- [ ] Indian store\n  - [ ] Rice"},

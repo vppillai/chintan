@@ -183,7 +183,36 @@ func (s *CaptureService) moveInto(ctx context.Context, userID string, current mo
 		_, text, found = CutCaptureParagraph(string(body), captureID)
 	}
 
+	// The target carries the append stamp from before its body write until
+	// the row refresh in step 4 publishes the paragraph, so an editor save on
+	// the target in between is refused (service.UpdateNote, ErrAppendInProgress)
+	// instead of passing the version check and storing a body read before the
+	// paragraph — which step 3 would then cut from its only other home
+	// (review 2026-10-01, BE-2). An exit before the cut hands the stamp back
+	// the way an append that never writes does; once the cut has landed the
+	// target holds the only copy and the stamp stays until a refresh of the
+	// target clears it (ClearAppendStampFor, below or on the retry) or the
+	// 20-minute lease (repository.AppendClaimLease) runs out, so a device that
+	// loaded the target under the stamp cannot save over the paragraph in the
+	// meantime. A process killed anywhere here leaves it to the same two.
+	stamped := false
+	defer func() {
+		if !stamped {
+			return
+		}
+		if cerr := s.store.ClearNoteAppend(ctx, userID, targetNoteID, captureID); cerr != nil {
+			obs.Log(ctx).Warn("capture move could not clear the target's append stamp; it expires with the lease",
+				slog.String("capture_id", captureID),
+				slog.String("to_note_id", targetNoteID),
+				slog.String("error", cerr.Error()))
+		}
+	}()
 	if found {
+		if err := s.stampMoveTarget(ctx, userID, targetNoteID, captureID); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrMoveIncomplete, err)
+		}
+		stamped = true
+
 		// 2. Copy it into the target. A copy already there is left by a move
 		// that stopped between the writes; the source's text replaces it,
 		// since the source is the note the user has been editing since.
@@ -235,12 +264,21 @@ func (s *CaptureService) moveInto(ctx context.Context, userID string, current mo
 				slog.String("capture_id", captureID),
 				slog.String("error", err.Error()))
 		}
+		// The cut has landed, by either path: from here the stamp is the
+		// target's guard, not this call's to hand back.
+		stamped = false
 	}
 
 	// 4. Both indexes follow their bodies, then the row follows the paragraph.
 	// The row is last so a capture never claims a note its paragraph is not
 	// in yet; a retry after a failure here re-runs exactly these steps.
-	var touched []model.NoteIndex
+	// The target first: its refresh is what clears the stamp, so a failure
+	// on the source's leaves the target saveable again.
+	refreshed, err := RefreshNoteIndex(ctx, s.store, s.objects, userID, targetNoteID, RefreshOptions{ClearAppendStampFor: captureID})
+	if err != nil {
+		return nil, fmt.Errorf("failed to refresh the target note index: %w", err)
+	}
+	touched := []model.NoteIndex{refreshed}
 	if sourceKey != "" {
 		refreshed, err := RefreshNoteIndex(ctx, s.store, s.objects, userID, sourceID, RefreshOptions{})
 		if err != nil {
@@ -248,11 +286,6 @@ func (s *CaptureService) moveInto(ctx context.Context, userID string, current mo
 		}
 		touched = append(touched, refreshed)
 	}
-	refreshed, err := RefreshNoteIndex(ctx, s.store, s.objects, userID, targetNoteID, RefreshOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to refresh the target note index: %w", err)
-	}
-	touched = append(touched, refreshed)
 	updated, err := s.repointCapture(ctx, userID, captureID, targetNoteID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to re-point the capture: %w", err)
@@ -294,6 +327,31 @@ func (s *CaptureService) olderCapturesIn(ctx context.Context, userID, noteID, cr
 		at, ok := created[id]
 		return ok && at > createdAt
 	}, nil
+}
+
+// stampMoveTarget puts captureID's append stamp on the target row under its
+// version, re-reading on a lost race as every writer of the row does. Another
+// capture's fresh stamp means the worker is writing that body right now; the
+// move does not wait on it (the worker waits on ours, pipeline.stampNoteAppend)
+// and is refused instead, for the person to repeat.
+func (s *CaptureService) stampMoveTarget(ctx context.Context, userID, noteID, captureID string) error {
+	var lastErr error
+	for attempt := 0; attempt < maxIndexRefreshAttempts; attempt++ {
+		note, err := s.store.GetNote(ctx, userID, noteID)
+		if err != nil {
+			return err
+		}
+		if note.AppendingCapture != captureID && AppendInProgress(note, s.now()) {
+			return errors.New("a recording is being added to the target note")
+		}
+		if _, err = s.store.StampNoteAppend(ctx, userID, noteID, captureID, note.Version, s.now()); err == nil {
+			return nil
+		} else if !errors.Is(err, repository.ErrVersionConflict) {
+			return err
+		}
+		lastErr = err
+	}
+	return lastErr
 }
 
 // sourceHolds reports whether the source body still carries captureID's
