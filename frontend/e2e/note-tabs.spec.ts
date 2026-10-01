@@ -230,6 +230,26 @@ test.describe('on a phone', () => {
     expect(await page.locator('.app__main').evaluate((main) => main.scrollTop)).toBe(0);
   });
 
+  test('a drag down on the sheet’s head, with the note at its top, pulls nothing', async ({ page, api }) => {
+    // The head is a fixed row outside the body's scroller (R8-S1), so only
+    // the guard's exclusion of the whole sheet keeps it from arming.
+    longBody(api);
+    await page.setViewportSize({ width: 412, height: 700 });
+    await page.goto('/notes/roof-repair');
+    await noteAction(page, 'Details');
+    expect(await page.locator('.app__main').evaluate((main) => main.scrollTop)).toBe(0);
+    const box = (await page.locator('.note-panel__head').boundingBox())!;
+    const cdp = await page.context().newCDPSession(page);
+    let midPhase: string | null = null;
+    await drag(cdp, box.x + box.width / 3, box.y + box.height / 2, 0, 150, {
+      beforeEnd: async () => {
+        midPhase = await page.locator('.pull-refresh').getAttribute('data-phase');
+      },
+    });
+    expect(midPhase).toBe('idle');
+    expect(await page.locator('.app__main').evaluate((main) => main.scrollTop)).toBe(0);
+  });
+
   test.describe('a swipe between the segments', () => {
     const selected = (page: Page) =>
       page.getByRole('tablist', { name: 'Note views' }).locator('[aria-selected="true"]').textContent();

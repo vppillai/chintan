@@ -201,9 +201,11 @@ scrolls, sometimes the details" (T1: `data-phase="armed"`, `--pull-offset:
 on `touchstart` the hook walks from the target up to the container and never
 arms inside an element with computed `overflow-y: auto|scroll` and more
 content than height. That covers the sheet and the transcript scrollers on
-the Recordings tab at once; a scroller with nothing to scroll is passed over,
-so the short Share sheet still lets the note be pulled. If an iPhone is ever
-seen to chain from that short sheet, the one-rule answer is
+the Recordings tab at once; a scroller with nothing to scroll is passed over.
+The note's sheet (`.note-drawer`) is excluded whole, head included and
+whether it scrolls or not: once the head became a fixed row outside the
+body's scroller, a drag on it armed the pull (R8-S1). If an iPhone is ever
+seen to chain from the short Share sheet, the one-rule answer is
 `.app__main:has(.note-drawer:not([hidden])) { overflow: hidden }`.
 
 ## The keyboard
