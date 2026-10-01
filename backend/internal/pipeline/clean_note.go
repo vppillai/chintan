@@ -112,6 +112,12 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 	// has already set cleaned_stale on the row, but this run is about to
 	// overwrite that row with a view of the OLDER body, so the flag has to be
 	// derived from what was actually cleaned rather than copied from the row.
+	//
+	// The row's version is kept too, read before the body: an append that
+	// lands after the ETag re-read below but before this run's row write
+	// still bumps the version, and that write would otherwise store the view
+	// of the older body as current over the append's stale mark.
+	versionAtRead := note.Version
 	raw, etag, err := p.cfg.Objects.GetWithETag(ctx, note.S3MarkdownKey)
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return fmt.Errorf("pipeline: clean-note: get note body: %w", err)
@@ -209,7 +215,7 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 		n.CleanedBody = text
 		n.CleanedMode = mode
 		n.CleanedAt = model.FormatTime(p.now())
-		n.CleanedStale = stale
+		n.CleanedStale = stale || n.Version != versionAtRead
 		n.CleanedError = ""
 	})
 	if err != nil {

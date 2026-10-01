@@ -13,6 +13,8 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
+	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
@@ -605,5 +607,55 @@ func TestARedeliveredCleanRunThatAlreadyWroteDoesNotCallTheModelAgain(t *testing
 	}
 	if got := len(llmFake.NoteCalls()); got != 2 {
 		t.Fatalf("a run whose stamp is still on the row was skipped (model calls = %d, want 2)", got)
+	}
+}
+
+// appendAfterReread lands an append between the clean's ETag re-read and its
+// row write: the second read of the body returns the old ETag, and only then
+// the body grows and the row moves on, as an append's index refresh does.
+type appendAfterReread struct {
+	repository.Objects
+	key   string
+	store repository.Store
+	mu    sync.Mutex
+	reads int
+}
+
+func (o *appendAfterReread) GetWithETag(ctx context.Context, key string) ([]byte, string, error) {
+	body, etag, err := o.Objects.GetWithETag(ctx, key)
+	o.mu.Lock()
+	o.reads++
+	race := err == nil && key == o.key && o.reads == 2
+	o.mu.Unlock()
+	if race {
+		//nolint:staticcheck // QF1008: o.Objects.X is this wrapper's "call the real store" idiom.
+		_ = o.Objects.Put(ctx, key, append(body, []byte("\n- [ ] jam")...), "text/markdown")
+		n, gerr := o.store.GetNote(ctx, "user1", "l1")
+		if gerr == nil {
+			n.CleanedStale = true
+			_, _ = o.store.PutNote(ctx, "user1", n)
+		}
+	}
+	return body, etag, err
+}
+
+// A tidy whose ETag re-read missed an append must not store its view as
+// current: the row's version moved since it was read, so the view is stale
+// and the client's Tidy leaves the list (with the dictated item) alone.
+func TestCleanNoteMarksTheViewStaleWhenTheRowMovedAfterTheReread(t *testing.T) {
+	objects := &appendAfterReread{Objects: memory.NewObjects(), key: "tenants/user1/notes/l1/note.md"}
+	h := newHarness(t, harnessOpts{objects: objects, llm: &fake.LLM{}})
+	objects.store = h.store
+	seedChecklist(t, h, nil)
+
+	if err := NewWorker(h.pipeline).Handle(context.Background(), cleanNoteTask("user1", "l1", model.NoteCleanTasks)); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if objects.reads < 2 {
+		t.Fatalf("body read %d times, want the read and the re-read", objects.reads)
+	}
+	n := getNote(t, h, "l1")
+	if n.CleanedBody == "" || !n.CleanedStale {
+		t.Errorf("view = %q stale=%v, want a view marked stale", n.CleanedBody, n.CleanedStale)
 	}
 }

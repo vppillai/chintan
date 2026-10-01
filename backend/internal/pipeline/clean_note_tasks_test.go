@@ -187,3 +187,23 @@ func TestAppendToAnAutoCleanChecklistDoesNotClean(t *testing.T) {
 		t.Errorf("a view was written after the append: %q", n.CleanedBody)
 	}
 }
+
+// The regeneration's own hand-off skips a checklist too (R8-F8): a checklist
+// with a view gets no model call and no clean stamp after Regenerate.
+func TestRegenerateHandOffSkipsAChecklist(t *testing.T) {
+	llmFake := &fake.LLM{}
+	h := newHarness(t, harnessOpts{llm: llmFake})
+	note := seedNoteWithBody(t, h, "l1", "- [ ] milk", func(n *model.NoteIndex) {
+		n.Kind = model.NoteKindChecklist
+		n.CleanedBody, n.CleanedMode, n.CleanedAt = "- [ ] milk", model.NoteCleanTasks, model.Now()
+	})
+
+	h.pipeline.cleanNoteAfter(context.Background(), "user1", note, "regenerate")
+
+	if calls := llmFake.NoteCalls(); len(calls) != 0 {
+		t.Errorf("clean-note calls = %+v, want none for a checklist", calls)
+	}
+	if n := getNote(t, h, "l1"); n.CleanedRequestedAt != "" {
+		t.Errorf("a clean request was stamped: %q", n.CleanedRequestedAt)
+	}
+}

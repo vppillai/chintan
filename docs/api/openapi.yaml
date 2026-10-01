@@ -418,7 +418,7 @@ paths:
         produced last time, found by their words wherever ticking or
         reordering moved them; a tick follows its item's words, and items you
         typed stay. The whole-note cleaned view is regenerated afterwards when
-        the note has one. The title is not changed.
+        the note has one (not for a checklist). The title is not changed.
 
         Answers 202 at once with how many recordings were handed to the
         worker; zero means nothing in the note came from a prompt (a verbatim
@@ -429,7 +429,7 @@ paths:
         this regeneration, or a recording being filed — is 409. The spend cap
         applies: the run is one cleanup call per recording, priced as any
         other, plus one whole-note call over the entire body when the note
-        keeps a cleaned view (larger than any single recording's call; made
+        keeps a cleaned view and is not a checklist (larger than any single recording's call; made
         only when a recording landed), so a capped instance is told before
         anything is reset. At most 200 recordings per request.
       parameters:
