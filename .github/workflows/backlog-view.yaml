@@ -1,0 +1,39 @@
+name: Backlog view
+
+# docs/backlog-open.md is generated from docs/backlog.md by scripts/backlog-view.py
+# and committed, the way the contract fixtures are: the committed file must be the
+# one the script produces, or the "open items" view silently stops being current.
+# This lives outside ci.yaml because ci.yaml ignores every .md change (R9-OPS3), and
+# the backlog is the one Markdown file whose edits must run a check.
+on:
+  pull_request:
+    paths:
+      - docs/backlog.md
+      - docs/backlog-open.md
+      - scripts/backlog-view.py
+      - .github/workflows/backlog-view.yaml
+  push:
+    branches:
+      - main
+    paths:
+      - docs/backlog.md
+      - docs/backlog-open.md
+      - scripts/backlog-view.py
+      - .github/workflows/backlog-view.yaml
+
+permissions:
+  contents: read
+
+jobs:
+  view:
+    name: docs/backlog-open.md is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: python3 scripts/backlog-view.py --self-test && python3 scripts/backlog-view.py
+      - name: The committed view is the one the script produces
+        run: |
+          if ! git diff --exit-code -- docs/backlog-open.md; then
+            echo "::error::docs/backlog-open.md is stale. Run 'python3 scripts/backlog-view.py' and commit the result."
+            exit 1
+          fi

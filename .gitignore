@@ -25,3 +25,6 @@ frontend/e2e/__screenshots__/sweep/
 .worktrees/
 .omc/
 backend/chintanctl
+
+# Python writes these when a script is imported or byte-compiled (python3 -m py_compile).
+__pycache__/
