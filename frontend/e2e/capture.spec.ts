@@ -661,29 +661,111 @@ for (const width of [390, 360]) {
   });
 }
 
-test('a hold dragged up locks: it keeps recording with the button up, and Send sends', async ({
+/*
+ * Locking hands the live take to the full recording screen (owner,
+ * 2026-10-01, reversing the locked bar of D1): the waveform, the clock and
+ * the screen's own controls, on the same recording, which keeps counting.
+ */
+test('a hold dragged up on a note opens the recording screen on the same take, into the note', async ({
+  page,
+  api,
+}) => {
+  const sent = puts(page);
+  await page.goto('/notes/roof-repair');
+  const depth = await page.evaluate(() => history.length);
+  const { x, y } = await discCentre(page);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.waitForTimeout(HOLD_ARM_MS + 1_200);
+  await page.mouse.move(x, y - LOCK_DY_PX - 8, { steps: 8 });
+  await page.mouse.up();
+
+  // Pushed, not replaced: Back is the note again.
+  await expect(page).toHaveURL(/\/capture\?note=roof-repair$/);
+  expect(await page.evaluate(() => history.length)).toBe(depth + 1);
+  await expect(page.getByTestId('status-region')).toHaveText('Recording, hands-free');
+  await expect(page.locator('.capture__state')).toHaveText('Recording');
+  await expect(page.locator('canvas.waveform')).toBeVisible();
+  await expect(page.getByRole('button', { name: /into roof repair/i })).toBeVisible();
+  // The clock carried over from the hold and is still counting.
+  const timer = page.locator('.capture__timer');
+  await expect(timer).not.toHaveText('00:00');
+  const before = await timer.textContent();
+  await expect(timer).not.toHaveText(before!, { timeout: 3_000 });
+  expect(api.captures).toHaveLength(0);
+
+  // The screen's own controls work on the taken-over take.
+  await page.getByRole('button', { name: 'Pause' }).click();
+  await expect(page.locator('.capture__state')).toHaveText('Paused');
+  await page.getByRole('button', { name: 'Resume' }).click();
+  await expect(page.locator('.capture__state')).toHaveText('Recording');
+  const create = page.waitForRequest(
+    (request) => request.method() === 'POST' && request.url().endsWith('/api/v1/captures'),
+  );
+  await page.getByRole('button', { name: 'Send' }).click();
+  // One take from the press: its length includes the time held before the lock.
+  const body = (await create).postDataJSON() as { duration_ms: number };
+  expect(body.duration_ms).toBeGreaterThan(HOLD_ARM_MS + 1_200);
+  await expect.poll(() => api.captures.length, { message: 'capture created' }).toBe(1);
+  expect(api.captures[0]?.note_id).toBe('roof-repair');
+  await expect.poll(() => sent.length, { message: 'audio uploaded' }).toBeGreaterThan(0);
+});
+
+test('a hold dragged up and then cancelled on the recording screen sends nothing', async ({
   page,
   api,
 }) => {
   const sent = puts(page);
   await page.goto('/');
-  const bar = page.getByRole('navigation', { name: 'Main' });
   const { x, y } = await discCentre(page);
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.waitForTimeout(HOLD_ARM_MS + 100);
   await page.mouse.move(x, y - LOCK_DY_PX - 8, { steps: 8 });
   await page.mouse.up();
-
-  await expect(bar).toHaveAttribute('data-hold', 'locked');
-  await page.waitForTimeout(MIN_TALK_MS + 400);
-  expect(api.captures).toHaveLength(0);
-  await expect(page.getByRole('button', { name: 'Discard recording' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Stop and review' })).toBeVisible();
-  await page.getByRole('button', { name: 'Send recording' }).click();
-  await expect.poll(() => api.captures.length, { message: 'capture created' }).toBe(1);
-  await expect.poll(() => sent.length, { message: 'audio uploaded' }).toBeGreaterThan(0);
+  await expect(page).toHaveURL(/\/capture$/);
+  await expect(page.locator('.capture__state')).toHaveText('Recording');
+  // Under ten seconds: gone at once, no question.
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page).toHaveURL(/\/$/);
+  await page.waitForTimeout(800);
+  expect(api.captures).toHaveLength(0);
+  expect(sent).toHaveLength(0);
+});
+
+test('a locked take of ten seconds or more asks once before Cancel discards it; Escape keeps it', async ({
+  page,
+  api,
+}) => {
+  test.setTimeout(45_000);
+  const sent = puts(page);
+  await page.goto('/');
+  const { x, y } = await discCentre(page);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.waitForTimeout(HOLD_ARM_MS + 100);
+  await page.mouse.move(x, y - LOCK_DY_PX - 8, { steps: 8 });
+  await page.mouse.up();
+  await expect(page).toHaveURL(/\/capture$/);
+  // Past the line, by the screen's own clock.
+  await expect(page.locator('.capture__timer')).toHaveText('00:10', { timeout: 15_000 });
+
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  const dialog = page.getByRole('dialog', { name: /^Discard 00:1\d of recording\?$/ });
+  await expect(dialog).toBeVisible();
+  // Escape is the dialog's Cancel: the take goes on.
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator('.capture__state')).toHaveText('Recording');
+  await expect(page).toHaveURL(/\/capture$/);
+
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await dialog.getByRole('button', { name: 'Discard' }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await page.waitForTimeout(500);
+  expect(api.captures).toHaveLength(0);
+  expect(sent).toHaveLength(0);
 });
 
 /*

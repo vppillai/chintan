@@ -101,49 +101,26 @@ describe('holding the record button', () => {
     expect(spoken()).toHaveTextContent('Recording');
   });
 
-  it('locks on a slide up and offers Discard, Stop and Send; Stop opens review for the note', async () => {
+  it('locks on a slide up by opening the capture screen on the same live take, into the note', async () => {
     mountBar('/notes/roof-repair');
     const disc = await press();
+    const { localId } = useCaptureStore.getState().model;
+    const recorder = fake.recorder;
     fireEvent.pointerMove(disc, { ...touch, clientX: 200, clientY: 800 - LOCK_DY_PX - 8 });
-    fireEvent.pointerUp(disc, touch);
-    expect(nav()).toHaveAttribute('data-hold', 'locked');
-    expect(spoken()).toHaveTextContent('Locked. Recording hands-free.');
-    expect(pill()).toHaveTextContent('Into this note');
-    expect(screen.getByRole('button', { name: 'Discard recording' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Send recording' })).toBeInTheDocument();
-    // The lift did not send, and the recording goes on with the finger up.
-    expect(captureState()).toBe('recording');
-    await wait(MIN_TALK_MS + 100);
-    speak();
-    fireEvent.click(screen.getByRole('button', { name: 'Stop and review' }));
     expect(where()).toBe('/capture?note=roof-repair');
-    await waitFor(() => {
-      expect(captureState()).toBe('review');
-    });
+    fireEvent.pointerUp(disc, touch);
+    // The same take, still recording: no second recorder, nothing discarded or sent.
+    await wait(MIN_TALK_MS);
+    expect(captureState()).toBe('recording');
+    expect(useCaptureStore.getState().model.localId).toBe(localId);
+    expect(useCaptureStore.getState().model.noteId).toBe('roof-repair');
+    expect(fake.recorder).toBe(recorder);
     expect(fake.creates).toHaveLength(0);
   });
 
-  it('discards a short locked take from the Discard button, and gives focus back to the disc', async () => {
+  it('keeps a held take when Escape belongs to something else: a field, or an open dialog or menu', async () => {
     mountBar('/');
-    const disc = await press();
-    fireEvent.pointerMove(disc, { ...touch, clientX: 200, clientY: 800 - LOCK_DY_PX });
-    fireEvent.pointerUp(disc, touch);
-    const discard = screen.getByRole('button', { name: 'Discard recording' });
-    discard.focus();
-    fireEvent.click(discard);
-    await waitFor(() => {
-      expect(captureState()).toBe('idle');
-    });
-    expect(nav()).not.toHaveAttribute('data-hold');
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Record' }));
-    expect(fake.creates).toHaveLength(0);
-  });
-
-  it('keeps a locked take when Escape belongs to something else: a field, or an open dialog or menu', async () => {
-    mountBar('/');
-    const disc = await press();
-    fireEvent.pointerMove(disc, { ...touch, clientX: 200, clientY: 800 - LOCK_DY_PX });
-    fireEvent.pointerUp(disc, touch);
+    await press();
     // Escape closing the note's Find field.
     const find = document.createElement('input');
     find.type = 'search';
@@ -164,8 +141,8 @@ describe('holding the record button', () => {
     document.body.dispatchEvent(taken);
     await wait(50);
     expect(captureState()).toBe('recording');
-    expect(nav()).toHaveAttribute('data-hold', 'locked');
-    // Escape that is the page's own still discards.
+    expect(nav()).toHaveAttribute('data-hold', 'holding');
+    // Escape that is the page's own still cancels.
     fireEvent.keyDown(document.body, { key: 'Escape' });
     await waitFor(() => {
       expect(captureState()).toBe('idle');
@@ -174,32 +151,14 @@ describe('holding the record button', () => {
 
   it('labels the clock with the recording\'s own target, not the route\'s', async () => {
     mountBar('/notes/roof-repair');
-    const disc = await press();
+    await press();
     expect(pill()).toHaveTextContent('Into this note');
-    fireEvent.pointerMove(disc, { ...touch, clientX: 200, clientY: 800 - LOCK_DY_PX });
-    fireEvent.pointerUp(disc, touch);
     // Retargeted to a new note (as from the capture screen's chooser): the
     // route is still the note, the pill follows the recording.
     act(() => {
       useCaptureStore.getState().setTarget(null);
     });
     expect(pill()).not.toHaveTextContent('Into this note');
-  });
-
-  it('sends from the locked disc', async () => {
-    mountBar('/');
-    const disc = await press();
-    fireEvent.pointerMove(disc, { ...touch, clientX: 200, clientY: 800 - LOCK_DY_PX });
-    fireEvent.pointerUp(disc, touch);
-    await wait(MIN_TALK_MS + 700);
-    speak();
-    fireEvent.pointerDown(disc, { ...touch, pointerId: 2, clientX: 200, clientY: 800 });
-    fireEvent.pointerUp(disc, { ...touch, pointerId: 2 });
-    fireEvent.click(disc);
-    await waitFor(() => {
-      expect(captureState()).toBe('uploaded');
-    });
-    expect(fake.creates).toHaveLength(1);
   });
 
   it('does not record from R while a dialog or menu is open', async () => {

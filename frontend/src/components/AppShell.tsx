@@ -181,7 +181,18 @@ export function AppShell() {
 
         {screen !== 'capture' && <TabBar />}
 
-        <StatusRegion message={`${SCREEN_TITLES[screen]} screen`} />
+        {/*
+          A hold locked on the tab bar arrives here mid-take: the news is that
+          it carries on without the finger, not which screen this is.
+        */}
+        <StatusRegion
+          message={
+            screen === 'capture' &&
+            (location.state as { handsFree?: boolean } | null)?.handsFree === true
+              ? 'Recording, hands-free'
+              : `${SCREEN_TITLES[screen]} screen`
+          }
+        />
       </div>
     </>
   );

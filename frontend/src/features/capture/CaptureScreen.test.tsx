@@ -7,7 +7,7 @@ import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx'
 import type { ApiContextValue } from '@/api/ApiProvider.tsx';
 
 import { CaptureScreen, captureReturnPath } from './CaptureScreen.tsx';
-import { INITIAL_CAPTURE } from './machine.ts';
+import { DISCARD_CONFIRM_AFTER_MS, INITIAL_CAPTURE } from './machine.ts';
 import type { RecorderDeps } from './recorder.ts';
 import { useCaptureStore } from './store.ts';
 import { optionMeta } from './TargetChooser.tsx';
@@ -503,6 +503,61 @@ describe('review before send', () => {
 
     expect(await screen.findByText('Note roof-repair')).toBeInTheDocument();
     expect(useCaptureStore.getState().model.state).toBe('idle');
+  });
+
+  it('discards a take just under ten seconds at once, with no question', async () => {
+    reviewed(DISCARD_CONFIRM_AFTER_MS - 1);
+    mount();
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Discard' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(await screen.findByText('Note roof-repair')).toBeInTheDocument();
+    expect(useCaptureStore.getState().model.state).toBe('idle');
+  });
+
+  it('asks once before discarding a take of ten seconds, and Escape or Keep keeps it', async () => {
+    reviewed(DISCARD_CONFIRM_AFTER_MS);
+    mount();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Discard' }));
+    const dialog = screen.getByRole('dialog', { name: 'Discard 00:10 of recording?' });
+    expect(dialog).toBeInTheDocument();
+    // Escape is the dialog's Cancel: it never discards.
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(useCaptureStore.getState().model.state).toBe('review');
+
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Keep' }));
+    expect(useCaptureStore.getState().model.state).toBe('review');
+
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Discard' }));
+    expect(await screen.findByText('Note roof-repair')).toBeInTheDocument();
+    expect(useCaptureStore.getState().model.state).toBe('idle');
+  });
+
+  it('asks before Cancel throws away a live take of ten seconds or more, as a locked hold arrives', async () => {
+    act(() => {
+      useCaptureStore.setState({
+        model: {
+          ...INITIAL_CAPTURE,
+          state: 'recording',
+          localId: 'cap-live',
+          bytes: 9_000,
+          chunks: 3,
+          startedAt: Date.now(),
+          accumulatedMs: 42_000,
+          elapsedMs: 42_000,
+          noteId: null,
+        },
+      });
+    });
+    mount();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('dialog', { name: 'Discard 00:42 of recording?' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(useCaptureStore.getState().model.state).toBe('recording');
   });
 
   it('Re-record discards the take and opens the microphone again into the same note', async () => {

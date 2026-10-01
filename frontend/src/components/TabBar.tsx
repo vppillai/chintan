@@ -115,8 +115,8 @@ function retireCoach(): void {
  *
  * The bar is also where push-to-talk is drawn (R8, F5). While the disc is
  * held, the Home slot reads "‹ Slide to cancel", the You slot shows the live
- * level, and the lock pill stands above the disc; locked, the slots are
- * Discard and Stop and the disc is Send. The tabs keep their boxes, hidden
+ * level, and the lock pill stands above the disc; a lock hands the take to
+ * the capture screen, where the bar is not drawn. The tabs keep their boxes, hidden
  * and inert, so the bar never changes height and nothing in `.app__main`
  * moves. The clock pill rides the bar's top edge where "Into this note" sits.
  */
@@ -140,24 +140,13 @@ export function TabBar() {
   const { notice } = hold;
 
   const holding = phase === 'holding';
-  const locked = phase === 'locked';
-  const active = holding || locked;
   const progress = holdProgress(hold.gesture);
-  // The recording's own target, not the route's: a locked take aimed at a
-  // note keeps saying so on Home, and one aimed at a new note says nothing
-  // when you open a note.
+  // The recording's own target, not the route's.
   const clock = `${formatElapsed(model.elapsedMs)}${model.noteId !== null ? ' · Into this note' : ''}`;
 
   let pill: ReactNode = null;
   if (notice) pill = NOTICES[notice].pill;
-  else if (locked) {
-    pill = (
-      <>
-        <Icon name="lock" size={14} />
-        {model.state === 'requesting' ? 'Allow the microphone…' : clock}
-      </>
-    );
-  } else if (holding) {
+  else if (holding) {
     pill = (
       <>
         <span className="tab-bar__dot" />
@@ -167,15 +156,7 @@ export function TabBar() {
   } else if (into !== null) pill = 'Into this note';
   else if (coach && pathname === ROUTES.home) pill = 'Hold to talk · tap to record';
 
-  const spoken = notice
-    ? NOTICES[notice].spoken
-    : locked
-      ? model.state === 'requesting'
-        ? 'Allow the microphone…'
-        : 'Locked. Recording hands-free.'
-      : holding
-        ? 'Recording'
-        : '';
+  const spoken = notice ? NOTICES[notice].spoken : holding ? 'Recording' : '';
 
   /*
    * Measured again when the bin appears near the line: it widens the
@@ -201,7 +182,7 @@ export function TabBar() {
     <nav
       className="tab-bar"
       aria-label="Main"
-      data-hold={active ? phase : undefined}
+      data-hold={holding ? phase : undefined}
       data-notice={notice ?? undefined}
       style={style}
     >
@@ -209,7 +190,7 @@ export function TabBar() {
         tab={home}
         current={home.matches(pathname)}
         slot="start"
-        hidden={active}
+        hidden={holding}
         onGo={goHome}
       />
       <div className="tab-bar__record">
@@ -235,7 +216,7 @@ export function TabBar() {
         tab={you}
         current={you.matches(pathname)}
         slot="end"
-        hidden={active}
+        hidden={holding}
         onGo={() => {
           goTab(you.to);
         }}
@@ -262,34 +243,6 @@ export function TabBar() {
           />
         </span>
       )}
-      {locked && (
-        <button
-          type="button"
-          className="tab-bar__tab tab-bar__slot tab-bar__slot--start"
-          data-armed={hold.gesture.discardArmedUntil !== null || undefined}
-          aria-label={
-            hold.gesture.discardArmedUntil !== null ? 'Tap again to discard' : 'Discard recording'
-          }
-          onClick={hold.discard}
-        >
-          <Icon name="trash" size={22} />
-          <span className="tab-bar__label">
-            {hold.gesture.discardArmedUntil !== null ? 'Discard?' : 'Discard'}
-          </span>
-        </button>
-      )}
-      {locked && (
-        <button
-          type="button"
-          className="tab-bar__tab tab-bar__slot tab-bar__slot--end"
-          aria-label="Stop and review"
-          onClick={hold.stop}
-        >
-          <Icon name="stop" size={22} />
-          <span className="tab-bar__label">Stop</span>
-        </button>
-      )}
-
       <p className="visually-hidden" role="status" aria-live="polite">
         {spoken}
       </p>
@@ -307,7 +260,7 @@ function TabLink({
   tab: Tab;
   current: boolean;
   slot: 'start' | 'end';
-  /** Held or locked: the slot shows the hold, and the link keeps its box. */
+  /** Held: the slot shows the hold, and the link keeps its box. */
   hidden: boolean;
   /** The app's own move for a plain click; the `href` serves the rest. */
   onGo: () => void;

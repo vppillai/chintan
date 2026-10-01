@@ -15,7 +15,7 @@ import { Icon } from './Icon.tsx';
  * WhatsApp's way (R8, F5): release sends, slide up locks, slide left
  * cancels. The gesture is `useHoldToTalk`'s, owned by the tab bar because
  * the bar's other slots change with it; this is the disc that wears it.
- * Locked, the disc is Send. (The owner once asked for the hold on a separate
+ * A locked hold carries on on the capture screen. (The owner once asked for the hold on a separate
  * PTT screen only, feedback 2026-09-27; having tried that screen, he asked
  * for it here and for the screen to go, feedback 2026-09-30.)
  *
@@ -31,7 +31,6 @@ export function RecordButton({
   noteId?: string | null;
   hold: HoldToTalk;
 }) {
-  const locked = hold.gesture.phase === 'locked';
   // The hint a mouse user can hover for; a touch screen has no hover to show it.
   const fine =
     typeof window.matchMedia === 'function' &&
@@ -41,24 +40,20 @@ export function RecordButton({
     <button
       type="button"
       className="record-button"
-      aria-label={locked ? 'Send recording' : noteId !== null ? 'Record into this note' : 'Record'}
-      aria-description={
-        locked
-          ? undefined
-          : 'Hold to talk and release to send. While holding, slide up to lock or left to cancel.'
-      }
-      aria-keyshortcuts={locked ? undefined : 'R'}
-      title={fine && !locked ? 'Click to record · hold to talk (or hold R)' : undefined}
+      aria-label={noteId !== null ? 'Record into this note' : 'Record'}
+      aria-description="Hold to talk and release to send. While holding, slide up to lock or left to cancel."
+      aria-keyshortcuts="R"
+      title={fine ? 'Click to record · hold to talk (or hold R)' : undefined}
       {...hold.handlers}
     >
       <Icon
-        name={locked ? 'send' : 'mic'}
+        name="mic"
         size={24}
         strokeWidth={2.25}
         className="record-button__icon"
       />
       <span className="record-button__label" aria-hidden="true">
-        {locked ? 'Send' : 'Record'}
+        Record
       </span>
     </button>
   );

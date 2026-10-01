@@ -23,7 +23,7 @@ import { PATHS } from './Icon.tsx';
 beforeEach(resetHold);
 afterEach(endHold);
 
-const disc = () => screen.getByRole('button', { name: /^(Record|Record into this note|Send recording)$/ });
+const disc = () => screen.getByRole('button', { name: /^(Record|Record into this note)$/ });
 
 /** Holds the disc past the arm and long enough to send, with audio. */
 async function holdAndSpeak(): Promise<HTMLElement> {
@@ -152,18 +152,6 @@ describe('the record button', () => {
     expect(where()).toBe('/capture');
   });
 
-  it('is named for what it does in every phase: Record, and Send once locked', async () => {
-    mountBar();
-    fireEvent.pointerDown(disc(), { ...touch, clientX: 200, clientY: 800 });
-    await wait(HOLD_ARM_MS + 50);
-    expect(screen.getByRole('button', { name: 'Record' })).toBeInTheDocument();
-    fireEvent.pointerMove(disc(), { ...touch, clientX: 200, clientY: 720 });
-    const send = screen.getByRole('button', { name: 'Send recording' });
-    expect(send.querySelector('svg path')).toHaveAttribute('d', PATHS.send);
-    expect(send).toHaveTextContent('Send');
-    expect(send).not.toHaveAttribute('aria-keyshortcuts');
-  });
-
   it('sends a keyboard hold when the window loses focus, rather than discarding it', async () => {
     // Alt-Tab or a notification takes the keyup with it. `/talk` discarded
     // the recording here; the rule for an interruption is a release.
@@ -201,25 +189,17 @@ describe('the record button', () => {
     expect(captureState()).toBe('requesting');
     fireEvent.pointerUp(button, touch);
     fireEvent.click(button);
-    expect(screen.getByRole('button', { name: 'Send recording' })).toBeInTheDocument();
-    expect(document.querySelector('.tab-bar__into')).toHaveTextContent('Allow the microphone…');
+    // Locked: on to the capture screen with the take still waiting on the
+    // prompt, not discarded as a slip.
+    expect(where()).toBe('/capture');
+    expect(captureState()).toBe('requesting');
     expect(spoken()).not.toHaveTextContent('Too short');
 
-    // Allowed: it records hands-free, and Send sends.
+    // Allowed: the same take records, hands-free, for the capture screen.
     allow();
     await waitFor(() => {
       expect(captureState()).toBe('recording');
     });
-    await wait(MIN_TALK_MS + 100);
-    speak();
-    await wait(CLICK_GAP);
-    fireEvent.click(screen.getByRole('button', { name: 'Send recording' }));
-    await waitFor(() => {
-      expect(captureState()).toBe('uploaded');
-    });
-    expect(fake.creates).toHaveLength(1);
+    expect(fake.creates).toHaveLength(0);
   });
 });
-
-/** Past the click suppression after the lift, as a person's second tap is. */
-const CLICK_GAP = 700;
