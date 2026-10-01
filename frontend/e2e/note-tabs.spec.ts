@@ -532,7 +532,7 @@ test('with the keyboard up, the banner mic records into the note being typed in'
   const body = page.getByRole('textbox', { name: 'Note body' });
   await expect(body).toBeVisible();
   const banner = page.locator('.app__banner');
-  const mic = banner.getByRole('button', { name: 'Record into this note' });
+  const mic = banner.getByRole('button', { name: 'Record into this note (while typing)' });
   const bannerBox = await banner.boundingBox();
   await expect(mic).toBeHidden();
 
@@ -577,4 +577,35 @@ test('with the keyboard up, the banner mic records into the note being typed in'
     api.requests.findIndex((request) => request.method === 'POST' && request.url === '/v1/captures');
   await expect.poll(postAt, { message: 'the recording was sent' }).toBeGreaterThanOrEqual(0);
   expect(patchAt()).toBeLessThan(postAt());
+});
+
+test('offline on a 360 px phone, the banner mic leaves the offline pill on one line', async ({
+  page,
+  context,
+}) => {
+  await page.setViewportSize({ width: 360, height: 780 });
+  await page.goto('/notes/roof-repair');
+  const body = page.getByRole('textbox', { name: 'Note body' });
+  await expect(body).toBeVisible();
+  await context.setOffline(true);
+  const banner = page.locator('.app__banner');
+  const pill = banner.locator('.offline-banner');
+  await expect(pill).toBeVisible();
+  const bannerBefore = (await banner.boundingBox())!.height;
+  const pillBefore = (await pill.boundingBox())!.height;
+
+  await page.evaluate(() => {
+    document.documentElement.style.setProperty('--keyboard-inset', '400px');
+    document.documentElement.setAttribute('data-keyboard', '');
+  });
+  await body.focus();
+  const mic = banner.getByRole('button', { name: 'Record into this note (while typing)' });
+  await expect(mic).toBeVisible();
+  // The mic squeezed the pill onto two lines at 360–393 px, and the banner grew.
+  expect((await pill.boundingBox())!.height).toBe(pillBefore);
+  expect((await banner.boundingBox())!.height).toBe(bannerBefore);
+  const micBox = (await mic.boundingBox())!;
+  const pillBox = (await pill.boundingBox())!;
+  expect(pillBox.x + pillBox.width).toBeLessThanOrEqual(micBox.x);
+  await context.setOffline(false);
 });

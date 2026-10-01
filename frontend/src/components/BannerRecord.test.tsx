@@ -29,7 +29,7 @@ function mount(note: NoteDetailWire) {
   );
 }
 
-const name = 'Record into this note';
+const name = 'Record into this note (while typing)';
 const ROOF: NoteDetailWire = { ...TEST_NOTES[0]!, body: '', captures: [] };
 
 /*

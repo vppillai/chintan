@@ -15,6 +15,13 @@ import { useRecordTarget } from './useRecordTarget.ts';
  * banner is its own grid row, so the mic can never cover a character of the
  * note, and the row does not change height.
  *
+ * Named apart from the tab bar's disc, which is also "Record into this note",
+ * so the two never read as one control. `shell.css` also keeps it shown
+ * while it has focus itself. That cannot carry a focus move from the field
+ * to it (Chromium hides it as the field blurs, before it can take focus),
+ * and nothing in the tab order sits between the two; it is there so a
+ * focus that does land on it is never left on a hidden control.
+ *
  * A tap only. `pointerdown` is prevented so the field keeps focus, which
  * keeps the keyboard up and the button where the finger is until the click
  * lands. The editor's autosave flushes as the note screen unmounts
@@ -28,7 +35,7 @@ export function BannerRecord() {
     <button
       type="button"
       className="banner-record"
-      aria-label="Record into this note"
+      aria-label="Record into this note (while typing)"
       onPointerDown={(event) => {
         event.preventDefault();
       }}

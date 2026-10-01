@@ -133,7 +133,8 @@
         .checklist-editor textarea
       ):focus
   )
-  .banner-record {
+  .banner-record,
+:root[data-keyboard] .app[data-screen='note'] .banner-record:focus {
   display: grid;
   /* `--motion-duration-fast` is 1 ms under reduced motion: it simply appears. */
   animation: banner-record-in var(--motion-duration-fast) var(--motion-ease-decelerate);
@@ -957,6 +958,25 @@
   border: 1px solid var(--color-line-strong);
   font-size: var(--font-size-xs);
   color: var(--color-muted);
+}
+
+/*
+ * On the note screen the pill shares the banner with the wordmark and, while
+ * typing, the mic (`.banner-record`). Wrapped onto two lines there it grew
+ * the banner at 360–393 px, so it keeps to one line and ends in an ellipsis;
+ * the status line still speaks the whole sentence.
+ */
+.app[data-screen='note'] .offline-banner {
+  flex-wrap: nowrap;
+  min-inline-size: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.app[data-screen='note'] .offline-banner > span {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* --------------------------------------------------------------------------
