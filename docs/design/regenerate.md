@@ -186,7 +186,7 @@ wrote the block and died from one that never wrote; and it means a typed
 line with the same words as a new item folds into the block rather than
 staying as a duplicate. The deletion rule holds: a pass that finds none of
 the OLD words leaves the list alone, even when a typed line carries one of
-the new words. Sub-items (`checklists.md`, three levels since #191; `cleanup.MaxDepth = 2`, 0-based):
+the new words. Sub-items (`checklists.md`, three levels since #191 and four since PR10-11; `cleanup.MaxDepth = 3`, 0-based):
 the match ignores indent, and the block is written with the recording's own
 indent (`checklistItems` in `append.go`), so a recording's item the person
 had moved to another level comes back at the depth the recording gives it,

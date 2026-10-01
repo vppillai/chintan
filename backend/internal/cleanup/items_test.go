@@ -292,7 +292,7 @@ func TestParseLinesClampsAndReadsPastMarkers(t *testing.T) {
 		{},
 		{Text: "Paper", Done: true, Depth: 2, OK: true},
 		{},
-		{Text: "Deeper still", Depth: 2, OK: true},
+		{Text: "Deeper still", Depth: 3, OK: true},
 		{},
 		{Text: "After prose", Depth: 1, OK: true},
 	}

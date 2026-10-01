@@ -6,7 +6,7 @@ import { queryKeys, usePollNote } from '@/api/queries.ts';
 import type { CleanedWire, NoteDetailWire } from '@/api/schema.ts';
 import { showToast } from '@/components/Toast.tsx';
 
-import { UNDO_STALE } from './ChecklistEditor.tsx';
+import { undoIfUnchanged } from './ChecklistEditor.tsx';
 import { parseChecklist } from './checklist.ts';
 import { CLEAN_POLL_TIMEOUT_MS, cleanPollInterval, cleanSettled } from './cleaned.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
@@ -185,19 +185,17 @@ export function useApplyTidy(note: NoteDetailWire, editor: NoteEditor): void {
       message: entry.converted
         ? `Made a checklist: ${count(before, 'paragraph')} → ${after}.`
         : `List tidied: ${count(before, 'line')} → ${after}.`,
-      action: {
-        label: 'Undo',
-        onSelect: () => {
-          // Only while the body is still the tidied one: a recording filed in
-          // by refetch, or a tick since, would otherwise leave with the Undo.
-          if (editor.current().body !== written) {
-            showToast({ message: UNDO_STALE });
-            return;
-          }
+      // Only while the body is still the tidied one (the one Undo rule): a
+      // recording filed in by refetch, or a tick since, would otherwise
+      // leave with the Undo.
+      action: undoIfUnchanged(
+        () => editor.current().body,
+        written,
+        () => {
           editor.edit({ body: previous });
           void editor.saveNow();
         },
-      },
+      ),
     });
   }, [entry, cleaned, note, editor, start]);
 

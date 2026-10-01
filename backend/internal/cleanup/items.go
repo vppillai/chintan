@@ -85,7 +85,7 @@ const checklistItemRules = `- An item is one thing the person wants on the list,
 
 // itemsSystemPrompt: one recording → the items to add, grouped as spoken.
 // Six examples, the owner's two sentences first. Its one-level rule is its
-// own, not checklistItemRules': a list may hold three levels, but what one
+// own, not checklistItemRules': a list may hold four levels, but what one
 // breath names is a handful of things under a group at most, and a second
 // level from speech is a guess (round 8 owner decision 2, default "no";
 // ParseItems clamps to one level either way).
@@ -303,12 +303,14 @@ func renderItemLines(items []Item, indent string) []string {
 	return lines
 }
 
-// MaxDepth is how deep a checklist item may nest: 0 is the top level, so 2
-// is three levels — top, sub-item, sub-sub-item (owner feedback F1, round 8,
-// which replaces CL-D1's one level; a fourth leaves about twelve characters
-// of text at 320 px). The editor's twin is MAX_DEPTH in checklist.ts, and
-// testdata/checklist-lines.json pins both.
-const MaxDepth = 2
+// MaxDepth is how deep a checklist item may nest: 0 is the top level, so 3
+// is four levels — top, sub-item, sub-sub-item, and one under that (owner
+// feedback F1, round 8, replaced CL-D1's one level with three; the owner's
+// "why just 3" of round 10, PR10-11, made it four). Not five: deeper than
+// four reads as an outline, not a list, and the fourth level already leaves
+// about 94 px of text at 320 px. The editor's twin is MAX_DEPTH in
+// checklist.ts, and testdata/checklist-lines.json pins both.
+const MaxDepth = 3
 
 // ParseLine reads one checklist body line as a task-list item, the one rule
 // the Go readers and the editor (frontend checklist.ts ITEM) share, pinned by

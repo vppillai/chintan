@@ -586,10 +586,10 @@ func TestParentOfAtDepthTwo(t *testing.T) {
 	}
 }
 
-// Two spaces per level, up to the third: a deeper line is clamped, not
+// Two spaces per level, up to the fourth: a deeper line is clamped, not
 // dropped.
-func TestChecklistItemsKeepsTwoLevelsOfIndent(t *testing.T) {
-	if got, want := checklistItems("Party\n  Costco\n    Plates\n      Paper ones"), "- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n    - [ ] Paper ones"; got != want {
+func TestChecklistItemsKeepsThreeIndentSteps(t *testing.T) {
+	if got, want := checklistItems("Party\n  Costco\n    Plates\n      Paper ones\n        Blue"), "- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n      - [ ] Paper ones\n      - [ ] Blue"; got != want {
 		t.Errorf("checklistItems = %q, want %q", got, want)
 	}
 }

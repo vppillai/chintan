@@ -477,38 +477,49 @@ test('Tab in an item makes it a sub-item, set in by one step and kept across a r
   await expect(doneList.locator('li').nth(1)).toHaveAttribute('data-depth', '1');
 });
 
-test('Tab takes an item to the third level, one step at a time, kept across a reload', async ({ page, api }) => {
+test('Tab takes an item to the fourth level, one step at a time, kept across a reload', async ({ page, api }) => {
   seedShopping(api);
-  const body = '- [ ] Party\n- [ ] Costco\n- [ ] Plates';
+  const body = '- [ ] Party\n- [ ] Costco\n- [ ] Plates\n- [ ] Cups';
   Object.assign(api.notes['shopping']!, { body, snippet: body });
   await page.goto('/notes/shopping');
   const items = page.getByRole('list', { name: 'Items' });
-  await expect.poll(() => values(items)).toEqual(['Party', 'Costco', 'Plates', '']);
+  await expect.poll(() => values(items)).toEqual(['Party', 'Costco', 'Plates', 'Cups', '']);
   const grip = (n: number) => items.locator('li').nth(n).locator('.checklist__grip').boundingBox();
   const top = (await grip(0))!.x;
 
   await items.getByRole('textbox', { name: 'Item 2' }).focus();
   await page.keyboard.press('Tab');
-  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Party\n  - [ ] Costco\n- [ ] Plates');
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Party\n  - [ ] Costco\n- [ ] Plates\n- [ ] Cups');
   await items.getByRole('textbox', { name: 'Item 3' }).focus();
   // Under a sub-item one Tab is its sibling, a second its child.
   await page.keyboard.press('Tab');
-  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Party\n  - [ ] Costco\n  - [ ] Plates');
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Party\n  - [ ] Costco\n  - [ ] Plates\n- [ ] Cups');
   await page.keyboard.press('Tab');
-  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates');
-  const field = items.getByRole('textbox', { name: 'Sub-item 3, level 3' });
-  await expect(field).toBeFocused();
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n- [ ] Cups');
+  await expect(items.getByRole('textbox', { name: 'Sub-item 3, level 3' })).toBeFocused();
   // Two indent steps in from the top level's grip.
   await expect.poll(async () => (await grip(2))!.x - top).toBe(48);
-  // The third level is the last: the key is the browser's again.
+
+  // Under a third-level row, three Tabs take the next row to the fourth level (PR10-11).
+  await items.getByRole('textbox', { name: 'Item 4' }).focus();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab');
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n      - [ ] Cups');
+  const field = items.getByRole('textbox', { name: 'Sub-item 4, level 4' });
+  await expect(field).toBeFocused();
+  // Three indent steps in; the grip is still its 44 px.
+  await expect.poll(async () => (await grip(3))!.x - top).toBe(72);
+  expect((await grip(3))!.width).toBe(44);
+  // The fourth level is the last: the key is the browser's again.
   await page.keyboard.press('Tab');
   await expect(field).not.toBeFocused();
 
   await page.reload();
-  const row = page.getByRole('list', { name: 'Items' }).locator('li').nth(2);
-  await expect(row).toHaveAttribute('data-depth', '2');
-  await expect(row).toHaveAttribute('aria-level', '3');
-  await expect(page.getByRole('textbox', { name: 'Sub-item 3, level 3' })).toHaveValue('Plates');
+  const row = page.getByRole('list', { name: 'Items' }).locator('li').nth(3);
+  await expect(row).toHaveAttribute('data-depth', '3');
+  await expect(row).toHaveAttribute('aria-level', '4');
+  await expect(page.getByRole('textbox', { name: 'Sub-item 4, level 4' })).toHaveValue('Cups');
 });
 
 test('Done is a disclosure remembered for the session; Delete done is undone from the keyboard; Uncheck all reopens in place', async ({
@@ -595,16 +606,17 @@ for (const viewport of SHOT_VIEWPORTS) {
 }
 
 for (const theme of ['ink', 'nocturne'] as const) {
-  test(`screenshots · three levels and the drag preview · ${theme}`, async ({ page, api }) => {
+  test(`screenshots · four levels and the drag preview · ${theme}`, async ({ page, api }) => {
     test.skip(!SHOTS, 'CHECKLIST_SHOTS=1 to write the pictures');
     seedShopping(api);
-    const body = '- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n    - [ ] Cups, the paper ones for twenty people\n  - [ ] Target\n  - [ ] Candles\n- [ ] Milk';
+    const body =
+      '- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n      - [ ] Paper ones\n    - [ ] Cups, the paper ones for twenty people\n  - [ ] Target\n  - [ ] Candles\n- [ ] Milk';
     Object.assign(api.notes['shopping']!, { body, snippet: body });
     await useTheme(page, theme);
     await page.setViewportSize({ width: 360, height: 800 });
     const shot = (name: string) => page.screenshot({ path: `e2e/__screenshots__/sweep/checklist-${name}-360-${theme}.png` });
     await page.goto('/notes/shopping');
-    await expect(page.getByRole('textbox', { name: 'Sub-item 3, level 3' })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Sub-item 4, level 4' })).toBeVisible();
     await shot('depth');
     // Candles lifted a level in, under Target: the mockup's sideways preview.
     const grip = (await page.getByRole('button', { name: 'Move Candles' }).boundingBox())!;

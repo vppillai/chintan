@@ -1,6 +1,6 @@
 {
-  "_comment": "One checklist body line rule for the Go readers (cleanup.ParseLine, cleanup.ItemsFromLines) and the editor (frontend/src/features/notes/checklist.ts parseChecklist). Both test suites read this file and assert max_depth equals their own constant (cleanup.MaxDepth, MAX_DEPTH: 0 is the top level, so 2 is three levels); the rule is stated in docs/design/checklists.md. Texts here have no extra whitespace, because the editor keeps an item's text as written while the Go readers collapse it.",
-  "max_depth": 2,
+  "_comment": "One checklist body line rule for the Go readers (cleanup.ParseLine, cleanup.ItemsFromLines) and the editor (frontend/src/features/notes/checklist.ts parseChecklist). Both test suites read this file and assert max_depth equals their own constant (cleanup.MaxDepth, MAX_DEPTH: 0 is the top level, so 3 is four levels); the rule is stated in docs/design/checklists.md. Texts here have no extra whitespace, because the editor keeps an item's text as written while the Go readers collapse it.",
+  "max_depth": 3,
   "cases": [
     {
       "name": "open, done, and a capital X is done",
@@ -130,8 +130,8 @@
       ]
     },
     {
-      "name": "past the maximum reads as the maximum",
-      "body": "- [ ] A\n  - [ ] B\n    - [ ] C\n      - [ ] D",
+      "name": "six spaces is the fourth level, and past the maximum reads as the maximum",
+      "body": "- [ ] A\n  - [ ] B\n    - [ ] C\n      - [ ] D\n        - [ ] E",
       "items": [
         {
           "text": "A",
@@ -151,7 +151,12 @@
         {
           "text": "D",
           "done": false,
-          "depth": 2
+          "depth": 3
+        },
+        {
+          "text": "E",
+          "done": false,
+          "depth": 3
         }
       ]
     },

@@ -60,16 +60,20 @@ tick or reopen in the worker writes the line back in the normal form
 (`- [x] ` with its one space).
 
 A sub-item is two spaces of indent under its parent — `  - [ ] Plates` under
-`- [ ] Party` — and two more for each level below it, three levels in all:
-top, sub-item, sub-sub-item (`MAX_DEPTH = 2` in `checklist.ts`,
-`cleanup.MaxDepth` in Go; owner feedback F1, round 8, 2026-09-30, which
-replaced CL-D1's one level of 2026-09-27 — that decision named "a real list
-asks" as its own trigger, and one did). Not four: a fourth level leaves
-about twelve characters of text at 320 px. Both parsers read the indent as
-a depth clamped to the item before's plus one and to the maximum — a jump of
-two levels reads as one, a fourth level written elsewhere reads as the third
-and flattens to it on the first save (clamped, never dropped), a child with
-no parent is top level — and write it back as two spaces per level, so a
+`- [ ] Party` — and two more for each level below it, four levels in all:
+top, sub-item, sub-sub-item, and one under that (`MAX_DEPTH = 3` in
+`checklist.ts`, `cleanup.MaxDepth` in Go). Why four: CL-D1 (2026-09-27)
+gave one level; owner feedback F1 (round 8, 2026-09-30) asked for more and
+got three, with "a real list asks" as the trigger for the next step; the
+owner then asked why just three (round 10, 2026-10-01, PR10-11), and that
+is the ask. Not five: deeper than four reads as an outline, not a list, and
+the width is spent — the fourth level leaves about 94 px of text at 320 px
+(the grip and the box keep their 44 px at every level). Both parsers read
+the indent as a depth clamped to the item before's plus one and to the
+maximum — a jump of two levels reads as one, a fifth level written
+elsewhere reads as the fourth and flattens to it on the first save
+(clamped, never dropped), a child with no parent is top level — and write
+it back as two spaces per level, so a
 body indented in another editor round-trips byte for byte. The Go form is
 `cleanup.ParseLines`, which every depth read in `pipeline/append.go` goes
 through (`depths`). A capture marker or a blank line does not reset its
@@ -84,9 +88,10 @@ differs on one thing only: it reads an *indented* prose line at its indent's
 level (it also reads the clean artefact's box-less lines), where the editor
 shows it at the top level.
 `cleanup.ParseLine` alone returns the indent's raw level. Every body from
-before three levels is at depth 0 or 1 and reads exactly as it did; the one
-change in meaning is a line indented four or more columns under a sub-item,
-now a sub-sub-item (no owner list had one). Until 2026-09-26 such a line
+before four levels is at depth 0, 1 or 2 and reads exactly as it did; the
+one change in meaning at each step was a line indented one level deeper
+than the maximum then allowed, now read at that level (no owner list had
+one). Until 2026-09-26 such a line
 missed the item pattern altogether: it showed as an open row whose text was
 the raw syntax and was rewritten to `- [ ]   - [x] Candles` on the first
 save. The worker used to append at the end of the body with no indent, so
@@ -122,7 +127,7 @@ named, one open line each — `- [ ] Chickpeas`, `- [ ] Green gram` — grouped
 as the person grouped them, and nothing else. The items come from one model
 call in place of the transcript cleanup (`Pipeline.extractItems`,
 `cleanup.ItemsPrompt`): the prompt reads the **raw** transcript with the
-list's title beside it and answers a one-level tree (a list may hold three,
+list's title beside it and answers a one-level tree (a list may hold four,
 but the extraction makes one — round 8 owner decision 2, default "no", since
 over-nesting speech is the risk and no spoken case has asked; turning it on
 is the extraction's `maxDepth` and one prompt sentence, gated by
@@ -144,7 +149,7 @@ changed, nothing lost. A model that answers the old shape, bare strings,
 still parses as flat items; a grandchild is flattened into the children,
 after its parent. "One level only: a child has no children" is the items
 prompt's own rule, not the shared block's, so Tidy up list can keep a list's
-three levels. It runs in the `cleaning` status, under the cleanup
+four levels. It runs in the `cleaning` status, under the cleanup
 op and deadline, and stores the tree one line per item at `clean_key`, a
 child's line two spaces in per level (`cleanup.RenderItems`), so a retry does
 not call again.
@@ -297,7 +302,12 @@ the upgrade if a real list asks).
 
 **DB6-9 is open** (the owner's): whether a blank line or a capture marker
 ends a parent's block for the merge. As it stands they do, which is the rule
-from before three levels, and three levels change nothing about it. The
+from before three levels, and neither three nor four levels (R8-F1a,
+PR10-11) change anything about it: the three rules above read depth only
+through `cleanup.ParseLines`, so a reopened leaf reopens every line it
+stands under, a parent's children are matched among its direct sub-items,
+and a regenerated recording keeps a line with the person's own line under
+it, at any of the four depths. The
 known cost is a duplicate: a list `Costco › Meat`, a blank, then
 `<c_2>` with `  - [ ] Rice` (a sub-item of Costco to every reader, a later
 recording's paragraph), and a recording of Costco › Rice — the block ends
@@ -347,7 +357,7 @@ kept, a line that is already one thing word for word, a line holding
 several things one item each, a sentence spoken to the app the things it
 named; the groups the list has are kept and an item joins an existing group
 when its own words say so ("chicken from Costco" under Costco), two lines
-naming one thing are one item; every item keeps its level, up to three, and
+naming one thing are one item; every item keeps its level, up to four, and
 no level is added that the list does not have; done stays done, an open line is never
 marked done, and a duplicate merges into an open item if either was open.
 Its user prompt names the list's title first, so the list's own name is
@@ -364,8 +374,8 @@ The answer is checked against the body rather than trusted
 (`cleanup.SplitOutput`), because Tidy up list writes it over the body:
 
 - it must parse as items (`ParseItems`' shape, at most 500 counting
-  sub-items, nested at most three levels, a deeper item flattened into the
-  third after its parent) — else the fixed verdict `the cleanup model returned nothing
+  sub-items, nested at most four levels, a deeper item flattened into the
+  fourth after its parent) — else the fixed verdict `the cleanup model returned nothing
   usable` and the previous view is kept;
 - an item whose words are not the body's words, in order
   (`llm.VerifySubsequence`; a group's name — Walmart, Party — is a body
@@ -450,7 +460,7 @@ its slot and every indent step (`--space-6`, 24 px at a 16 px root, read
 live) to the right is one level in, to the left one level out. The hook
 does not clamp; the editor cuts the levels down to the largest move that
 fits — out to the top, in to one under the row shown above, never past the
-third level, and no further than the row's own sub-items allow — so one
+fourth level, and no further than the row's own sub-items allow — so one
 release can move several levels (50 px right from the top level under a
 sub-item is two), and a drag that asks for one level too many moves as far
 as it can. A drag is placed by eye; Tab and the arrows, one level a press,
@@ -476,7 +486,7 @@ Tab and Shift+Tab in the field are unchanged. The pinned group passes no
 
 ### Sub-items
 
-Up to three levels (`MAX_DEPTH`, "Data model"; round 8, F1), and Keep's
+Up to four levels (`MAX_DEPTH`, "Data model"; round 8, F1; round 10, PR10-11), and Keep's
 keys: Tab in an item's field takes it one level in under the open row shown
 above it, Shift+Tab one level out; the grip's menu carries the same two as
 "Make a sub-item" and "Move up a level" for a finger and for anyone who does
@@ -487,22 +497,24 @@ child, as Workflowy's and Keep's single step does. A screen reader hears
 where the row went, its words cut at forty characters: "Made a sub-item of
 “Costco”", "Moved up a level, under “Party”", or "Now a top-level item";
 the row carries `aria-level`, and the field's name is "Item 3", "Sub-item
-3" or "Sub-item 3, level 3". The keys are described on the field itself
+3", "Sub-item 3, level 3" or "Sub-item 3, level 4". The keys are described on the field itself
 (`aria-describedby`), where they act, since a reader in the field never
 hears the grip's description. A sub-item is set in by one spacing step per
 level (`data-depth`, `--space-6`) with the same drawn box and grip after it;
-the indent alone says "part of the row above". There is no narrower step on
-a small phone: at 320 px the third level still leaves 118 px of text, which
-wraps downward with its box on the first line.
+the indent alone says "part of the row above"; the fourth step is
+`calc(3 * var(--space-6))`, a token and no new literal. There is no narrower
+step on a small phone: the grip and the box keep their 44 px at every level,
+and at 320 px the fourth level still leaves about 94 px of text, which wraps
+downward with its box on the first line.
 
 An indent is refused when there is no row above (the first open item can
 never be a sub-item), when the row is already as deep as the row above
 allows, when the row above or anything it stands under is done, or when the
-row's own sub-items would go past the third level — indenting is an
+row's own sub-items would go past the fourth level — indenting is an
 explicit act about levels, and quietly flattening a grandchild is never
 what it means. From the grip each is said with a fixed sentence ("Nothing
-above to nest under", "Already a sub-item", "Already three levels deep",
-"Cannot nest under a done item", "Its sub-items are already three levels
+above to nest under", "Already a sub-item", "Already four levels deep",
+"Cannot nest under a done item", "Its sub-items are already four levels
 deep", and "Already a top-level item" for a step out), and the menu's item
 is disabled; a sideways drag is refused only when not even one level
 fits. From the field the Tab is left to the browser, so focus moves
@@ -577,14 +589,28 @@ NoteTabs pattern), with Uncheck all and Delete done beside it. Uncheck all
 flips every `[x]` to `[ ]` in place (`uncheckAll`). Delete done drops every
 done line, and a done parent's sub-items with it (`removeDone`), and offers
 Undo in the shell's toast for six seconds — no typed word and no dialog
-(OF-DEL): Undo writes the previous body back and saves, unless the list
-changed since (see Tidy up). A tick, which moves the row out of sight
-into Done, offers an Undo for four seconds as "<item> done" (R7-13), the
-item's words cut at forty characters: Undo writes the body from before the
-tick back, so the row returns to its place, and only while the body is
-still exactly the tick's — after any later act, the person's own included,
-it says "The list changed since — nothing undone." rather than undo that
-act too. So only the last tick is undoable. Reopening a done row offers
+(OF-DEL): Undo writes the previous body back and saves. A tick, which moves
+the row out of sight into Done, offers an Undo for four seconds as "<item>
+done" (R7-13), the item's words cut at forty characters: Undo writes the
+body from before the tick back, so the row returns to its place. So only
+the last tick is undoable.
+
+**The one Undo rule** (D3 of the 2026-10-01 platform review; PR9-46):
+every Undo a list offers — a tick's, Delete done's and Tidy up list's — is
+`undoIfUnchanged` in `ChecklistEditor.tsx`: it writes the captured body
+back only while the body is still exactly what the act wrote, and otherwise
+says "The list changed since — nothing undone." A recording filed in by
+refetch, a Tidy answer, and the person's own later tick or typing all count
+as a change, so an Undo never takes back an act it did not offer to. Until
+D3, Delete done compared with the editor's last write instead, so its Undo
+silently reverted the person's own later edits (R7-13 had fixed that for
+ticks only). A standing Undo can also be replaced rather than refused: a
+Tidy answer landing by poll and a note Delete each put their own toast in
+its place, and the replaced Undo is gone — never applied to the new body.
+The tests are "refuses after the person's own later" in
+`ChecklistEditor.test.tsx` (tick, Delete done), `ChecklistNote.test.tsx`
+(Tidy, and the poll-landing case) and `NoteDetailScreen.test.tsx` (the
+note Delete). Reopening a done row offers
 none and is said as "Reopened". A tick is said once (review 2026-10-01,
 FE-4): by its toast, which is a live region; the status line says "Marked
 done" only when the toast was kept away. The tick's toast is weak
@@ -612,9 +638,11 @@ usual choice.
 Rejected: items as rows, or order metadata beside the body — the state of a
 task in two places, see below; hold-to-lift on the row as the pinned group
 has — a row's words are a field, and a hold on them should select words, not
-lift the row, so the grip is where every pointer lifts; nesting past three
-levels (round 8, F1, which replaced CL-D1's one level) — a fourth leaves
-about twelve characters of text at 320 px and wants an outline UI
+lift the row, so the grip is where every pointer lifts; nesting past four
+levels (CL-D1 gave one, round 8's F1 three, round 10's PR10-11 four, each
+on the owner's ask) — each step is 24 px, so the fourth level leaves about
+94 px of text at 320 px and a fifth about 70 px, four or five words a line;
+deeper than four reads as an outline, not a list, and wants an outline UI
 (collapse, guide lines per level), and no list has asked for it. The drag-right gesture to nest was on this list in round 5 (Tab and
 the menu cover keyboard and finger; a horizontal threshold on a vertical
 drag is a second gesture to learn) and came off it on 2026-09-29 at the
@@ -647,10 +675,10 @@ one of four things happens:
 - **Fresh** (`!stale`, the editor's body equal to the server's, mode
   `tasks`): the view is written as the body and saved, and the toast says
   "List tidied: N lines → M items." with Undo for six seconds (OF-DEL). Undo
-  writes the list back, under the `UNDO_STALE` rule: it refuses when the
-  body is no longer the tidied one ("The list changed since — nothing
-  undone."), read from the note editor's own mirror (`NoteEditor.current`)
-  because the toast outlives any panel.
+  writes the list back, under the one Undo rule (`undoIfUnchanged`, "Editing
+  the list" above): it refuses when the body is no longer the tidied one
+  ("The list changed since — nothing undone."), read from the note editor's
+  own mirror (`NoteEditor.current`) because the toast outlives any panel.
 - **The same** (equal to the body, trailing whitespace aside): "Already
   tidy." and no write.
 - **Changed meanwhile** (stale, or a draft that differs): "The list changed

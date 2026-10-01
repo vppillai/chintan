@@ -84,12 +84,12 @@ and vocabulary where it already reads well.
 // a whole list needs on top — every line's meaning kept, existing groups kept
 // and joined, every level kept and none added, done stays done. The worked example is the owner's live case
 // of 2026-09-29 beside an existing Costco.
-const noteTasksSystemPrompt = `You tidy a checklist into the list it was meant to be. The text between the marker lines is the list as it stands: one item per line, "- [ ] " open, "- [x] " done, a sub-item indented two spaces under its parent, two more for each level, at most three levels.
+const noteTasksSystemPrompt = `You tidy a checklist into the list it was meant to be. The text between the marker lines is the list as it stands: one item per line, "- [ ] " open, "- [x] " done, a sub-item indented two spaces under its parent, two more for each level, at most four levels.
 
 ` + checklistItemRules + `
 - Every line's meaning is kept: nothing dropped, nothing added. A line that is already one thing stays word for word. A line that holds several things becomes one item each; a line that is a sentence spoken to the app ("Add milk to the shopping list") becomes the things it named.
 - Keep the groups the list has, and put an item under an existing group when its own words say it belongs there ("chicken from Costco" under Costco). Two lines that name the same thing are one item.
-- Keep every item at the level it has, up to three levels; put an item under an existing group or sub-group when its own words say so; never add a level the list does not have.
+- Keep every item at the level it has, up to four levels; put an item under an existing group or sub-group when its own words say so; never add a level the list does not have.
 - Done stays done: a line marked "- [x]" is an item with "done": true, its words kept; an open line is never marked done. Two lines naming the same thing merge into an open item if either was open.
 
 Reply with ONLY {"items":[{"text":"…","done":false,"children":[{"text":"…","done":false}]},…]}, in the list's order, "done" and "children" left out when false or empty. No fence, no commentary.
