@@ -259,6 +259,28 @@ test.describe('reordering by the grip', () => {
     await expect(page.getByRole('button', { name: 'Move Milk' })).toBeFocused();
   });
 
+  test('a vertical drag moves a three-level block as one, its levels intact', async ({ page, api }) => {
+    seedShopping(api);
+    const body = '- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n- [ ] Milk';
+    Object.assign(api.notes['shopping']!, { body, snippet: body });
+    await page.goto('/notes/shopping');
+    const items = page.getByRole('list', { name: 'Items' });
+    await expect.poll(() => values(items)).toEqual(['Party', 'Costco', 'Plates', 'Milk', '']);
+
+    const from = (await page.getByRole('button', { name: 'Move Party' }).boundingBox())!;
+    const milk = (await items.locator('li').nth(3).boundingBox())!;
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(from.x + from.width / 2, milk.y + milk.height - 2, { steps: 10 });
+    await page.mouse.up();
+
+    // Party lands after Milk with both levels under it, as they were.
+    await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [ ] Party\n  - [ ] Costco\n    - [ ] Plates');
+    expect(saves(api)).toBe(1);
+    await expect.poll(() => values(items)).toEqual(['Milk', 'Party', 'Costco', 'Plates', '']);
+    await expect(items.locator('li').nth(3)).toHaveAttribute('data-depth', '2');
+  });
+
   test('a tap on the grip opens the row’s menu, the path that needs no drag', async ({ page, api }) => {
     seedShopping(api);
     await page.goto('/notes/shopping');
@@ -345,7 +367,7 @@ test.describe('reordering by the grip', () => {
         });
       }
       // In the air: the row keeps its slot, shows the level it would take, and nothing is saved.
-      await expect(row).toHaveAttribute('data-nest-preview', '1');
+      await expect(row).toHaveAttribute('data-preview-depth', '1');
       await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
       expect(saves(api)).toBe(0);
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
@@ -355,13 +377,63 @@ test.describe('reordering by the grip', () => {
       await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n  - [ ] Bread and butter\n- [x] Eggs');
       expect(saves(api)).toBe(1);
       await expect(row).toHaveAttribute('data-depth', '1');
-      await expect(row).not.toHaveAttribute('data-nest-preview');
+      await expect(row).not.toHaveAttribute('data-preview-depth');
       await expect(page.getByRole('menu')).toHaveCount(0);
 
       // The body is what is reloaded, and the indent is read back from it.
       await page.reload();
       await expect(page.getByRole('list', { name: 'Items' }).locator('li').nth(1)).toHaveAttribute('data-depth', '1');
       await expect(page.getByRole('textbox', { name: 'Sub-item 2' })).toHaveValue('Bread and butter');
+    });
+
+    test('a touch drag two levels in, in one release, previews the third level and keeps it across a reload', async ({
+      page,
+      api,
+    }) => {
+      seedShopping(api);
+      const body = '- [ ] Party\n  - [ ] Costco\n- [ ] Plates';
+      Object.assign(api.notes['shopping']!, { body, snippet: body });
+      await page.goto('/notes/shopping');
+      const items = page.getByRole('list', { name: 'Items' });
+      await expect.poll(() => values(items)).toEqual(['Party', 'Costco', 'Plates', '']);
+      const row = items.locator('li').nth(2);
+      const indent = (): Promise<number> => row.evaluate((li) => Number.parseFloat(getComputedStyle(li).paddingInlineStart));
+      const cdp = await page.context().newCDPSession(page);
+
+      /** A finger on the grip, `dx` sideways in six moves; lifted only when `lift` says. */
+      const slide = async (dx: number): Promise<void> => {
+        const grip = (await row.locator('.checklist__grip').boundingBox())!;
+        const x = grip.x + grip.width / 2;
+        const y = grip.y + grip.height / 2;
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+        for (let i = 1; i <= 6; i += 1) {
+          await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + (dx * i) / 6, y: y + 1 }] });
+        }
+      };
+      const lift = (): Promise<unknown> => cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+
+      // Two indent steps and a little: the row is drawn at the third level in the air.
+      await slide(55);
+      await expect(row).toHaveAttribute('data-preview-depth', '2');
+      await expect.poll(indent).toBe(48);
+      expect(saves(api)).toBe(0);
+      await lift();
+      await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates');
+      expect(saves(api)).toBe(1);
+
+      await page.reload();
+      const reloaded = page.getByRole('list', { name: 'Items' }).locator('li').nth(2);
+      await expect(reloaded).toHaveAttribute('data-depth', '2');
+      await expect(reloaded).toHaveAttribute('aria-level', '3');
+      await expect(page.getByRole('textbox', { name: 'Sub-item 3, level 3' })).toHaveValue('Plates');
+
+      // One step back out previews the second level, not the top: the
+      // preview's depth rule outranks the row's own.
+      await slide(-30);
+      await expect(row).toHaveAttribute('data-preview-depth', '1');
+      await expect.poll(indent).toBe(24);
+      await lift();
+      await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Party\n  - [ ] Costco\n  - [ ] Plates');
     });
   });
 });
@@ -428,6 +500,40 @@ test('Tab in an item makes it a sub-item, set in by one step and kept across a r
   await expect(page.getByText('3 of 3 done')).toBeVisible();
   const doneList = page.getByRole('region', { name: 'Done (3)' }).getByRole('list');
   await expect(doneList.locator('li').nth(1)).toHaveAttribute('data-depth', '1');
+});
+
+test('Tab takes an item to the third level, one step at a time, kept across a reload', async ({ page, api }) => {
+  seedShopping(api);
+  const body = '- [ ] Party\n- [ ] Costco\n- [ ] Plates';
+  Object.assign(api.notes['shopping']!, { body, snippet: body });
+  await page.goto('/notes/shopping');
+  const items = page.getByRole('list', { name: 'Items' });
+  await expect.poll(() => values(items)).toEqual(['Party', 'Costco', 'Plates', '']);
+  const grip = (n: number) => items.locator('li').nth(n).locator('.checklist__grip').boundingBox();
+  const top = (await grip(0))!.x;
+
+  await items.getByRole('textbox', { name: 'Item 2' }).focus();
+  await page.keyboard.press('Tab');
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Party\n  - [ ] Costco\n- [ ] Plates');
+  await items.getByRole('textbox', { name: 'Item 3' }).focus();
+  // Under a sub-item one Tab is its sibling, a second its child.
+  await page.keyboard.press('Tab');
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Party\n  - [ ] Costco\n  - [ ] Plates');
+  await page.keyboard.press('Tab');
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates');
+  const field = items.getByRole('textbox', { name: 'Sub-item 3, level 3' });
+  await expect(field).toBeFocused();
+  // Two indent steps in from the top level's grip.
+  await expect.poll(async () => (await grip(2))!.x - top).toBe(48);
+  // The third level is the last: the key is the browser's again.
+  await page.keyboard.press('Tab');
+  await expect(field).not.toBeFocused();
+
+  await page.reload();
+  const row = page.getByRole('list', { name: 'Items' }).locator('li').nth(2);
+  await expect(row).toHaveAttribute('data-depth', '2');
+  await expect(row).toHaveAttribute('aria-level', '3');
+  await expect(page.getByRole('textbox', { name: 'Sub-item 3, level 3' })).toHaveValue('Plates');
 });
 
 test('Done is a disclosure remembered for the session; Delete done is undone from the keyboard; Uncheck all reopens in place', async ({
@@ -514,6 +620,34 @@ for (const viewport of SHOT_VIEWPORTS) {
       await shot('split-up');
     });
   }
+}
+
+for (const theme of ['ink', 'nocturne'] as const) {
+  test(`screenshots · three levels and the drag preview · ${theme}`, async ({ page, api }) => {
+    test.skip(!SHOTS, 'CHECKLIST_SHOTS=1 to write the pictures');
+    seedShopping(api);
+    const body = '- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n    - [ ] Cups, the paper ones for twenty people\n  - [ ] Target\n  - [ ] Candles\n- [ ] Milk';
+    Object.assign(api.notes['shopping']!, { body, snippet: body });
+    await useTheme(page, theme);
+    await page.setViewportSize({ width: 360, height: 800 });
+    const shot = (name: string) => page.screenshot({ path: `e2e/__screenshots__/sweep/checklist-${name}-360-${theme}.png` });
+    await page.goto('/notes/shopping');
+    await expect(page.getByRole('textbox', { name: 'Sub-item 3, level 3' })).toBeVisible();
+    await shot('depth');
+    // Candles lifted a level in, under Target: the mockup's sideways preview.
+    const grip = (await page.getByRole('button', { name: 'Move Candles' }).boundingBox())!;
+    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(grip.x + grip.width / 2 + 30, grip.y + grip.height / 2 + 1, { steps: 6 });
+    const lifted = page.locator('[data-preview-depth="2"]');
+    await expect(lifted).toHaveCount(1);
+    // Past the indent's transition, so the picture shows where it lands.
+    await expect
+      .poll(() => lifted.evaluate((li) => Number.parseFloat(getComputedStyle(li).paddingInlineStart)))
+      .toBe(48);
+    await shot('depth-preview');
+    await page.mouse.up();
+  });
 }
 
 test('Show after a recording lands in a list puts focus on the row it added', async ({ page, api }) => {

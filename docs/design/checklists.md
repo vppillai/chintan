@@ -430,57 +430,85 @@ A drag on the grip sideways changes the row's level instead (owner,
 across than along and the drag is sideways, else it is the reorder above —
 and the axis is locked from then on, so a vertical drag that drifts never
 changes a level and a sideways one never re-sorts. Sideways, the row keeps
-its slot and every indent step (`--space-6`, 24 px at a 16 px root) to the
-right is one level in, to the left one level out, one level per release
-there is; the lifted row previews what release would do — set in or out by
-the step, with a 3 px bar in the accent at its start (`data-nest-preview`)
-— and shows nothing when the move is one `nest` would refuse: the first
-open row (it has nothing to go under), a row already a sub-item, a done
-neighbour. On release the write is the same `nestUnder` / `unnest` Tab and
-the menu make, saved at once and said ("Made a sub-item" / "Moved up a
-level"); a pointer that came back under a step writes nothing. A drag past
+its slot and every indent step (`--space-6`, 24 px at a 16 px root, read
+live) to the right is one level in, to the left one level out. The hook
+does not clamp; the editor cuts the levels down to the largest move that
+fits — out to the top, in to one under the row shown above, never past the
+third level, and no further than the row's own sub-items allow — so one
+release can move several levels (50 px right from the top level under a
+sub-item is two), and a drag that asks for one level too many moves as far
+as it can. A drag is placed by eye; Tab and the arrows, one level a press,
+refuse instead. The preview shows what release would do: every open row
+whose depth the write would change — the lifted row and the sub-items it
+carries — is drawn at that depth (`data-preview-depth`, absolute, read from
+the same `shiftLevel` write, one rule per level that outranks `data-depth`),
+the lifted row with a 3 px bar in the accent at its start, the indent
+animating with the motion tokens and snapping under reduced motion. It
+shows nothing when not even one level fits (the refusals under
+"Sub-items"). On release the write is the same `shiftLevel`
+Tab and the menu make, saved at once and said once, where it ended; a
+pointer that came back under a step writes nothing. Until round 8 the
+preview was relative (`data-nest-preview` ±1) and its "one out" rule set the
+indent to zero, so a third-level row dragged one level out was drawn at the
+top level. A drag past
 the slop on either axis is no longer a tap, so a wobble on the handle does
 not open its menu.
-The right and left arrow keys on a focused grip do the same as the drag,
+The right and left arrow keys on a focused grip move one level per press,
 beside the up and down that move it, and the grip's description says so;
 Tab and Shift+Tab in the field are unchanged. The pinned group passes no
 `onShift` and its drag has one axis, as before.
 
 ### Sub-items
 
-Up to three levels (`MAX_DEPTH`, "Data model"), and Keep's keys: Tab in an item's field makes it a
-sub-item of the open row shown above it, Shift+Tab brings it up a level; the
-grip's menu carries the same two as "Make a sub-item" and "Move up a level"
-for a finger and for anyone who does not know the keys, 44 px each and named
-for a screen reader, which also hears "Made a sub-item" / "Moved up a level"
-and the field's name change from "Item 2" to "Sub-item 2"; the keys are
-described on the field itself (`aria-describedby`), where they act, since a
-reader in the field never hears the grip's description. A sub-item is set
-in by one spacing step (`data-depth`, `--space-6`) with the same drawn box
-and grip after it; the indent alone says "part of the row above". The first
-open item can never be a sub-item — it has nothing to nest under — and a
-Tab that can change nothing (that row, a row already as deep as the row
-above allows, Shift+Tab at the top level) is left to the browser, so focus moves on and the list is
-never a keyboard trap.
+Up to three levels (`MAX_DEPTH`, "Data model"; round 8, F1), and Keep's
+keys: Tab in an item's field takes it one level in under the open row shown
+above it, Shift+Tab one level out; the grip's menu carries the same two as
+"Make a sub-item" and "Move up a level" for a finger and for anyone who does
+not know the keys, 44 px each. A row goes at most one level under the row
+above it (`maxIn = min(MAX_DEPTH, above.depth + 1)`), so under `Costco ▸
+Meat` one Tab on a top-level `Rice` makes it Meat's sibling and a second its
+child, as Workflowy's and Keep's single step does. A screen reader hears
+where the row went, its words cut at forty characters: "Made a sub-item of
+“Costco”", "Moved up a level, under “Party”", or "Now a top-level item";
+the row carries `aria-level`, and the field's name is "Item 3", "Sub-item
+3" or "Sub-item 3, level 3". The keys are described on the field itself
+(`aria-describedby`), where they act, since a reader in the field never
+hears the grip's description. A sub-item is set in by one spacing step per
+level (`data-depth`, `--space-6`) with the same drawn box and grip after it;
+the indent alone says "part of the row above". There is no narrower step on
+a small phone: at 320 px the third level still leaves 118 px of text, which
+wraps downward with its box on the first line.
+
+An indent is refused when there is no row above (the first open item can
+never be a sub-item), when the row is already as deep as the row above
+allows, when the row above or anything it stands under is done, or when the
+row's own sub-items would go past the third level — indenting is an
+explicit act about levels, and quietly flattening a grandchild is never
+what it means. From the grip each is said with a fixed sentence ("Nothing
+above to nest under", "Already a sub-item", "Already three levels deep",
+"Cannot nest under a done item", "Its sub-items are already three levels
+deep", and "Already a top-level item" for a step out), and the menu's item
+is disabled; a sideways drag is refused only when not even one level
+fits. From the field the Tab is left to the browser, so focus moves
+on and the list is never a keyboard trap.
 
 The row above is the one a person sees, not the body's previous line
-(`nestUnder`): with `Milk`, `[x] Eggs`, `Bread` in the body the open rows
+(`shiftLevel`'s `above`): with `Milk`, `[x] Eggs`, `Bread` in the body the open rows
 are Milk and Bread, and Tab on Bread makes it Milk's sub-item, moving its
 line above Eggs's — a done line's place shows nowhere, so nothing visible
 moves, and ticking Milk then takes Bread with it as the eye expects. Nesting
 under the previous body line instead would have made Bread the sub-item of a
 row sitting in Done: indented under Milk on screen, orphaned when Milk was
-ticked, and pulled under Eggs when Eggs was reopened. Under a sub-item, Tab
-makes a sibling under the same parent. Up a level (`unnest`) is in place,
+ticked, and pulled under Eggs when Eggs was reopened. Up a level is in place,
 and the sub-items that followed under the same parent become the row's own,
 as an outliner does. A parent made a sub-item takes its children one level
 down with it, and an indent that would push one of them past the third
 level is refused (`canNest`); a parent dropped on a sub-item's slot is
 clamped instead, since a drop is placed by eye. `shiftLevel` is the one
-function for a change of level; `nestUnder` and `unnest` are its one-step
-forms. The sideways drag on the grip and
-→/← on it ("Editing the list" above) go through the same two functions, so
-every path nests the same way and refuses the same rows.
+function for a change of level, and the editor reads every path through
+one planner (`plan`): Tab, →/← on the grip, the menu, the sideways drag and
+its preview ("Editing the list" above), so every path nests the same way,
+refuses the same rows, and previews what it writes.
 
 Ticking a parent ticks its sub-items — the parent is the whole job, and a
 finished job has no open parts — and the whole block is held for the tick's

@@ -71,7 +71,7 @@ export function ChecklistDone({
       </div>
       <ul id={doneListId} className="checklist" role="list" hidden={!doneOpen}>
         {done.map(({ item, index }) => (
-          <li key={index} className={rowClass(item)} data-depth={item.depth || undefined}>
+          <li key={index} className={rowClass(item)} data-depth={item.depth || undefined} aria-level={item.depth + 1}>
             <span className="checklist__grip-space" aria-hidden="true" />
             <Check
               checked={item.done}

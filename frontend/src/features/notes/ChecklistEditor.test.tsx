@@ -376,7 +376,7 @@ describe('reordering by the grip', () => {
   });
 });
 
-describe('one level of sub-items', () => {
+describe('sub-items', () => {
   const PARTY = '- [ ] Party\n- [ ] Plates\n- [x] Eggs\n- [ ] Bread';
 
   it('Tab in a field makes the item a sub-item of the one above, Shift+Tab brings it up; both save at once', async () => {
@@ -396,9 +396,9 @@ describe('one level of sub-items', () => {
     expect(plates).toHaveFocus();
     expect(plates).toHaveAccessibleName('Sub-item 2');
     expect(plates.closest('li')).toHaveAttribute('data-depth', '1');
-    expect(screen.getByText('Made a sub-item')).toHaveAttribute('role', 'status');
+    expect(screen.getByText('Made a sub-item of “Party”')).toHaveAttribute('role', 'status');
 
-    // Already one level in: Tab can nest no deeper, so it is the browser's
+    // Already one level under the row above: Tab can nest no deeper, so it is the browser's
     // Tab and focus leaves the field rather than sticking in it.
     await user.keyboard('{Tab}');
     expect(body()).toBe('- [ ] Party\n  - [ ] Plates\n- [x] Eggs\n- [ ] Bread');
@@ -410,7 +410,7 @@ describe('one level of sub-items', () => {
     expect(plates).toHaveFocus();
     expect(plates).toHaveAccessibleName('Item 2');
     expect(plates.closest('li')).not.toHaveAttribute('data-depth');
-    expect(screen.getByText('Moved up a level')).toHaveAttribute('role', 'status');
+    expect(screen.getByText('Now a top-level item')).toHaveAttribute('role', 'status');
     // The Tab that left the field blurred it, which saves too; the un-nest saved again.
     expect(log.saves).toBe(3);
 
@@ -499,6 +499,7 @@ describe('one level of sub-items', () => {
     expect(done.getAllByRole('checkbox')).toHaveLength(3);
     expect(done.getByRole('checkbox', { name: 'Party' }).closest('li')).not.toHaveAttribute('data-depth');
     expect(done.getByRole('checkbox', { name: 'Plates' }).closest('li')).toHaveAttribute('data-depth', '1');
+    expect(done.getByRole('checkbox', { name: 'Plates' }).closest('li')).toHaveAttribute('aria-level', '2');
     expect(done.getByRole('checkbox', { name: 'Cups' }).closest('li')).toHaveAttribute('data-depth', '1');
     expect(open.queryByRole('checkbox', { name: 'Party' })).toBeNull();
 
@@ -610,7 +611,7 @@ describe('nesting by the grip', () => {
     fireEvent.pointerDown(grip, { ...mouse, clientX: 10, clientY: 50 });
     fireEvent.pointerMove(list, { ...mouse, clientX: 40, clientY: 52 });
     // The row keeps its slot and shows the level it would take; nothing is written.
-    expect(grip.closest('li')).toHaveAttribute('data-nest-preview', '1');
+    expect(grip.closest('li')).toHaveAttribute('data-preview-depth', '1');
     expect(grip.closest('li')).toHaveAttribute('data-dragging');
     expect(openValues()).toEqual(['Milk', 'Bread', '']);
     expect(log.bodies).toEqual([]);
@@ -619,10 +620,10 @@ describe('nesting by the grip', () => {
     expect(log.bodies).toEqual(['- [ ] Milk\n  - [ ] Bread']);
     expect(body()).toBe('- [ ] Milk\n  - [ ] Bread');
     expect(log.saves).toBe(1);
-    expect(screen.getByText('Made a sub-item')).toHaveAttribute('role', 'status');
+    expect(screen.getByText('Made a sub-item of “Milk”')).toHaveAttribute('role', 'status');
     const row = screen.getByRole('button', { name: 'Move Bread' }).closest('li');
     expect(row).toHaveAttribute('data-depth', '1');
-    expect(row).not.toHaveAttribute('data-nest-preview');
+    expect(row).not.toHaveAttribute('data-preview-depth');
     // A decided drag is never a tap.
     expect(screen.queryByRole('menu')).toBeNull();
   });
@@ -633,7 +634,7 @@ describe('nesting by the grip', () => {
     const grip = screen.getByRole('button', { name: 'Move Milk' });
     fireEvent.pointerDown(grip, { ...mouse, clientX: 10, clientY: 10 });
     fireEvent.pointerMove(list, { ...mouse, clientX: 40, clientY: 12 });
-    expect(grip.closest('li')).not.toHaveAttribute('data-nest-preview');
+    expect(grip.closest('li')).not.toHaveAttribute('data-preview-depth');
     fireEvent.pointerUp(list, { ...mouse, clientX: 40, clientY: 12 });
     expect(log.bodies).toEqual([]);
     expect(log.saves).toBe(0);
@@ -646,11 +647,11 @@ describe('nesting by the grip', () => {
     const grip = screen.getByRole('button', { name: 'Move Bread' });
     fireEvent.pointerDown(grip, { ...mouse, clientX: 50, clientY: 50 });
     fireEvent.pointerMove(list, { ...mouse, clientX: 20, clientY: 48 });
-    expect(grip.closest('li')).toHaveAttribute('data-nest-preview', '-1');
+    expect(grip.closest('li')).toHaveAttribute('data-preview-depth', '0');
     fireEvent.pointerUp(list, { ...mouse, clientX: 20, clientY: 48 });
     expect(log.bodies).toEqual([TWO]);
     expect(log.saves).toBe(1);
-    expect(screen.getByText('Moved up a level')).toHaveAttribute('role', 'status');
+    expect(screen.getByText('Now a top-level item')).toHaveAttribute('role', 'status');
   });
 
   it('a sideways wobble short of a step is neither a tap nor a change', () => {
@@ -670,7 +671,7 @@ describe('nesting by the grip', () => {
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Move Milk' }), { ...mouse, clientX: 10, clientY: 0 });
     fireEvent.pointerMove(list, { ...mouse, clientX: 12, clientY: 60 });
     expect(openValues()).toEqual(['Bread', 'Milk', '']);
-    expect(screen.getByRole('button', { name: 'Move Milk' }).closest('li')).not.toHaveAttribute('data-nest-preview');
+    expect(screen.getByRole('button', { name: 'Move Milk' }).closest('li')).not.toHaveAttribute('data-preview-depth');
     fireEvent.pointerUp(list, { ...mouse, clientX: 12, clientY: 60 });
     expect(log.bodies).toEqual(['- [ ] Bread\n- [ ] Milk']);
   });
@@ -684,8 +685,8 @@ describe('nesting by the grip', () => {
     expect(body()).toBe('- [ ] Milk\n  - [ ] Bread');
     expect(log.saves).toBe(1);
     expect(screen.getByRole('button', { name: 'Move Bread' })).toHaveFocus();
-    expect(screen.getByText('Made a sub-item')).toHaveAttribute('role', 'status');
-    // One level is the limit: a second press changes nothing and writes
+    expect(screen.getByText('Made a sub-item of “Milk”')).toHaveAttribute('role', 'status');
+    // One under the row above is the limit: a second press changes nothing and writes
     // nothing — and says why, since nothing moved and a screen reader would
     // otherwise hear nothing at all.
     await user.keyboard('{ArrowRight}');
@@ -738,15 +739,195 @@ describe('nesting by the grip', () => {
       const grip = screen.getByRole('button', { name: 'Move Bread' });
       fireEvent.pointerDown(grip, { ...mouse, clientX: 10, clientY: 50 });
       fireEvent.pointerMove(list, { ...mouse, clientX: 50, clientY: 52 });
-      expect(grip.closest('li')).not.toHaveAttribute('data-nest-preview');
+      expect(grip.closest('li')).not.toHaveAttribute('data-preview-depth');
       fireEvent.pointerMove(list, { ...mouse, clientX: 75, clientY: 52 });
-      expect(grip.closest('li')).toHaveAttribute('data-nest-preview', '1');
+      expect(grip.closest('li')).toHaveAttribute('data-preview-depth', '1');
       fireEvent.pointerUp(list, { ...mouse, clientX: 75, clientY: 52 });
       expect(log.bodies).toEqual(['- [ ] Milk\n  - [ ] Bread']);
     } finally {
       document.documentElement.style.removeProperty('--space-6');
       document.documentElement.style.removeProperty('font-size');
     }
+  });
+});
+
+describe('three levels', () => {
+  const PARTY = '- [ ] Party\n  - [ ] Costco\n- [ ] Plates';
+
+  /** Lifts the row's grip, moves the pointer `dx` sideways, and returns the row while it is in the air. */
+  function dragSideways(name: string, dx: number): HTMLElement {
+    const grip = screen.getByRole('button', { name: `Move ${name}` });
+    fireEvent.pointerDown(grip, { ...mouse, clientX: 100, clientY: 50 });
+    fireEvent.pointerMove(items(), { ...mouse, clientX: 100 + dx, clientY: 51 });
+    return grip.closest('li') as HTMLElement;
+  }
+  function release(dx: number): void {
+    fireEvent.pointerUp(items(), { ...mouse, clientX: 100 + dx, clientY: 51 });
+  }
+
+  it('Tab twice walks a row 0 → 1 → 2, a sibling and then a child; a third Tab is the browser’s', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount('- [ ] Party\n- [ ] Costco\n- [ ] Plates');
+    await user.click(screen.getByRole('textbox', { name: 'Item 2' }));
+    await user.keyboard('{Tab}');
+    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n- [ ] Plates');
+
+    const plates = screen.getByRole('textbox', { name: 'Item 3' });
+    await user.click(plates);
+    // Under a sub-item, one step in is its sibling, not its child.
+    await user.keyboard('{Tab}');
+    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n  - [ ] Plates');
+    expect(screen.getByText('Made a sub-item of “Party”')).toHaveAttribute('role', 'status');
+    await user.keyboard('{Tab}');
+    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates');
+    expect(screen.getByText('Made a sub-item of “Costco”')).toHaveAttribute('role', 'status');
+    expect(plates).toHaveFocus();
+    expect(plates).toHaveAccessibleName('Sub-item 3, level 3');
+    expect(plates.closest('li')).toHaveAttribute('data-depth', '2');
+    expect(plates.closest('li')).toHaveAttribute('aria-level', '3');
+    expect(screen.getByRole('textbox', { name: 'Item 1' }).closest('li')).toHaveAttribute('aria-level', '1');
+    const saves = log.saves;
+
+    // The third level is the last: the key keeps its meaning and focus moves on.
+    await user.keyboard('{Tab}');
+    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates');
+    expect(plates).not.toHaveFocus();
+    // Leaving the field saved it; nothing else was written.
+    expect(log.saves).toBe(saves + 1);
+
+    // Shift+Tab is one level out, in place, and says under what.
+    await user.click(plates);
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n  - [ ] Plates');
+    expect(screen.getByText('Moved up a level, under “Party”')).toHaveAttribute('role', 'status');
+  });
+
+  it('a parent takes its whole block with it, a level at a time, in and out', async () => {
+    const user = userEvent.setup();
+    const { body } = mount('- [ ] Party\n- [ ] Costco\n  - [ ] Meat');
+    await user.click(screen.getByRole('textbox', { name: 'Item 2' }));
+    await user.keyboard('{Tab}');
+    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Meat');
+    expect(screen.getByRole('textbox', { name: 'Sub-item 3, level 3' })).toHaveValue('Meat');
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(body()).toBe('- [ ] Party\n- [ ] Costco\n  - [ ] Meat');
+  });
+
+  it('a grip drag 50 px right under a sub-item previews the third level and writes it once', () => {
+    const { log, body } = mount(PARTY);
+    const row = dragSideways('Plates', 50);
+    expect(row).toHaveAttribute('data-preview-depth', '2');
+    expect(log.bodies).toEqual([]);
+    release(50);
+    expect(log.bodies).toEqual(['- [ ] Party\n  - [ ] Costco\n    - [ ] Plates']);
+    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates');
+    expect(log.saves).toBe(1);
+    // One release, two levels: said once, where it ended.
+    expect(screen.getByText('Made a sub-item of “Costco”')).toHaveAttribute('role', 'status');
+    expect(screen.getByRole('button', { name: 'Move Plates' }).closest('li')).not.toHaveAttribute('data-preview-depth');
+  });
+
+  it('a drag further than the row may go stops at one under the row above', () => {
+    const { log } = mount(PARTY);
+    // Three steps asked for; one under Costco is the most there is.
+    expect(dragSideways('Plates', 80)).toHaveAttribute('data-preview-depth', '2');
+    release(80);
+    expect(log.bodies).toEqual(['- [ ] Party\n  - [ ] Costco\n    - [ ] Plates']);
+  });
+
+  it('30 px left from the third level writes the second; far left writes the top in one release', () => {
+    const DEEP = '- [ ] Party\n  - [ ] Costco\n    - [ ] Candles';
+    const { log } = mount(DEEP);
+    // The preview is the absolute depth: one out from the third is the second, not the top.
+    expect(dragSideways('Candles', -30)).toHaveAttribute('data-preview-depth', '1');
+    release(-30);
+    expect(log.bodies).toEqual(['- [ ] Party\n  - [ ] Costco\n  - [ ] Candles']);
+    expect(screen.getByText('Moved up a level, under “Party”')).toHaveAttribute('role', 'status');
+
+    expect(dragSideways('Candles', -100)).toHaveAttribute('data-preview-depth', '0');
+    release(-100);
+    expect(log.bodies.at(-1)).toBe('- [ ] Party\n  - [ ] Costco\n- [ ] Candles');
+    expect(screen.getByText('Now a top-level item')).toHaveAttribute('role', 'status');
+  });
+
+  it('a parent dragged sideways previews its sub-items at their new depths too', () => {
+    const { log } = mount('- [ ] Top\n- [ ] Party\n  - [ ] Plates');
+    const row = dragSideways('Party', 30);
+    expect(row).toHaveAttribute('data-preview-depth', '1');
+    // The child is not lifted, but release moves it, so it is drawn where it goes.
+    const plates = screen.getByRole('textbox', { name: 'Sub-item 3' }).closest('li');
+    expect(plates).toHaveAttribute('data-preview-depth', '2');
+    expect(screen.getByRole('textbox', { name: 'Item 1' }).closest('li')).not.toHaveAttribute('data-preview-depth');
+    release(30);
+    expect(log.bodies).toEqual(['- [ ] Top\n  - [ ] Party\n    - [ ] Plates']);
+  });
+
+  it('a drag asking for more than the sub-items allow moves as far as fits; the arrow keys stay strict', async () => {
+    const TWO = '- [ ] Top\n  - [ ] Sub\n- [ ] Costco\n  - [ ] Meat';
+    const { log, body } = mount(TWO);
+    // Two steps right would put Meat at a fourth level: one is what fits.
+    expect(dragSideways('Costco', 50)).toHaveAttribute('data-preview-depth', '1');
+    expect(screen.getByRole('textbox', { name: 'Sub-item 4' }).closest('li')).toHaveAttribute('data-preview-depth', '2');
+    release(50);
+    expect(log.bodies).toEqual(['- [ ] Top\n  - [ ] Sub\n  - [ ] Costco\n    - [ ] Meat']);
+    // One more press would push Meat past the third level: refused, not cut down.
+    const user = userEvent.setup();
+    screen.getByRole('button', { name: 'Move Costco' }).focus();
+    await user.keyboard('{ArrowRight}');
+    expect(body()).toBe('- [ ] Top\n  - [ ] Sub\n  - [ ] Costco\n    - [ ] Meat');
+    expect(screen.getByText('Its sub-items are already three levels deep')).toHaveAttribute('role', 'status');
+  });
+
+  it('20 px sideways is short of a step: no preview, nothing written', () => {
+    const { log } = mount(PARTY);
+    expect(dragSideways('Plates', 20)).not.toHaveAttribute('data-preview-depth');
+    release(20);
+    expect(log.bodies).toEqual([]);
+    expect(log.saves).toBe(0);
+  });
+
+  it('the grip’s right and left arrows each move one level, and the third is the last', async () => {
+    const user = userEvent.setup();
+    const { body } = mount(PARTY);
+    screen.getByRole('button', { name: 'Move Plates' }).focus();
+    await user.keyboard('{ArrowRight}');
+    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n  - [ ] Plates');
+    await user.keyboard('{ArrowRight}');
+    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates');
+    expect(screen.getByRole('button', { name: 'Move Plates' })).toHaveFocus();
+    await user.keyboard('{ArrowRight}');
+    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates');
+    expect(screen.getByText('Already three levels deep')).toHaveAttribute('role', 'status');
+    await user.keyboard('{ArrowLeft}');
+    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n  - [ ] Plates');
+    expect(screen.getByText('Moved up a level, under “Party”')).toHaveAttribute('role', 'status');
+  });
+
+  it('refuses, and says why, an indent that would push a sub-item past the third level', async () => {
+    const user = userEvent.setup();
+    const DEEP = '- [ ] Top\n- [ ] Party\n  - [ ] Costco\n    - [ ] Plates';
+    const { log, body } = mount(DEEP);
+    const grip = screen.getByRole('button', { name: 'Move Party' });
+    grip.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(body()).toBe(DEEP);
+    expect(log.bodies).toEqual([]);
+    expect(screen.getByText('Its sub-items are already three levels deep')).toHaveAttribute('role', 'status');
+    // No preview for a drag that would be refused, and nothing on release.
+    expect(dragSideways('Party', 30)).not.toHaveAttribute('data-preview-depth');
+    release(30);
+    expect(log.bodies).toEqual([]);
+    // The menu's item is disabled for the same reason.
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Move Party' }), { ...mouse, clientX: 10, clientY: 0 });
+    fireEvent.pointerUp(items(), { ...mouse, clientX: 10, clientY: 0 });
+    expect(screen.getByRole('menuitem', { name: 'Make a sub-item' })).toBeDisabled();
+    // From the field the Tab is the browser's, and nothing is said.
+    await user.keyboard('{Escape}');
+    const field = screen.getByRole('textbox', { name: 'Item 2' });
+    await user.click(field);
+    await user.keyboard('{Tab}');
+    expect(field).not.toHaveFocus();
+    expect(body()).toBe(DEEP);
   });
 });
 

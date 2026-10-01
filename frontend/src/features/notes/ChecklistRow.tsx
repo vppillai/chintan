@@ -26,8 +26,8 @@ import type { ChecklistItem } from './checklist.ts';
  * and a menu on the grip rather than a ⋮ per row because a phone's width has
  * no room for both beside a dictated sentence.
  *
- * The field carries Keep's keys: Tab nests the row under the one above it
- * and Shift+Tab brings it up a level (`onNest`, which says whether anything
+ * The field carries Keep's keys: Tab takes the row one level in under the
+ * one above it and Shift+Tab one level out (`onNest`, which says whether anything
  * changed — when nothing can, the key keeps its meaning and focus moves on,
  * so the list is never a keyboard trap); Enter starts a new item under this
  * one (`onEnter`); Backspace in an emptied item removes it (`onBackspaceEmpty`).
@@ -39,7 +39,7 @@ export function ChecklistRow({
   index,
   position,
   dragging,
-  nestPreview,
+  previewDepth,
   flash = false,
   hintId,
   fieldHintId,
@@ -61,8 +61,8 @@ export function ChecklistRow({
   /** The row's place among the open rows shown, for its name and the grip map. */
   position: number;
   dragging: boolean;
-  /** The level a sideways drag would give the lifted row on release, drawn while it is in the air. */
-  nestPreview: 1 | -1 | undefined;
+  /** The depth a sideways drag would give this row on release — the lifted row or one it carries — drawn while it is in the air. */
+  previewDepth: number | undefined;
   /** Just added by a recording: marked for a moment after the banner's Show. */
   flash?: boolean;
   hintId: string;
@@ -120,7 +120,9 @@ export function ChecklistRow({
       data-depth={item.depth || undefined}
       data-drag-id={id}
       data-dragging={dragging || undefined}
-      data-nest-preview={nestPreview}
+      data-preview-depth={previewDepth}
+      // ARIA 1.2 allows a level on a list item: the indent, for the ear.
+      aria-level={item.depth + 1}
       data-flash={flash ? '' : undefined}
     >
       <OverflowMenu
@@ -143,7 +145,7 @@ export function ChecklistRow({
       <ItemField
         ref={fieldRef}
         value={item.text}
-        aria-label={`${item.depth > 0 ? 'Sub-item' : 'Item'} ${String(position + 1)}`}
+        aria-label={fieldName(item.depth, position)}
         aria-describedby={fieldHintId}
         enterKeyHint="next"
         onChange={(event) => {
@@ -154,6 +156,12 @@ export function ChecklistRow({
       />
     </li>
   );
+}
+
+/** "Item 3", "Sub-item 3", "Sub-item 3, level 3": the row's place and, below the first sub-level, its level. */
+function fieldName(depth: number, position: number): string {
+  const name = `${depth > 0 ? 'Sub-item' : 'Item'} ${String(position + 1)}`;
+  return depth > 1 ? `${name}, level ${String(depth + 1)}` : name;
 }
 
 export function rowClass(item: ChecklistItem): string {
