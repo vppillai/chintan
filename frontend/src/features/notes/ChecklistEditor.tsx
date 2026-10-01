@@ -3,7 +3,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Icon } from '@/components/Icon.tsx';
 import type { OverflowMenuItem } from '@/components/OverflowMenu.tsx';
 import { announce } from '@/components/StatusRegion.tsx';
-import { showToast } from '@/components/Toast.tsx';
+import { showToast, type ToastNotice } from '@/components/Toast.tsx';
 import { useDragReorder } from '@/hooks/useDragReorder.ts';
 
 import { ChecklistDone } from './ChecklistDone.tsx';
@@ -65,7 +65,7 @@ import { useTidying } from './useTidyList.ts';
  * moving between are gone. Done rows have no grip: their order is the
  * body's, and nothing shows it.
  *
- * Three levels (round 8, F1; `MAX_DEPTH`): a row is set in by one spacing
+ * Four levels (round 8, F1; round 10, PR10-11; `MAX_DEPTH`): a row is set in by one spacing
  * step per level (`data-depth`, checklist.css) with the same drawn box, and
  * carries `aria-level`. Tab in a row's field takes it one level in under the
  * open row shown above it — the row a person sees, not the body's previous
@@ -76,7 +76,7 @@ import { useTidying } from './useTidyList.ts';
  * in. The grip's menu carries the same two as "Make a sub-item" / "Move up a
  * level" for the finger and for anyone who does not know the keys. Tab that
  * can change nothing — the first row, a row as deep as the row above allows,
- * a row whose own sub-items would go past the third level — is left to the
+ * a row whose own sub-items would go past the fourth level — is left to the
  * browser, so the list is never a keyboard trap; from the grip the same
  * refusal is said (`planLevel`). Ticking a parent ticks its sub-items and the whole block
  * is held for the beat and moves to Done together; reopening a sub-item
@@ -91,14 +91,18 @@ import { useTidying } from './useTidyList.ts';
  * (`sessionStorage`, open by default, the NoteTabs pattern), with Uncheck
  * all and Delete done beside it; Delete done offers Undo in the shell's
  * toast for six seconds rather than asking first (OF-DEL: no typed word,
- * no dialog for what can be undone). Undo writes the body it captured back
- * only while the body is still what this editor last wrote: a recording
- * filed into the list by refetch inside those six seconds would otherwise
- * leave with it, silently (`UNDO_STALE`). The body as it stands is asked of
- * the caller (`currentBody`), because the toast outlives this component — a
- * tab switch unmounts it while Undo still shows — and the `body` prop stops
- * following the note then. The person's own acts since all pass through
- * `write`, so they never block it.
+ * no dialog for what can be undone). Every Undo here — a tick's, Delete
+ * done's, and Tidy up list's in `useTidyList` — is one rule
+ * (`undoIfUnchanged`, D3 of the 2026-10-01 platform review): it writes the
+ * body it captured back only while the body is still exactly what the act
+ * wrote, and otherwise says `UNDO_STALE`. A recording filed into the list by
+ * refetch inside those six seconds would otherwise leave with it, silently;
+ * and the person's own later tick or typing would be taken back with it
+ * (Delete done did that until D3, by comparing with the editor's last
+ * write). The body as it stands is asked of the caller (`currentBody`),
+ * because the toast outlives this component — a tab switch unmounts it
+ * while Undo still shows — and the `body` prop stops following the note
+ * then.
  *
  * Every change is one `onChange(body)`, and a tick, a move and a delete
  * call `onSave` at once, as a discrete act does, while typing saves on blur.
@@ -219,13 +223,7 @@ export function ChecklistEditor({
     field.setSelectionRange(start, end);
   });
 
-  // What this editor last wrote: Undo compares it with `currentBody()`,
-  // since a change from elsewhere arrives as a new body and nothing else
-  // tells the closure holding the captured one.
-  const lastWritten = useRef<string | null>(null);
-
   const write = (next: string, focus?: number, hold: readonly number[] | null = null): void => {
-    lastWritten.current = next;
     onChange(next);
     if (focus !== undefined) focusAfterWrite.current = focus;
     setHeld(hold);
@@ -246,9 +244,7 @@ export function ChecklistEditor({
      * the next tick replaces it, so only the last tick is undoable. Weak: it
      * never takes the place of a standing Delete done or Tidy Undo, which
      * would leave those items with no way back. Undo writes the whole
-     * body back, so the row returns to its place — and only while the body
-     * is still exactly the tick's: after any later act, the person's own
-     * included, it refuses rather than undo that act too.
+     * body back, so the row returns to its place (`undoIfUnchanged`).
      */
     write(next, undefined, flipped);
     if (item.done) announce('Reopened');
@@ -260,18 +256,11 @@ export function ChecklistEditor({
         message: `${shortName(item.text)} done`,
         ms: TICK_TOAST_MS,
         weak: true,
-        action: {
-          label: 'Undo',
-          onSelect: () => {
-            if (currentBody() !== next) {
-              showToast({ message: UNDO_STALE });
-              return;
-            }
-            write(previous);
-            announce('Reopened');
-            save();
-          },
-        },
+        action: undoIfUnchanged(currentBody, next, () => {
+          write(previous);
+          announce('Reopened');
+          save();
+        }),
       });
       if (!shown) announce('Marked done');
     }
@@ -449,24 +438,18 @@ export function ChecklistEditor({
 
   const deleteDone = (): void => {
     const previous = body;
+    const next = removeDone(body);
     const count = done.length;
     const message = `${String(count)} done item${count === 1 ? '' : 's'} deleted`;
     showToast({
       message,
-      action: {
-        label: 'Undo',
-        onSelect: () => {
-          if (currentBody() !== lastWritten.current) {
-            showToast({ message: UNDO_STALE });
-            return;
-          }
-          write(previous);
-          save();
-        },
-      },
+      action: undoIfUnchanged(currentBody, next, () => {
+        write(previous);
+        save();
+      }),
     });
     announce(message);
-    write(removeDone(body));
+    write(next);
     save();
   };
 
@@ -610,7 +593,27 @@ export function shortName(text: string): string {
 }
 
 /** What an Undo says instead of writing over a list that changed under it. */
-export const UNDO_STALE = 'The list changed since — nothing undone.';
+const UNDO_STALE = 'The list changed since — nothing undone.';
+
+/**
+ * The one Undo rule (D3, 2026-10-01) for a tick, Delete done and Tidy up
+ * list: the toast action that runs `restore` only while `current()` is still
+ * exactly `written`, the body the act wrote, and otherwise says `UNDO_STALE`
+ * — a recording filed in by refetch, a Tidy answer, or the person's own
+ * later tick or typing would all leave with the captured body otherwise.
+ */
+export function undoIfUnchanged(current: () => string, written: string, restore: () => void): NonNullable<ToastNotice['action']> {
+  return {
+    label: 'Undo',
+    onSelect: () => {
+      if (current() !== written) {
+        showToast({ message: UNDO_STALE });
+        return;
+      }
+      restore();
+    },
+  };
+}
 
 /**
  * `--motion-duration-base` in milliseconds, read from the sheet so the hold

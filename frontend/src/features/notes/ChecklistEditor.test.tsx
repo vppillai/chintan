@@ -753,7 +753,7 @@ describe('nesting by the grip', () => {
   });
 });
 
-describe('three levels', () => {
+describe('four levels', () => {
   const PARTY = '- [ ] Party\n  - [ ] Costco\n- [ ] Plates';
 
   /** Lifts the row's grip, moves the pointer `dx` sideways, and returns the row while it is in the air. */
@@ -865,19 +865,20 @@ describe('three levels', () => {
   });
 
   it('a drag asking for more than the sub-items allow moves as far as fits; the arrow keys stay strict', async () => {
-    const TWO = '- [ ] Top\n  - [ ] Sub\n- [ ] Costco\n  - [ ] Meat';
+    const TWO = '- [ ] Top\n  - [ ] Sub\n- [ ] Costco\n  - [ ] Meat\n    - [ ] Chicken';
     const { log, body } = mount(TWO);
-    // Two steps right would put Meat at a fourth level: one is what fits.
+    // Two steps right would put Chicken at a fifth level: one is what fits.
     expect(dragSideways('Costco', 50)).toHaveAttribute('data-preview-depth', '1');
     expect(screen.getByRole('textbox', { name: 'Sub-item 4' }).closest('li')).toHaveAttribute('data-preview-depth', '2');
+    expect(screen.getByRole('textbox', { name: 'Sub-item 5, level 3' }).closest('li')).toHaveAttribute('data-preview-depth', '3');
     release(50);
-    expect(log.bodies).toEqual(['- [ ] Top\n  - [ ] Sub\n  - [ ] Costco\n    - [ ] Meat']);
-    // One more press would push Meat past the third level: refused, not cut down.
+    expect(log.bodies).toEqual(['- [ ] Top\n  - [ ] Sub\n  - [ ] Costco\n    - [ ] Meat\n      - [ ] Chicken']);
+    // One more press would push Chicken past the fourth level: refused, not cut down.
     const user = userEvent.setup();
     screen.getByRole('button', { name: 'Move Costco' }).focus();
     await user.keyboard('{ArrowRight}');
-    expect(body()).toBe('- [ ] Top\n  - [ ] Sub\n  - [ ] Costco\n    - [ ] Meat');
-    expect(screen.getByText('Its sub-items are already three levels deep')).toHaveAttribute('role', 'status');
+    expect(body()).toBe('- [ ] Top\n  - [ ] Sub\n  - [ ] Costco\n    - [ ] Meat\n      - [ ] Chicken');
+    expect(screen.getByText('Its sub-items are already four levels deep')).toHaveAttribute('role', 'status');
   });
 
   it('20 px sideways is short of a step: no preview, nothing written', () => {
@@ -888,33 +889,39 @@ describe('three levels', () => {
     expect(log.saves).toBe(0);
   });
 
-  it('the grip’s right and left arrows each move one level, and the third is the last', async () => {
+  it('the grip’s right and left arrows each move one level, and the fourth is the last', async () => {
     const user = userEvent.setup();
-    const { body } = mount(PARTY);
-    screen.getByRole('button', { name: 'Move Plates' }).focus();
+    const { body } = mount('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n- [ ] Cups');
+    screen.getByRole('button', { name: 'Move Cups' }).focus();
     await user.keyboard('{ArrowRight}');
-    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n  - [ ] Plates');
+    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n  - [ ] Cups');
     await user.keyboard('{ArrowRight}');
-    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates');
-    expect(screen.getByRole('button', { name: 'Move Plates' })).toHaveFocus();
+    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n    - [ ] Cups');
     await user.keyboard('{ArrowRight}');
-    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates');
-    expect(screen.getByText('Already three levels deep')).toHaveAttribute('role', 'status');
+    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n      - [ ] Cups');
+    expect(screen.getByRole('button', { name: 'Move Cups' })).toHaveFocus();
+    const cups = screen.getByRole('textbox', { name: 'Sub-item 4, level 4' });
+    expect(cups.closest('li')).toHaveAttribute('data-depth', '3');
+    expect(cups.closest('li')).toHaveAttribute('aria-level', '4');
+    expect(screen.getByText('Made a sub-item of “Plates”')).toHaveAttribute('role', 'status');
+    await user.keyboard('{ArrowRight}');
+    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n      - [ ] Cups');
+    expect(screen.getByText('Already four levels deep')).toHaveAttribute('role', 'status');
     await user.keyboard('{ArrowLeft}');
-    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n  - [ ] Plates');
-    expect(screen.getByText('Moved up a level, under “Party”')).toHaveAttribute('role', 'status');
+    expect(body()).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n    - [ ] Cups');
+    expect(screen.getByText('Moved up a level, under “Costco”')).toHaveAttribute('role', 'status');
   });
 
-  it('refuses, and says why, an indent that would push a sub-item past the third level', async () => {
+  it('refuses, and says why, an indent that would push a sub-item past the fourth level', async () => {
     const user = userEvent.setup();
-    const DEEP = '- [ ] Top\n- [ ] Party\n  - [ ] Costco\n    - [ ] Plates';
+    const DEEP = '- [ ] Top\n- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n      - [ ] Paper ones';
     const { log, body } = mount(DEEP);
     const grip = screen.getByRole('button', { name: 'Move Party' });
     grip.focus();
     await user.keyboard('{ArrowRight}');
     expect(body()).toBe(DEEP);
     expect(log.bodies).toEqual([]);
-    expect(screen.getByText('Its sub-items are already three levels deep')).toHaveAttribute('role', 'status');
+    expect(screen.getByText('Its sub-items are already four levels deep')).toHaveAttribute('role', 'status');
     // No preview for a drag that would be refused, and nothing on release.
     expect(dragSideways('Party', 30)).not.toHaveAttribute('data-preview-depth');
     release(30);
@@ -1001,7 +1008,7 @@ describe('the Done section', () => {
     expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
   });
 
-  it('Undo after Delete done still stands after the person’s own next act, and takes that back with it', async () => {
+  it('Undo after Delete done still stands after the person’s own next act, and refuses rather than take that back too (D3)', async () => {
     const user = userEvent.setup();
     const { log, body } = mount('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
     await user.click(screen.getByRole('button', { name: 'Delete done' }));
@@ -1011,9 +1018,14 @@ describe('the Done section', () => {
     expect(screen.getByText('2 done items deleted', { selector: '.toast__text' })).toBeInTheDocument();
     // With the toast kept away, the tick is said by the status region instead.
     expect(screen.getByText('Marked done', { selector: '[aria-live]' })).toBeInTheDocument();
+    // The one Undo rule: the body is no longer what Delete done wrote, so
+    // the tick stays and nothing is written. Until D3 this Undo compared
+    // with the editor's last write and silently reopened Bread too.
     await user.click(screen.getByRole('button', { name: 'Undo' }));
-    expect(body()).toBe('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
-    expect(log.saves).toBe(3);
+    expect(body()).toBe('- [x] Bread');
+    expect(log.bodies).toEqual(['- [ ] Bread', '- [x] Bread']);
+    expect(log.saves).toBe(2);
+    expect(screen.getByText('The list changed since — nothing undone.', { selector: '.toast__text' })).toBeInTheDocument();
   });
 
   it('a tick\'s Undo refuses after the person\'s own later edit, rather than undo it too', async () => {

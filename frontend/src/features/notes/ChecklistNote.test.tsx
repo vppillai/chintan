@@ -351,6 +351,59 @@ describe('a checklist note', () => {
     expect(api.note.body).toBe(withJam);
   });
 
+  it('the tidy’s Undo refuses after the person’s own later tick, rather than undo it too (D3)', async () => {
+    const user = userEvent.setup();
+    const api = server(SHOPPING);
+    await screen.findByRole('textbox', { name: 'Item 1' });
+    await tidyFromMenu(user);
+    await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(1);
+    });
+    expect(toastText()).toBe('List tidied: 3 lines → 4 items.');
+
+    // A tick's Undo is weak, so the tidy's stands; the body is no longer the tidied one.
+    await user.click(screen.getByRole('checkbox', { name: 'Butter' }));
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(2);
+    });
+    const ticked = '- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [x] Butter';
+    expect(api.note.body).toBe(ticked);
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(toastText()).toBe('The list changed since — nothing undone.');
+    await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
+    expect(api.patches).toHaveLength(2);
+    expect(api.note.body).toBe(ticked);
+  });
+
+  it('a tidy answer landing by poll takes a standing Delete done Undo’s place; its Undo takes back the tidy only, never the delete', async () => {
+    const user = userEvent.setup();
+    const api = server(SHOPPING, { split: '- [ ] Milk\n- [ ] Bread\n- [ ] Butter' });
+    await screen.findByRole('textbox', { name: 'Item 1' });
+    await user.click(screen.getByRole('button', { name: 'Delete done' }));
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(1);
+    });
+    const deleted = '- [ ] Milk\n- [ ] Bread';
+    expect(api.note.body).toBe(deleted);
+    expect(toastText()).toBe('1 done item deleted');
+
+    await tidyFromMenu(user);
+    await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(2);
+    });
+    // The Delete done Undo is gone with its toast, not applied to the tidied body.
+    expect(toastText()).toBe('List tidied: 2 lines → 3 items.');
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(3);
+    });
+    expect(api.note.body).toBe(deleted);
+    expect(screen.queryByRole('checkbox', { name: 'Eggs' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+  });
+
   it('a list changed while tidying is not replaced, and the toast offers Tidy again', async () => {
     const user = userEvent.setup();
     const api = server(SHOPPING);

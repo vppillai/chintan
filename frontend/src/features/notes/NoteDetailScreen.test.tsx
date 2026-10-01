@@ -928,6 +928,45 @@ describe('deleting from the note screen', () => {
     expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
   });
 
+  it('a note Delete takes a standing Delete done Undo’s place; its Undo restores the note, never the done items (D3)', async () => {
+    const user = userEvent.setup();
+    const shopping: StoredNote = {
+      ...ROOF,
+      id: 'shopping',
+      kind: 'checklist',
+      title: 'Shopping',
+      body: '- [ ] Milk\n- [x] Eggs',
+      snippet: '- [ ] Milk',
+    };
+    const api = server([shopping]);
+    const { router } = mount(api.fetchImpl, '/notes/shopping');
+    await screen.findByRole('textbox', { name: 'Item 1' });
+
+    await user.click(screen.getByRole('button', { name: 'Delete done' }));
+    // The toast's copy: the shell's status region says the same words.
+    expect(screen.getByText('1 done item deleted', { selector: '.toast__text' })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(api.notes.get('shopping')?.body).toBe('- [ ] Milk');
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Note actions' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    await user.click(within(screen.getByRole('dialog', { name: 'Delete “Shopping”?' })).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/');
+    });
+    // The toast is the note's now; the done items' Undo went with its toast.
+    expect(screen.getByText('Deleted · kept in Archive for 30 days')).toBeInTheDocument();
+    expect(screen.queryByText('1 done item deleted', { selector: '.toast__text' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => {
+      expect(api.calls).toContain('POST /v1/notes/shopping/restore');
+    });
+    expect(api.notes.get('shopping')?.archived).toBe(false);
+    expect(api.notes.get('shopping')?.body).toBe('- [ ] Milk');
+    expect(api.calls.filter((call) => call.startsWith('PATCH'))).toHaveLength(1);
+  });
+
   it('Delete forever on an archived note opens a plain confirm — no textbox, focus on Cancel — whose button purges', async () => {
     const user = userEvent.setup();
     const api = server([
