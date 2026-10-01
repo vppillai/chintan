@@ -14,7 +14,7 @@ import (
 
 // functionLineCeiling is the most lines a non-test function may span, from
 // its func keyword to its closing brace, comments included. Set just above
-// the largest function at the time it was added (route, 191 lines; CleanNote
+// the largest function at the time it was added (route, 193 lines; CleanNote
 // 167; transcribe 166), so the ceiling holds the line and the next gate
 // added to a stage function is written beside it, as transcriptOutcome and
 // tickSafety were (review 2026-10-01, BE-6, PR9-6). Lower it as those
