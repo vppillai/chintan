@@ -661,6 +661,43 @@ describe('the note is panels under one strip', () => {
     expect(text).toHaveAttribute('aria-selected', 'true');
   });
 
+  /** The region's top this far above (or below) the scroll region's: jsdom lays nothing out. */
+  function placeViews(above: number) {
+    return vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element,
+    ) {
+      const top = this.classList.contains('note-views') ? 60 - above : 60;
+      return { top, bottom: top, left: 0, right: 0, width: 0, height: 0, x: 0, y: top } as DOMRect;
+    });
+  }
+
+  it('starts a new tab at its top under a stuck strip', async () => {
+    const user = userEvent.setup();
+    const api = server([withRecording]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await loaded();
+    const main = document.querySelector('.app__main')!;
+    main.scrollTop = 1_500;
+    // Scrolled deep: the strip is stuck and the region's top 1 200 px above it.
+    const rects = placeViews(1_200);
+    await user.click(screen.getByRole('tab', { name: 'Cleaned' }));
+    expect(main.scrollTop).toBe(300);
+    rects.mockRestore();
+  });
+
+  it('leaves the scroll alone on a tab change with the head on screen', async () => {
+    const user = userEvent.setup();
+    const api = server([withRecording]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await loaded();
+    const main = document.querySelector('.app__main')!;
+    main.scrollTop = 40;
+    const rects = placeViews(-100);
+    await user.click(screen.getByRole('tab', { name: 'Cleaned' }));
+    expect(main.scrollTop).toBe(40);
+    rects.mockRestore();
+  });
+
   it('names each of the three segments, and each panel is what its tab says', async () => {
     const user = userEvent.setup();
     const api = server([withRecording]);

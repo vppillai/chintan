@@ -205,6 +205,151 @@ test.describe('on a phone', () => {
       expect(await selected(page)).toBe('Text');
     });
 
+    interface Frame {
+      t: number;
+      x: number;
+      /** The tab the panel on screen belongs to, from its id. */
+      panel: string;
+      /** `data-tab-enter` on the region: the frame is a step's start pose. */
+      enter: boolean;
+    }
+
+    /**
+     * Every frame's panel `translate` (0 for none), which panel it is, and
+     * whether it is posed, from now until `ms` later, read back by `frames`.
+     * Started before the lift, so the first frame after it is in the record.
+     */
+    async function sample(page: Page, ms: number): Promise<void> {
+      await page.evaluate((duration) => {
+        const record: Frame[] = [];
+        (window as unknown as { frames_: Frame[] }).frames_ = record;
+        delete document.documentElement.dataset.sampled;
+        const start = performance.now();
+        const tick = (): void => {
+          const panel = document.querySelector('.note-tabpanel');
+          const raw = panel ? getComputedStyle(panel).translate : 'none';
+          record.push({
+            t: performance.now(),
+            x: raw === 'none' ? 0 : parseFloat(raw),
+            panel: panel?.id.split('-').pop() ?? '',
+            enter: document.querySelector('.note-views')?.hasAttribute('data-tab-enter') ?? false,
+          });
+          if (performance.now() - start < duration) requestAnimationFrame(tick);
+          else document.documentElement.dataset.sampled = '';
+        };
+        requestAnimationFrame(tick);
+      }, ms);
+    }
+
+    async function frames(page: Page): Promise<Frame[]> {
+      await page.locator('html[data-sampled]').waitFor({ state: 'attached' });
+      return page.evaluate(() => (window as unknown as { frames_: Frame[] }).frames_);
+    }
+
+    /**
+     * A 180 px drag across the panel, then what the frames showed: the first
+     * posed frame is the NEW panel — never the old one at the enter pose — on
+     * the side the finger left, and it comes to rest without crossing over,
+     * within 400 ms.
+     */
+    async function expectStep(page: Page, cdp: CDPSession, dx: number, to: string): Promise<void> {
+      const box = (await page.locator('.note-tabpanel').boundingBox())!;
+      await drag(cdp, dx < 0 ? 300 : 100, box.y + 150, dx, 4, { beforeEnd: () => sample(page, 600) });
+      const record = await frames(page);
+      const posed = record.find((frame) => frame.enter);
+      expect(posed, 'a posed frame').toBeDefined();
+      expect(posed!.panel).toBe(to);
+      const arrived = record.filter((frame) => frame.panel === to);
+      const side = Math.sign(-dx);
+      expect(Math.sign(arrived[0]!.x)).toBe(side);
+      expect(arrived.every((frame) => frame.x * side >= 0)).toBe(true);
+      const rest = arrived.find((frame) => frame.x === 0);
+      expect(rest).toBeDefined();
+      expect(rest!.t - arrived[0]!.t).toBeLessThan(400);
+    }
+
+    test('the stepped-to panel arrives the way the finger went, and the pill lands on its tab', async ({
+      page,
+      api,
+    }) => {
+      longBody(api);
+      await page.setViewportSize({ width: 412, height: 915 });
+      await page.goto('/notes/roof-repair');
+      const cdp = await page.context().newCDPSession(page);
+      // A left drag: Cleaned comes in from the right, moving left. The defect
+      // was the reverse — the new panel drawn at the old offset, sliding right.
+      await expectStep(page, cdp, -180, 'cleaned');
+
+      // The pill ends centred on the selected tab.
+      const centres = async () =>
+        page.evaluate(() => {
+          const centre = (selector: string) => {
+            const rect = document.querySelector(selector)!.getBoundingClientRect();
+            return rect.left + rect.width / 2;
+          };
+          return {
+            pill: centre('.note-tabs__indicator'),
+            tab: centre('[role="tab"][aria-selected="true"]'),
+          };
+        });
+      await expect
+        .poll(async () => {
+          const { pill, tab } = await centres();
+          return Math.abs(pill - tab);
+        })
+        .toBeLessThanOrEqual(1);
+
+      // Back from ?tab=cleaned: Text comes in from the left.
+      await expectStep(page, cdp, 180, 'text');
+    });
+
+    test('a step from a tab the URL names poses the new panel, not the old', async ({ page, api }) => {
+      // `?tab=` changes through the router, which commits a frame late; the
+      // old panel used to be shown at the enter pose for that frame.
+      longBody(api);
+      await page.setViewportSize({ width: 412, height: 915 });
+      await page.goto('/notes/roof-repair?tab=cleaned');
+      const cdp = await page.context().newCDPSession(page);
+      await expectStep(page, cdp, -180, 'recordings');
+      await expectStep(page, cdp, 180, 'cleaned');
+    });
+
+    test('right on Text rubber-bands short of 15 % of the width and snaps back', async ({
+      page,
+      api,
+    }) => {
+      longBody(api);
+      await page.setViewportSize({ width: 412, height: 915 });
+      await page.goto('/notes/roof-repair');
+      const cdp = await page.context().newCDPSession(page);
+      const panel = page.locator('.note-tabpanel');
+      const box = (await panel.boundingBox())!;
+      let held = Number.NaN;
+      await drag(cdp, 60, box.y + 200, 300, 0, {
+        beforeEnd: async () => {
+          held = await panel.evaluate((element) => parseFloat(getComputedStyle(element).translate));
+        },
+      });
+      expect(held).toBeGreaterThan(0);
+      expect(held).toBeLessThan(0.15 * 412);
+      await expect.poll(() => panel.evaluate((element) => getComputedStyle(element).translate)).toBe('none');
+      expect(await selected(page)).toBe('Text');
+    });
+
+    test('under reduced motion the new panel is at rest straight after the lift', async ({ page, api }) => {
+      longBody(api);
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await page.setViewportSize({ width: 412, height: 915 });
+      await page.goto('/notes/roof-repair');
+      const cdp = await page.context().newCDPSession(page);
+      const box = (await page.locator('.note-tabpanel').boundingBox())!;
+      await drag(cdp, 300, box.y + 200, -180, 4, { beforeEnd: () => sample(page, 300) });
+      const arrived = (await frames(page)).filter((frame) => frame.panel === 'cleaned');
+      const rest = arrived.find((frame) => frame.x === 0);
+      expect(rest).toBeDefined();
+      expect(rest!.t - arrived[0]!.t).toBeLessThan(50);
+    });
+
     test('a vertical drag scrolls the note and switches nothing', async ({ page, api }) => {
       longBody(api);
       await page.setViewportSize({ width: 412, height: 915 });

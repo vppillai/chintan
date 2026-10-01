@@ -1,11 +1,11 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   SWIPE_COMMIT_FRACTION,
   SWIPE_FLICK_PX_PER_MS,
-  SWIPE_RUBBER,
+  SWIPE_RUBBER_FRACTION,
   SWIPE_SLOP_PX,
   useHorizontalSwipe,
   type SwipeDirection,
@@ -16,8 +16,9 @@ import {
  * `SwipeRow.test.tsx` does. jsdom measures nothing, so the region is as wide
  * as the window (1024 px): a step is 30 % of that. Velocity comes from the
  * events' timestamps, which jsdom takes from the clock, so the clock is fake
- * and each move is a deliberate number of milliseconds after the last. The
- * hook writes `--tab-swipe-x` on the region itself; `offsetOf` reads it back.
+ * and each move is a deliberate number of milliseconds after the last (the
+ * fake clock drives `requestAnimationFrame` too). The hook writes `translate`
+ * and `opacity` on the panel and `--tab-progress` on the pill.
  */
 
 const WIDTH = 1024;
@@ -28,25 +29,40 @@ function Region({
   onSwipe,
   onTap = vi.fn(),
   rowOpen = false,
+  steps = true,
 }: {
   canGo?: (direction: SwipeDirection) => boolean;
   onSwipe: (direction: SwipeDirection) => void;
   onTap?: () => void;
   /** The `.swipe` row starts open, its tray uncovered by an earlier drag. */
   rowOpen?: boolean;
+  /** A step commits a new segment; false holds it back, as a late router commit does. */
+  steps?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const swipe = useHorizontalSwipe({ ref, canGo, onSwipe });
+  const [at, setAt] = useState(0);
+  const swipe = useHorizontalSwipe({
+    ref,
+    at,
+    canGo,
+    onSwipe: (direction) => {
+      onSwipe(direction);
+      if (steps) setAt((was) => was + 1);
+    },
+  });
   return (
     <div ref={ref} data-testid="region" data-swiping={swipe.dragging || undefined} {...swipe.handlers}>
-      <div className="swipe" data-open={rowOpen || undefined}>
+      <span data-testid="pill" data-swipe-indicator />
+      <div data-testid="panel" data-swipe-panel>
+        <div className="swipe" data-open={rowOpen || undefined}>
+          <button type="button" onClick={onTap}>
+            row
+          </button>
+        </div>
         <button type="button" onClick={onTap}>
-          row
+          panel
         </button>
       </div>
-      <button type="button" onClick={onTap}>
-        panel
-      </button>
     </div>
   );
 }
@@ -73,7 +89,15 @@ function drag(
 }
 
 const region = () => screen.getByTestId('region');
-const offsetOf = () => region().style.getPropertyValue('--tab-swipe-x');
+const panelOf = () => screen.getByTestId('panel');
+const offsetOf = () => panelOf().style.getPropertyValue('translate');
+const progressOf = () => screen.getByTestId('pill').style.getPropertyValue('--tab-progress');
+/** The two frames after a step. */
+const twoFrames = () => {
+  act(() => {
+    vi.advanceTimersByTime(40);
+  });
+};
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -131,19 +155,106 @@ describe('useHorizontalSwipe', () => {
     // 60 px in 400 ms: well under the flick.
     drag(screen.getByText('panel'), [-SWIPE_SLOP_PX - 8, -60], { ms: 400 });
     expect(onSwipe).not.toHaveBeenCalled();
-    // The snap back is the attribute's removal; the property is left where
-    // the finger let go and applies only under it.
+    // The snap back is the attribute's removal with the inline pose cleared.
     expect(region()).not.toHaveAttribute('data-swiping');
   });
 
-  it('follows at a quarter of the distance where there is no neighbour, and never steps there', () => {
+  it('follows the finger 1:1 past 40 % of the width, fading as it goes', () => {
+    render(<Region onSwipe={vi.fn()} />);
+    drag(screen.getByText('panel'), [-SWIPE_SLOP_PX - 8, -500], { lift: false });
+    expect(offsetOf()).toBe('-500px');
+    expect(Number(panelOf().style.opacity)).toBeCloseTo(1 - (0.4 * 500) / WIDTH);
+    // The pill moves toward the neighbour by the same share of a tab.
+    expect(Number(progressOf())).toBeCloseTo(500 / WIDTH);
+  });
+
+  it('rubber-bands where there is no neighbour, never reaching 15 % of the width, and never steps there', () => {
     const onSwipe = vi.fn();
     render(<Region canGo={() => false} onSwipe={onSwipe} />);
-    drag(screen.getByText('panel'), [-SWIPE_SLOP_PX - 8, -COMMIT_PX], { lift: false });
-    expect(region()).toHaveAttribute('data-swiping');
-    expect(offsetOf()).toBe(`${String(-COMMIT_PX * SWIPE_RUBBER)}px`);
-    fireEvent.pointerUp(region(), { ...touch, clientX: 0, clientY: 12 });
+    const r = WIDTH * SWIPE_RUBBER_FRACTION;
+    drag(screen.getByText('panel'), [-SWIPE_SLOP_PX - 8, -100], { lift: false });
+    expect(parseFloat(offsetOf())).toBeCloseTo(-r * (1 - 1 / (1 + 100 / r)));
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    fireEvent.pointerMove(region(), { ...touch, clientX: -5000, clientY: 12 });
+    expect(Math.abs(parseFloat(offsetOf()))).toBeLessThan(r);
+    fireEvent.pointerUp(region(), { ...touch, clientX: -5000, clientY: 12 });
     expect(onSwipe).not.toHaveBeenCalled();
+    expect(region()).not.toHaveAttribute('data-tab-enter');
+  });
+
+  it('poses the new panel on the far side when the step commits, then lets it settle two frames later', () => {
+    const onSwipe = vi.fn();
+    render(<Region onSwipe={onSwipe} />);
+    // 400 px over two seconds: far enough, and no flick.
+    drag(screen.getByText('panel'), [-SWIPE_SLOP_PX - 8, -400], { ms: 2000 });
+    expect(onSwipe).toHaveBeenCalledWith('left');
+    expect(region()).toHaveAttribute('data-tab-enter');
+    expect(offsetOf()).toBe(`${String(WIDTH - 400)}px`);
+    expect(progressOf()).toBe('');
+    // A drag, not a flick: the settle runs at the base token.
+    expect(panelOf().style.transitionDuration).toBe('');
+    twoFrames();
+    expect(region()).not.toHaveAttribute('data-tab-enter');
+    expect(offsetOf()).toBe('');
+    expect(panelOf().style.opacity).toBe('');
+  });
+
+  it('holds the old panel where the finger left it until the new tab commits', () => {
+    // A tab in the URL changes through the router in a transition, a frame
+    // late; posing at pointerup showed the old panel at the enter pose.
+    render(<Region steps={false} onSwipe={vi.fn()} />);
+    drag(screen.getByText('panel'), [-SWIPE_SLOP_PX - 8, -400], { ms: 2000 });
+    expect(region()).not.toHaveAttribute('data-tab-enter');
+    expect(offsetOf()).toBe('-400px');
+    expect(Number(progressOf())).toBeCloseTo(400 / WIDTH);
+  });
+
+  it('enters from the left on a right step', () => {
+    render(<Region onSwipe={vi.fn()} />);
+    drag(screen.getByText('panel'), [SWIPE_SLOP_PX + 8, 400], { ms: 2000 });
+    expect(offsetOf()).toBe(`${String(400 - WIDTH)}px`);
+  });
+
+  it('settles at the fast token after a flick', () => {
+    render(<Region onSwipe={vi.fn()} />);
+    const step = -Math.ceil(SWIPE_FLICK_PX_PER_MS * 10 * 10);
+    drag(screen.getByText('panel'), [-SWIPE_SLOP_PX - 8, step, step], { ms: 10 });
+    expect(region()).toHaveAttribute('data-tab-enter');
+    expect(panelOf().style.transitionDuration).toBe('var(--motion-duration-fast)');
+    expect(screen.getByTestId('pill').style.transitionDuration).toBe('var(--motion-duration-fast)');
+    // Cleared by the backstop when no `transitionend` comes (jsdom runs none).
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    expect(panelOf().style.transitionDuration).toBe('');
+  });
+
+  it('snaps back with no enter pose and clears what it wrote', () => {
+    render(<Region onSwipe={vi.fn()} />);
+    drag(screen.getByText('panel'), [-SWIPE_SLOP_PX - 8, -60], { ms: 400 });
+    expect(region()).not.toHaveAttribute('data-tab-enter');
+    expect(offsetOf()).toBe('');
+    expect(progressOf()).toBe('');
+  });
+
+  it('lands an entering panel at rest when a new finger comes down', () => {
+    render(<Region onSwipe={vi.fn()} />);
+    drag(screen.getByText('panel'), [-SWIPE_SLOP_PX - 8, -400], { ms: 2000 });
+    expect(region()).toHaveAttribute('data-tab-enter');
+    fireEvent.pointerDown(screen.getByText('panel'), { ...touch, clientX: 300, clientY: 10 });
+    expect(region()).not.toHaveAttribute('data-tab-enter');
+    expect(offsetOf()).toBe('');
+  });
+
+  it('reads the width once per gesture', () => {
+    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(390);
+    render(<Region onSwipe={vi.fn()} />);
+    drag(screen.getByText('panel'), [-SWIPE_SLOP_PX - 8, -10, -10, -10, -10], { lift: false });
+    // Once, by the region, at the axis.
+    expect(width).toHaveBeenCalledTimes(1);
+    width.mockRestore();
   });
 
   it('is not for a mouse', () => {

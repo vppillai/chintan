@@ -78,6 +78,15 @@ Tab order, so a keyboard user reaches the panel in one press. Changing tabs
 also rewinds Find: another tab is another text, and the count is the new
 panel's to report.
 
+A new tab starts at its top. The scroll offset is the page's, so from deep
+in Text a change used to land mid-Cleaned. On every change (swipe, tap or
+key) a layout effect in `NoteViews` checks whether the strip is stuck — the
+region's top above `.app__main`'s — and if so moves the page so the new
+panel starts just under it; with the head on screen nothing moves (owner
+default; a per-tab memory is not kept). It runs before the shell's
+`useScrollRestore`, a parent, reads the offset for the replaced entry, so
+Back then Forward returns to the line under the strip.
+
 ## The swipe
 
 On a phone the panels are one swipe apart (R6-NAV-1, owner feedback
@@ -105,15 +114,39 @@ drags. What yields to what:
 
 Once committed the region takes pointer capture and prevents the default of
 every `touchmove`, so a later vertical wander cannot start a pan and
-pull-to-refresh stands down (the `defaultPrevented` protocol below). The
-panel follows the finger to 40 % of the region's width, at a quarter of the
-distance where there is no neighbour; letting go at 30 % of the width, or a
-0.4 px/ms flick in the same direction, steps; otherwise the panel snaps back
-on `--motion-duration-base` (1 ms under reduced motion). The follow is
-written straight to the region's `--tab-swipe-x`, as pull-to-refresh writes
-`--pull-offset`, not through state: the textarea or a forty-row checklist
-sits under the region, and a move at input rate re-renders none of it; only
-`dragging` is state, and the attribute's removal is the snap back. The click
+pull-to-refresh stands down (the `defaultPrevented` protocol below). Only the
+horizontal travel is followed. Letting go at 30 % of the width, or a
+0.4 px/ms flick in the same direction, steps; otherwise the panel snaps back.
+
+The motion (R8 F4). The panel follows the finger 1:1 out to the full width
+and fades by up to 40 % as it goes; where there is no neighbour it
+rubber-bands, `R·(1 − 1/(1 + |dx|/R))` with `R` 15 % of the width, so it
+never gets past `R`. On a step the old panel holds where the finger let go
+until the new tab commits; then, in a layout effect before that commit
+paints, the new panel is posed where a neighbour would have been, on the
+side the finger pulled away from (a left drag of −156 px at 390 starts it
+at +234), under `data-tab-enter` with no transition. It waits for the
+commit, not the pointerup, because a tab named in `?tab=` changes through
+the router in a transition a frame late, and posing at pointerup showed the
+old panel at the enter pose for that frame (review of #196). Two frames later the pose is cleared and it settles to rest over
+`--motion-duration-base` (220 ms, decelerate), or `--motion-duration-fast`
+(140 ms) after a flick. Before R8 the new panel was drawn at the old offset
+and slid back against the finger. The strip's selected face is one pill
+(`.note-tabs__indicator`, placed by `--tab-index` of `--tab-count`, so any
+number of tabs, clamped to the track, and remounted rather than slid when
+the count changes) that tracks the drag through `--tab-progress` and slides
+on to the new tab with the panel; a tap or a key slides the pill too, but swaps
+the panel at once. A new finger during the two posed frames lands the panel
+at rest. Under reduced motion the follow, fade and rubber band stay — they
+move only with the finger — and every settle is instant through the tokens.
+Snap back uses decelerate, not the spring (owner default).
+
+Every write is `translate` and `opacity` on the panel (`[data-swipe-panel]`)
+and the pill (`[data-swipe-indicator]`), found once when the axis is decided
+along with the region's width; nothing in the move path reads layout or
+goes through React, because the textarea or a forty-row checklist sits under
+the region and an inherited property on the region restyled all of it. Only
+`dragging` is state. The click
 that follows a committed drag is swallowed once, so lifting over the new
 panel neither focuses the textarea nor toggles a recording; Chromium fires no
 click after a touch that moved, so the flag can outlive the gesture, and a
@@ -123,8 +156,8 @@ sets no flag. A step goes through the
 same `setTab` as a tap — `?tab=`, the session memory and Find behave
 identically — and moves no focus and announces nothing: `useRouteFocus` keys
 on the pathname, and the tab buttons remain the keyboard and screen-reader
-path. `transform` is applied only while a swipe is in progress; at rest the
-panel has none, so a row's menu is not trapped in a stacking context and the
+path. `translate` is applied only while a swipe or its settle is in
+progress, and the layer is promoted only then; at rest the panel has none, so a row's menu is not trapped in a stacking context and the
 layout sweep sees no sideways scroller. Known trades: the Find field, a
 single-line input inside the region, loses the horizontal drag-scroll of an
 overflowing value; and a pen is a finger here, so a sideways S Pen drag

@@ -282,6 +282,7 @@
    the same device as the transcript's Timestamped · Cleaned toggle, at the
    width of the column so each segment is a generous target. */
 .note-tabs__list {
+  position: relative;
   display: flex;
   gap: var(--space-1);
   padding: var(--space-1);
@@ -302,9 +303,10 @@
   font-weight: var(--font-weight-medium);
   color: var(--color-muted);
   white-space: nowrap;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard);
+  /* Above the pill, which paints the selected segment. */
+  position: relative;
+  z-index: 1;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .note-tabs__tab:hover {
@@ -316,9 +318,38 @@
 }
 
 .note-tabs__tab[aria-selected='true'] {
-  background-color: var(--color-raised);
   color: var(--color-ink);
+}
+
+/*
+ * The selected segment's raised face, one pill for the whole strip (R8 F4),
+ * so it can slide: on a tap or a key to the new tab, and under the finger
+ * during a swipe (`useHorizontalSwipe` writes `--tab-progress`, in tab
+ * widths). One segment wide for any number of tabs: the track's width less
+ * its `--space-1` padding and gaps, shared out by `--tab-count`. Its
+ * percentage translate is of its own width, so a step is one width and one gap.
+ */
+.note-tabs__indicator {
+  position: absolute;
+  inset-block: var(--space-1);
+  inset-inline-start: var(--space-1);
+  inline-size: calc((100% - (var(--tab-count) + 1) * var(--space-1)) / var(--tab-count));
+  border-radius: var(--radius-full);
+  background-color: var(--color-raised);
   box-shadow: var(--shadow-sm);
+  /* Clamped to the track: the rubber band at either end would otherwise
+     nudge the pill past it. */
+  translate: calc(
+      clamp(0, var(--tab-index) + var(--tab-progress, 0), var(--tab-count) - 1) *
+        (100% + var(--space-1))
+    )
+    0;
+  transition: translate var(--motion-duration-base) var(--motion-ease-decelerate);
+}
+
+.note-views[data-swiping] .note-tabs__indicator {
+  transition: none;
+  will-change: translate;
 }
 
 /* The count is a numeral: serif figures, quieter than the label. */
@@ -367,9 +398,11 @@
   flex-direction: column;
   padding-block: var(--space-3) var(--space-6);
   /* The snap back after a swipe that did not step, and the new panel's
-     settle after one that did (`useHorizontalSwipe`); reduced motion
-     collapses it through the token. */
-  transition: transform var(--motion-duration-base) var(--motion-ease-decelerate);
+     settle after one that did (`useHorizontalSwipe`, which writes both
+     properties inline); reduced motion collapses it through the token. */
+  transition:
+    translate var(--motion-duration-base) var(--motion-ease-decelerate),
+    opacity var(--motion-duration-base) var(--motion-ease-decelerate);
 }
 
 .note-tabpanel > .selection-bar {
@@ -398,12 +431,14 @@
   touch-action: pan-y pinch-zoom;
 }
 
-/* The panel follows the finger only while a swipe is committed. At rest
-   there is no transform at all, so a row's menu is not trapped in a
+/* While the finger is down the panel follows it with no transition, and a
+   stepped-to panel holds its start pose (`data-tab-enter`) for two frames;
+   removing either is the settle. Promoted to its own layer only then: at
+   rest there is no translate at all, so a row's menu is not trapped in a
    stacking context and the layout sweep sees no sideways scroller. */
-.note-views[data-swiping] .note-tabpanel {
-  transform: translateX(var(--tab-swipe-x, 0px));
+.note-views:is([data-swiping], [data-tab-enter]) .note-tabpanel {
   transition: none;
+  will-change: translate, opacity;
 }
 
 /* --------------------------------------------------------------------------
