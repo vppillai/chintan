@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="864" height="360" viewBox="0 0 864 360" font-family="system-ui, sans-serif">
+  <!-- Bottom 300 px of a 412x915 phone (y 615..915 mapped to 40..340), holding, finger at press point. Left: Ink & Paper. Right: Nocturne. -->
+  <g id="ink">
+    <text x="8" y="22" font-size="13" fill="#534f48">Ink · HOLDING (finger down, mic live)</text>
+    <rect x="0" y="40" width="412" height="300" fill="#f6f3ec"/>
+    <text x="20" y="80" font-size="15" fill="#1a1917" opacity=".55">…the note's content stays put…</text>
+    <!-- lock pill: x184-228, y691-791 => 116..216 -->
+    <rect x="184" y="116" width="44" height="100" rx="22" fill="#f5f1e8" stroke="#8a8478"/>
+    <g fill="none" stroke="#1a1917" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="198" y="140" width="16" height="12" rx="2"/><path d="M201 140v-4a5 5 0 0 1 10 0"/>
+      <path d="M200 190l6-6 6 6"/><path d="M200 200l6-6 6 6" opacity=".45"/>
+    </g>
+    <!-- clock caption pill (the .tab-bar__into slot) y799-823 => 224..248 -->
+    <rect x="171" y="224" width="70" height="24" rx="12" fill="#1a1917"/>
+    <circle cx="186" cy="236" r="4" fill="#fbf9f4"/>
+    <text x="196" y="241" font-size="13" fill="#fbf9f4">0:04</text>
+    <!-- tab bar y822 => 247 -->
+    <rect x="0" y="247" width="412" height="93" fill="#f5f1e8"/>
+    <line x1="0" y1="247" x2="412" y2="247" stroke="#d9d3c6"/>
+    <!-- slide to cancel in Home slot -->
+    <text x="28" y="300" font-size="14" fill="#534f48">‹  Slide to cancel</text>
+    <!-- level in You slot -->
+    <g fill="#534f48"><rect x="290" y="288" width="3" height="8"/><rect x="296" y="283" width="3" height="18"/><rect x="302" y="279" width="3" height="26"/><rect x="308" y="285" width="3" height="14"/><rect x="314" y="281" width="3" height="22"/><rect x="320" y="287" width="3" height="10"/><rect x="326" y="284" width="3" height="16"/><rect x="332" y="289" width="3" height="6"/><rect x="338" y="283" width="3" height="18"/><rect x="344" y="287" width="3" height="10"/></g>
+    <!-- disc enlarged 1.2x: 91px around (206,294) -->
+    <circle cx="206" cy="294" r="46" fill="#c2410c"/>
+    <circle cx="206" cy="294" r="56" fill="none" stroke="rgb(194 65 12 / 12%)" stroke-width="10"/>
+    <g fill="none" stroke="#fbf9f4" stroke-width="2.25" stroke-linecap="round"><rect x="200" y="276" width="12" height="20" rx="6"/><path d="M194 290a12 12 0 0 0 24 0M206 302v6"/></g>
+    <text x="206" y="326" font-size="10" font-weight="600" fill="#fbf9f4" text-anchor="middle" letter-spacing="1">RECORD</text>
+    <!-- thresholds -->
+    <line x1="96" y1="250" x2="96" y2="340" stroke="#c2410c" stroke-dasharray="3 3"/>
+    <text x="100" y="262" font-size="10" fill="#a8380a">cancel: dx ≤ −110</text>
+    <line x1="150" y1="222" x2="262" y2="222" stroke="#1a1917" stroke-dasharray="3 3" opacity=".5"/>
+    <text x="266" y="226" font-size="10" fill="#534f48">lock: dy ≤ −72</text>
+  </g>
+  <g id="noct" transform="translate(452 0)">
+    <text x="8" y="22" font-size="13" fill="#534f48">Nocturne · HOLDING, cancel progress 60 %</text>
+    <rect x="0" y="40" width="412" height="300" fill="#0a0c0b"/>
+    <text x="20" y="80" font-size="15" fill="#f2f5f3" opacity=".55">…the note's content stays put…</text>
+    <rect x="184" y="116" width="44" height="100" rx="22" fill="#1c211f" stroke="#5e6e66" opacity=".4"/>
+    <rect x="171" y="224" width="70" height="24" rx="12" fill="#f2f5f3"/>
+    <circle cx="186" cy="236" r="4" fill="#0a0c0b"/>
+    <text x="196" y="241" font-size="13" fill="#0a0c0b">0:06</text>
+    <rect x="0" y="247" width="412" height="93" fill="#1c211f"/>
+    <line x1="0" y1="247" x2="412" y2="247" stroke="#2a312e"/>
+    <!-- hint moved left with finger, ink colour (destructive = ink in Nocturne), trash glyph -->
+    <g fill="none" stroke="#f2f5f3" stroke-width="1.75" stroke-linecap="round"><path d="M14 286h16M18 286v14h8v-14M20 283h4"/></g>
+    <text x="36" y="300" font-size="14" fill="#f2f5f3">‹  Slide to cancel</text>
+    <!-- disc follows the finger: dx = -66 -->
+    <circle cx="140" cy="294" r="46" fill="#b8f135"/>
+    <g fill="none" stroke="#0a0c0b" stroke-width="2.25" stroke-linecap="round"><rect x="134" y="276" width="12" height="20" rx="6"/><path d="M128 290a12 12 0 0 0 24 0M140 302v6"/></g>
+    <text x="140" y="326" font-size="10" font-weight="600" fill="#0a0c0b" text-anchor="middle" letter-spacing="1">RECORD</text>
+    <circle cx="206" cy="294" r="38" fill="none" stroke="#5e6e66" stroke-dasharray="4 4"/>
+    <text x="250" y="300" font-size="10" fill="#a4aca8">home of the disc</text>
+  </g>
+</svg>

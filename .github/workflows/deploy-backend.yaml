@@ -2,11 +2,20 @@ name: Deploy Backend
 
 # Staging first, smoke-tested, then production.
 #
-# Every change reaches chintan-<instance>-staging first, the smoke test there
-# gates the production job, and the production job is behind an environment
-# that requires a human. The order matters: a smoke test run only after a
-# production deploy would report a red build over a live bad version with no
-# way back.
+# Every change reaches chintan-<instance>-staging first, and the smoke test
+# there — with its rollback when it fails — is the gate on the production job.
+# The `production` environment has no human reviewer (owner decision D1): the
+# gate is automatic, and this file says so. The order matters: a smoke
+# test run only after a production deploy would report a red build over a live
+# bad version with no way back.
+#
+# No test job: every commit on main arrived through a pull request whose
+# `CI passed` check the ruleset on main required at main's then-current tip
+# (scripts/dev/protect-main.sh: strict status checks, so a branch that fell
+# behind was updated and re-tested first), and a squash merge changes the sha,
+# not the tree, so the tree deploying here is the tree that run tested. A
+# `workflow_dispatch` on another ref deploys that ref as it stands; checking it
+# is the dispatcher's job.
 #
 # All matrix and repository values reach the shell through `env:` rather than
 # through ${{ }} inside a run block. An expression interpolated into a script is
@@ -50,8 +59,8 @@ env:
 
 # Read-only by default. `id-token: write` — the right to mint an OIDC token
 # that AWS trusts as this repository — is granted per job below, to the three
-# jobs that assume an AWS role, and to nothing else: `discover` and `test` run
-# third-party actions over the checkout and have no business holding it.
+# jobs that assume an AWS role, and to nothing else: `discover` runs
+# third-party actions over the checkout and has no business holding it.
 permissions:
   contents: read
 
@@ -108,62 +117,8 @@ jobs:
             exit 1
           fi
 
-  # The gate on the code about to deploy. The push to main that started this
-  # run started CI on the same commit, and CI's "Go test (race)" is the same
-  # suite on the same tree; this job waits for that verdict rather than
-  # running the suite a third time (the pull request was the first). It is
-  # never weaker than running it was: when CI has not concluded within five
-  # minutes, concluded anything but success, or never ran on this commit (a
-  # workflow_dispatch of an old sha), the suite runs here.
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      checks: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
-      - name: gofmt and go vet
-        working-directory: backend
-        run: |
-          test -z "$(gofmt -l .)"
-          go vet ./...
-      - name: CI's verdict on this commit
-        id: ci
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          for _ in $(seq 20); do
-            conclusion="$(gh api -X GET "repos/${GITHUB_REPOSITORY}/commits/${SHA}/check-runs"               -f check_name='Go test (race)' -f filter=latest               --jq '[.check_runs[] | select(.app.slug == "github-actions")][0].conclusion // "pending"' \
-              2>/dev/null || echo pending)"
-            case "$conclusion" in
-              success)
-                echo "CI's Go test (race) passed on ${SHA}; not running it again"
-                echo "verdict=success" >>"$GITHUB_OUTPUT"
-                exit 0
-                ;;
-              pending) sleep 15 ;;
-              *)
-                echo "CI's Go test (race) concluded '${conclusion}' on ${SHA}; running the suite here"
-                break
-                ;;
-            esac
-          done
-          echo "verdict=unknown" >>"$GITHUB_OUTPUT"
-      - name: go test -race
-        if: steps.ci.outputs.verdict != 'success'
-        working-directory: backend
-        run: go test -race ./...
-
-  # Builds beside `test` rather than after it: the zips only land in the
-  # artifact bucket, and nothing deploys them until deploy-staging, which
-  # needs both. That takes the test job's minutes off every deploy's clock.
+  # The zips only land in the artifact bucket; nothing deploys them until
+  # deploy-staging.
   build:
     name: Build Lambda
     runs-on: ubuntu-latest
@@ -224,7 +179,7 @@ jobs:
   deploy-staging:
     name: Staging ${{ matrix.entry.stack }}
     runs-on: ubuntu-latest
-    needs: [discover, build, test]
+    needs: [discover, build]
     if: needs.discover.outputs.has_staging == 'true'
     environment: staging
     permissions:
@@ -273,16 +228,15 @@ jobs:
   deploy-prod:
     name: Production ${{ matrix.entry.stack }}
     runs-on: ubuntu-latest
-    needs: [discover, build, test, deploy-staging]
+    needs: [discover, build, deploy-staging]
     # Runs when staging succeeded, and also when there was no staging stack to
     # deploy to. It must not run when staging failed — that is the entire point
-    # of deploying there first. `test` is named here as well as in `needs`:
-    # under always(), a staging job skipped because the tests failed reads as
+    # of deploying there first. `build` is named here as well as in `needs`:
+    # under always(), a staging job skipped because the build failed reads as
     # 'skipped', the same as no staging stack at all.
     if: >-
       always() &&
       needs.build.result == 'success' &&
-      needs.test.result == 'success' &&
       (needs.deploy-staging.result == 'success' || needs.deploy-staging.result == 'skipped')
     environment: production
     permissions:

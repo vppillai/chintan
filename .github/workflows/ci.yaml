@@ -1,7 +1,13 @@
 name: CI
 
 # Every gate that must be green before a change reaches main, in one workflow so
-# there is one place to look and one place to add the next one.
+# there is one place to look and one place to add the next one. The ruleset on
+# main (scripts/dev/protect-main.sh) requires exactly one check from here, the
+# final `CI passed` job, so a pull request merges only when everything this
+# file ran has passed — and a docs-only pull request, which runs none of the
+# matrix, still gets that one check and stays mergeable. The production
+# environment has no human reviewer: the staging deploy's smoke test and its
+# rollback (deploy-backend.yaml) are the gate between main and prod.
 #
 # Go tests run with -race; golangci-lint, govulncheck, cfn-lint, shellcheck and
 # shfmt, the log-hygiene and env-contract checks, and the frontend typecheck,
@@ -16,35 +22,19 @@ name: CI
 # dependabot.yml) opens the bump PRs for the action pins; the golangci-lint,
 # govulncheck, cfn-lint and PyYAML versions below are bumped by hand.
 
-# A change that touches only prose runs nothing here: no job reads a .md file
-# or docs/design, history, ops, qa or reviews. docs/api/openapi.yaml is NOT in
-# this list — the conformance tests and the contract job read it. Twelve of
-# the sixty merges in the week to 1 Oct were docs-only and each paid the full
-# matrix twice (the pull request, then the push to main). A pull request this
-# skips reports no checks at all, which is fine while nothing requires them;
-# the day a ruleset on main does, these patterns need a companion workflow that
-# reports the same check names as passed (GitHub's documented pattern).
-# The one Markdown check, that docs/backlog-open.md matches docs/backlog.md, is
-# backlog-view.yaml, which runs only when those files change.
+# Every pull request runs this workflow; the `changes` job then decides what
+# the pull request touched, and the matrix jobs skip themselves when it touched
+# only prose (no job reads a .md file or docs/design, history, ops, qa or
+# reviews; docs/api/openapi.yaml is code — the conformance tests and the
+# contract job read it). A skipped job is a pass to `CI passed`, a failed or
+# cancelled one is a failure. There is no push-to-main trigger: the ruleset
+# requires `CI passed` on a head that is at main's current tip (strict status
+# checks), and a squash merge changes the sha and not the tree, so the tree on
+# main is the tree the pull request's run tested; a push-main run would only
+# repeat it. `workflow_dispatch` runs the whole matrix on any ref, for an
+# ad-hoc check of main.
 on:
   pull_request:
-    paths-ignore:
-      - '**.md'
-      - 'docs/design/**'
-      - 'docs/history/**'
-      - 'docs/ops/**'
-      - 'docs/qa/**'
-      - 'docs/reviews/**'
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - '**.md'
-      - 'docs/design/**'
-      - 'docs/history/**'
-      - 'docs/ops/**'
-      - 'docs/qa/**'
-      - 'docs/reviews/**'
   workflow_dispatch:
 
 permissions:
@@ -52,18 +42,53 @@ permissions:
 
 concurrency:
   # A newer push to a pull request supersedes the run in flight, so a pull
-  # request's runs share one group. On main, two merges landing back to back
-  # are two releases, and cancelling the first leaves a commit on main that CI
-  # never finished checking — so every main commit is its own group: a shared
-  # group with cancel-in-progress off still holds at most one pending run and
-  # cancels the middle of three.
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  # request's runs share one group; a dispatch is its own.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # What the pull request touched, read from the merge commit the checkout is:
+  # its first parent is the base branch, so `HEAD^1..HEAD` is exactly the Files
+  # changed tab. No third-party action and no API call; fetch-depth 2 brings
+  # both parents. A dispatch has no base and runs everything.
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      backlog: ${{ steps.filter.outputs.backlog }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          code=false; backlog=false
+          if [ "$EVENT" != "pull_request" ]; then
+            code=true; backlog=true
+          else
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              case "$f" in
+                docs/backlog.md|docs/backlog-open.md|scripts/backlog-view.py) backlog=true ;;
+              esac
+              case "$f" in
+                *.md|docs/design/*|docs/history/*|docs/ops/*|docs/qa/*|docs/reviews/*) ;;
+                *) code=true ;;
+              esac
+            done < <(git diff --name-only --no-renames HEAD^1 HEAD)
+          fi
+          echo "code=$code; backlog=$backlog"
+          printf 'code=%s\nbacklog=%s\n' "$code" "$backlog" >> "$GITHUB_OUTPUT"
+
   backend-test:
     name: Go test (race)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -90,6 +115,8 @@ jobs:
   backend-lint:
     name: golangci-lint
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -136,6 +163,8 @@ jobs:
   backend-vuln:
     name: govulncheck
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -154,6 +183,8 @@ jobs:
   infrastructure-lint:
     name: cfn-lint
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -177,6 +208,8 @@ jobs:
   shell:
     name: shellcheck and shfmt
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -186,21 +219,23 @@ jobs:
       - name: Install shfmt
         run: go install mvdan.cc/sh/v3/cmd/shfmt@v3.10.0
       - name: shellcheck
-        run: shellcheck --severity=warning scripts/*.sh scripts/lib/*.sh
+        run: shellcheck --severity=warning scripts/*.sh scripts/lib/*.sh scripts/dev/*.sh scripts/qa/*.sh
       # -i 4 -ci is the style the repository already uses; -d fails on any diff
       # rather than rewriting, so CI never disagrees silently with the tree.
       - name: shfmt
         run: |
-          "$(go env GOPATH)/bin/shfmt" -d -i 4 -ci scripts/*.sh scripts/lib/*.sh
+          "$(go env GOPATH)/bin/shfmt" -d -i 4 -ci scripts/*.sh scripts/lib/*.sh scripts/dev/*.sh scripts/qa/*.sh
       - name: Scripts parse
         run: |
-          for f in scripts/*.sh scripts/lib/*.sh; do
+          for f in scripts/*.sh scripts/lib/*.sh scripts/dev/*.sh scripts/qa/*.sh; do
             bash -n "$f"
           done
 
   log-hygiene:
     name: No user content in logs
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Provider adapters must not log response bodies
@@ -211,6 +246,8 @@ jobs:
   vite-env:
     name: Frontend env contract
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The deploy pipeline exports VITE_* variables the bundle reads. A name
@@ -224,6 +261,8 @@ jobs:
   instance-configs:
     name: Instance configs resolve
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -243,6 +282,8 @@ jobs:
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Bun, not npm: there is no Node in this project's toolchain and the
@@ -294,6 +335,8 @@ jobs:
   contract:
     name: Frontend/backend contract
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     # The frontend and the backend were written in parallel, by different
     # authors, from docs/api/openapi.yaml — and the frontend's wire types are
     # hand-written from it. Every other job checks one side against the
@@ -373,6 +416,8 @@ jobs:
   e2e:
     name: Playwright
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -439,3 +484,43 @@ jobs:
           name: playwright-report
           path: frontend/playwright-report/
           retention-days: 7
+
+  # docs/backlog-open.md is generated from docs/backlog.md by scripts/backlog-view.py
+  # and committed, the way the contract fixtures are: the committed file must be
+  # the one the script produces, or the "open items" view silently stops being
+  # current. The one Markdown change that runs a check.
+  backlog-view:
+    name: docs/backlog-open.md is current
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.backlog == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: python3 scripts/backlog-view.py --self-test && python3 scripts/backlog-view.py
+      - name: The committed view is the one the script produces
+        run: |
+          if ! git diff --exit-code -- docs/backlog-open.md; then
+            echo "::error::docs/backlog-open.md is stale. Run 'python3 scripts/backlog-view.py' and commit the result."
+            exit 1
+          fi
+
+  # The one check the ruleset on main requires. `always()` so it reports when
+  # the matrix skipped itself; it fails on any needed job that failed or was
+  # cancelled, and `changes` is in the list so a broken filter is a failure,
+  # not a green docs-only run.
+  ci-passed:
+    name: CI passed
+    runs-on: ubuntu-latest
+    needs: [changes, backend-test, backend-lint, backend-vuln, infrastructure-lint, shell, log-hygiene, vite-env, instance-configs, frontend, contract, e2e, backlog-view]
+    if: always()
+    steps:
+      - env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          if echo "$RESULTS" | jq -e '[.[] | .result] | any(. == "failure" or . == "cancelled")' >/dev/null; then
+            echo "::error::a required job failed or was cancelled"
+            exit 1
+          fi
+          echo "every job passed or was skipped on purpose"

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="864" height="300" viewBox="0 0 864 300" font-family="system-ui, sans-serif">
+  <!-- Locked (hands-free): finger lifted. Home slot = Discard, You slot = Stop (review), disc = Send. -->
+  <g>
+    <text x="8" y="22" font-size="13" fill="#534f48">Ink · LOCKED, on a note</text>
+    <rect x="0" y="40" width="412" height="240" fill="#f6f3ec"/>
+    <text x="20" y="80" font-size="15" fill="#1a1917" opacity=".55">…scroll and read the note while it records…</text>
+    <rect x="131" y="163" width="150" height="24" rx="12" fill="#1a1917"/>
+    <g fill="none" stroke="#fbf9f4" stroke-width="1.6" stroke-linecap="round"><rect x="142" y="172" width="10" height="8" rx="1.5"/><path d="M144 172v-3a3 3 0 0 1 6 0v3"/></g>
+    <text x="158" y="180" font-size="13" fill="#fbf9f4">0:12 · Into this note</text>
+    <rect x="0" y="187" width="412" height="93" fill="#f5f1e8"/>
+    <line x1="0" y1="187" x2="412" y2="187" stroke="#d9d3c6"/>
+    <g fill="none" stroke="#1a1917" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M64 214h18M68 214v16h10v-16M71 211h4"/></g>
+    <text x="75" y="248" font-size="12" fill="#1a1917" text-anchor="middle">Discard</text>
+    <circle cx="206" cy="234" r="38" fill="#c2410c"/>
+    <g fill="none" stroke="#fbf9f4" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M206 238v-18M198 228l8-8 8 8"/></g>
+    <text x="206" y="260" font-size="10" font-weight="600" fill="#fbf9f4" text-anchor="middle" letter-spacing="1">SEND</text>
+    <rect x="329" y="213" width="16" height="16" rx="2" fill="none" stroke="#1a1917" stroke-width="1.75"/>
+    <text x="337" y="248" font-size="12" fill="#1a1917" text-anchor="middle">Stop</text>
+  </g>
+  <g transform="translate(452 0)">
+    <text x="8" y="22" font-size="13" fill="#534f48">Nocturne · LOCKED, Discard armed (≥ 10 s take)</text>
+    <rect x="0" y="40" width="412" height="240" fill="#0a0c0b"/>
+    <rect x="171" y="163" width="70" height="24" rx="12" fill="#f2f5f3"/>
+    <text x="196" y="180" font-size="13" fill="#0a0c0b">0:41</text>
+    <rect x="0" y="187" width="412" height="93" fill="#1c211f"/>
+    <rect x="30" y="200" width="90" height="62" rx="12" fill="none" stroke="#f2f5f3" stroke-width="1.5"/>
+    <g fill="none" stroke="#f2f5f3" stroke-width="1.75" stroke-linecap="round"><path d="M66 214h18M70 214v16h10v-16M73 211h4"/></g>
+    <text x="75" y="248" font-size="12" font-weight="600" fill="#f2f5f3" text-anchor="middle">Discard?</text>
+    <circle cx="206" cy="234" r="38" fill="#b8f135"/>
+    <g fill="none" stroke="#0a0c0b" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M206 238v-18M198 228l8-8 8 8"/></g>
+    <text x="206" y="260" font-size="10" font-weight="600" fill="#0a0c0b" text-anchor="middle" letter-spacing="1">SEND</text>
+    <rect x="329" y="213" width="16" height="16" rx="2" fill="none" stroke="#f2f5f3" stroke-width="1.75"/>
+    <text x="337" y="248" font-size="12" fill="#f2f5f3" text-anchor="middle">Stop</text>
+  </g>
+</svg>

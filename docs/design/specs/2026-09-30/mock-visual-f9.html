@@ -1,0 +1,95 @@
+<!doctype html><html><head><meta charset="utf-8"><title>F9 notice mockups</title>
+<link rel="stylesheet" href="mock-visual-tokens.css">
+<style>
+/* Mockup-only proposed tokens (would live in tokens.css) */
+:root,[data-theme='ink']{--color-notice:var(--color-surface);--color-notice-line:var(--color-line);--shadow-notice:var(--shadow-inset)}
+[data-theme='nocturne']{--color-notice:var(--color-surface);--color-notice-line:var(--color-line);--shadow-notice:var(--shadow-inset)}
+*{box-sizing:border-box;margin:0}
+body{display:flex;flex-wrap:wrap;gap:16px;padding:16px;background:#888;font-family:var(--font-sans)}
+button{font:inherit;background:none;border:0;color:inherit;padding:0}
+.frame{width:390px;height:844px;overflow:hidden;background:var(--color-ground-deep);color:var(--color-ink);padding:16px 20px;position:relative}
+.cap{position:absolute;top:0;right:0;background:var(--color-ink);color:var(--color-ground);font-size:11px;padding:2px 6px}
+.search{height:50px;border:1px solid var(--color-line-strong);border-radius:var(--radius-xl);padding:14px 16px;color:var(--color-faint);font-size:var(--font-size-md);margin:28px 0 16px;background:var(--color-raised)}
+.label{display:flex;align-items:center;justify-content:space-between;min-height:28px;font-size:var(--font-size-xs);font-weight:var(--font-weight-semibold);letter-spacing:var(--letter-spacing-caps);text-transform:uppercase;color:var(--color-faint);padding-inline:var(--space-1);margin-block-end:var(--space-2)}
+.num{font-family:var(--font-numeric)}
+.note{background:var(--color-raised);border:1px solid var(--color-line);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);padding:16px;margin-bottom:8px}
+.note h3{font-family:var(--font-serif);font-size:var(--font-size-lg);font-weight:600}
+.note p{font-size:var(--font-size-sm);color:var(--color-muted);margin-top:4px}
+.act{display:inline-flex;align-items:center;min-height:44px;padding:8px 16px;border:1px solid var(--color-line-strong);border-radius:999rem;font-size:var(--font-size-sm);font-weight:500}
+.act.primary{background:var(--color-ink);color:var(--color-ground);border-color:var(--color-ink)}
+.acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.ex{font-size:var(--font-size-xs);color:var(--color-muted)}
+.t{font-size:var(--font-size-sm);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.ago{font-size:var(--font-size-sm);color:var(--color-faint);flex:none}
+svg.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.x{display:grid;place-items:center;width:44px;height:44px;border-radius:999rem;color:var(--color-muted);flex:none}
+.glyph{display:grid;place-items:center;width:28px;height:28px;flex:none;color:var(--color-muted)}
+.glyph.need{color:var(--color-ink)} .glyph.fail{color:var(--color-destructive)}
+/* ---------- A: inset tray ---------- */
+.A .tray{background:var(--color-notice);box-shadow:var(--shadow-notice);border-radius:var(--radius-lg);margin-bottom:var(--space-6)}
+.A .row{display:grid;grid-template-columns:28px minmax(0,1fr) 44px;column-gap:var(--space-2);align-items:start;padding:var(--space-1) var(--space-1) var(--space-1) var(--space-3)}
+.A .row+.row{border-top:1px solid var(--color-notice-line)}
+.A .row .glyph{margin-top:8px}
+.A .body{padding-block:12px;min-width:0}
+.A .head{display:flex;gap:4px;align-items:baseline;min-width:0}
+.A .row.one .body{padding-block:12px}
+/* ---------- B: notice cards with rail ---------- */
+.B .stack{display:grid;gap:var(--space-2);margin-bottom:var(--space-6)}
+.B .row{display:grid;grid-template-columns:28px minmax(0,1fr) 44px;column-gap:var(--space-2);align-items:start;background:var(--color-notice);border-radius:var(--radius-md);border-inline-start:3px solid var(--color-line-strong);padding:var(--space-1) var(--space-1) var(--space-1) var(--space-2)}
+.B .row.fail{border-inline-start-color:var(--color-destructive)}
+.B .row.need{border-inline-start-color:var(--color-ink)}
+.B .row .glyph{margin-top:8px}
+.B .body{padding-block:12px;min-width:0}
+.B .head{display:flex;gap:4px;align-items:baseline;min-width:0}
+/* ---------- C: ledger lines ---------- */
+.C .ledger{border-block:1px solid var(--color-line);margin-bottom:var(--space-6)}
+.C .row{display:grid;grid-template-columns:28px minmax(0,1fr) 44px;column-gap:var(--space-2);align-items:start;padding-inline:0}
+.C .row+.row{border-top:1px solid var(--color-line)}
+.C .row .glyph{margin-top:8px}
+.C .body{padding-block:12px;min-width:0}
+.C .head{display:flex;gap:4px;align-items:baseline;min-width:0}
+/* current */
+.cur .fr{background:var(--color-raised);border:1px solid var(--color-line);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);padding:12px 16px;margin-bottom:8px}
+.cur .fr.f{border-color:var(--color-line-strong)}
+</style></head><body>
+<template id="rows">
+  <div class="row need"><span class="glyph need"><svg class="i" viewBox="0 0 24 24"><path d="M6 4v15M6 9a5 5 0 0 0 5 5h7M15 11l3 3-3 3"/></svg></span>
+    <div class="body"><div class="head"><span class="t">Which note should this go in?</span><span class="ago num">&nbsp;0:14</span></div>
+    <p class="ex">Call the plumber about the water heater before Friday</p>
+    <div class="acts"><span class="act primary">Start “Water heater”</span><span class="act">Choose another note</span></div></div>
+    <span class="x"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></span></div>
+  <div class="row fail"><span class="glyph fail"><svg class="i" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 8v5M12 16.5v.01"/></svg></span>
+    <div class="body"><div class="head"><span class="t">Couldn’t transcribe this</span><span class="ago num">&nbsp;0:08</span></div>
+    <p class="ex">Remember to book the dentist</p>
+    <div class="acts"><span class="act">Retry</span></div></div>
+    <span class="x"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></span></div>
+  <div class="row one"><span class="glyph"><svg class="i" viewBox="0 0 24 24"><path d="M5 12.5 10 17.5 19 7"/></svg></span>
+    <div class="body"><div class="head"><span class="t">Filed into “Grocery list”</span><span class="ago num">· 2 min</span></div>
+    <p class="ex">Add two more tiles to the order</p></div>
+    <span class="x"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></span></div>
+  <div class="row one"><span class="glyph"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>
+    <div class="body"><div class="head"><span class="t">Started “Roof repair” · 2 recordings</span><span class="ago num">· 30 min</span></div></div>
+    <span class="x"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></span></div>
+</template>
+<template id="recA">
+  <div class="row"><span class="glyph"><svg class="i" viewBox="0 0 24 24"><path d="M18.4 17.3A8.25 8.25 0 1 1 18.4 6.7"/><circle cx="13.6" cy="12" r="1.85" fill="currentColor" stroke="none"/></svg></span>
+    <div class="body"><div class="head"><span class="t">Filing…</span><span class="ago num">&nbsp;0:21</span></div>
+    <div class="stages"><i class="d"></i><i class="d"></i><i class="a"></i><i></i></div><p class="ex">Filing</p></div><span></span></div>
+  ROWS_NEED
+  <div class="row one fold"><span class="glyph"><svg class="i" viewBox="0 0 24 24"><path d="M5 12.5 10 17.5 19 7"/></svg></span>
+    <div class="body"><div class="head"><span class="t"><span class="num">3</span> filed into <span class="num">2</span> notes</span><svg class="i" style="color:var(--color-faint)" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></div></div>
+    <span class="clear">Clear all</span></div>
+</template>
+<style>.stages{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:8px 0 4px}.stages i{height:4px;border-radius:999rem;background:var(--color-line)}.stages i.d{background:var(--color-muted)}.stages i.a{background:var(--color-accent)}.A .row.fold{grid-template-columns:28px minmax(0,1fr) auto}.clear{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;font-size:var(--font-size-sm);font-weight:500;border:1px solid var(--color-line-strong);border-radius:999rem;margin-block:0}.A .row.fold .glyph{margin-top:8px}</style>
+<script>
+const notes=`<div class="label">Today</div><div class="note"><h3>Grocery list</h3><p>QA seed note 6 about grocery list. Measure the back wall before ordering…</p></div><div class="note"><h3>Roof repair</h3><p>The gutter on the north side is leaking again near the downpipe.</p></div>`;
+const rows=document.getElementById('rows').innerHTML;const need=rows.split('<div class="row one">')[0];const recA=document.getElementById('recA').innerHTML.replace('ROWS_NEED',need);const labelR=`<div class="label"><span>Filing</span></div>`;
+const label=`<div class="label"><span>Filing</span><button class="act" style="text-transform:none;letter-spacing:0;font-size:var(--font-size-sm);color:var(--color-ink);font-weight:500;min-height:44px;border:0;padding:0 8px">Clear filed</button></div>`;
+const wrap={A:`${label}<div class="tray">${rows}</div>`,B:`${label}<div class="stack">${rows}</div>`,C:`${label}<div class="ledger">${rows}</div>`};
+const names={A:'A inset tray',B:'B notice cards + rail',C:'C ledger lines'};
+wrap.R=`${labelR}<div class="tray">${recA}</div>`;names.R='A recommended, fold closed';
+for(const opt of ['A','B','C','R'])for(const th of ['ink','nocturne']){
+  const f=document.createElement('div');f.className='frame '+(opt==='R'?'A':opt);f.dataset.theme=th;f.id=opt+'-'+th;
+  f.innerHTML=`<span class="cap">${names[opt]} · ${th}</span><div class="search">Search notes</div>${wrap[opt]}${notes}`;
+  document.body.appendChild(f);}
+</script></body></html>

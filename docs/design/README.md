@@ -6,6 +6,8 @@ contract and conformance tests hold the wire they describe to the backend.
 Read `README.md` at the repository root for the system as a whole,
 `docs/api/openapi.yaml` for the wire, `docs/backlog.md` for what is planned
 and `docs/reviews/` for the dated reports these answer.
+`specs/` holds the dated design specs — current behaviour, the options
+considered and the recommendation — each folder with its own index.
 
 | File | What it is |
 |---|---|
