@@ -131,6 +131,11 @@ export type EditorEvent =
       message: string;
       addition?: string | null;
       recording?: boolean;
+      /**
+       * My side, when it is not what the editor holds: a queued edit the
+       * server refused, read back from the queue (`useNoteEditor`).
+       */
+      draft?: NoteDraft;
     }
   /** Discard my edit and take the server's copy. */
   | { type: 'takeTheirs' }
@@ -212,6 +217,15 @@ export function patchFor(model: EditorModel): NoteUpdateWire {
       ? { cleaned_mode: draft.cleaned_mode }
       : {}),
   };
+}
+
+/**
+ * The draft fields a queued PATCH carries: `patchFor` in reverse, less the
+ * version and the pin, which are not the editor's to hold.
+ */
+export function draftFields(body: NoteUpdateWire): Partial<NoteDraft> {
+  const { version: _version, pinned: _pinned, ...fields } = body;
+  return fields;
 }
 
 /**
@@ -356,6 +370,7 @@ export function editorReducer(model: EditorModel, event: EditorEvent): EditorMod
       // until the user chooses.
       return {
         ...model,
+        draft: event.draft ?? model.draft,
         state: 'conflict',
         error: event.message,
         theirs: {
