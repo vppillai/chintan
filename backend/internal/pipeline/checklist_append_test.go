@@ -634,3 +634,21 @@ func TestMergeParentBlockStillEndsAtABlankLine(t *testing.T) {
 		t.Errorf("merge = %q, want %q", got, want)
 	}
 }
+
+// A dictated item and a typed one differ by spelling the reader cannot see:
+// Whisper writes a chillu as its atomic letter, a keyboard may write it as
+// consonant, virama and zero-width joiner, and a stray joiner rides along
+// in pasted text. The merge compares by llm.FoldWords, which folds both
+// (decision D7, 2026-10-01), so the two are one item: an open line is not
+// added again and a ticked one is reopened. A Latin pair that differs by a
+// letter stays two items.
+func TestMergeChecklistItemsTakesTheTwoChilluSpellingsAsOneItem(t *testing.T) {
+	const body = "- [ ] അവന്\u200d വന്നു\n- [x] കാര്\u200d\n- [ ] ക\u200dഷ\n- [ ] Milk"
+	got, rest, counts := mergeChecklistItems(body, []cleanup.Item{item("അവൻ വന്നു"), item("കാർ"), item("കഷ"), item("Milks")})
+	if want := "- [ ] അവന്\u200d വന്നു\n- [ ] കാര്\u200d\n- [ ] ക\u200dഷ\n- [ ] Milk"; got != want || counts.deduped != 2 || counts.reopened != 1 {
+		t.Errorf("merge = %q, %+v; want %q with two deduped and one reopened", got, counts, want)
+	}
+	if len(rest) != 1 || rest[0].Text != "Milks" {
+		t.Errorf("rest = %+v, want only Milks", rest)
+	}
+}

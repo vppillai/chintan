@@ -113,38 +113,14 @@ func init() {
 	}
 }
 
-// chilluFold maps the five Malayalam chillu letters spelled the old way —
-// consonant, virama (്), zero-width joiner — onto their atomic code points
-// (Unicode 5.1, U+0D7A–U+0D7E), and drops any zero-width joiner or non-joiner
-// left. Keyboards, fonts and Whisper differ on which spelling they produce,
-// and byte comparison sees two different words where a reader sees one, so
-// neither Ask, search nor find matched across the two (review 2026-09-21,
-// T58). The sequences come before the bare joiners because the replacer
-// takes the first pair that matches at a position.
-var chilluFold = strings.NewReplacer(
-	"ണ്\u200d", "ൺ", "ന്\u200d", "ൻ", "ര്\u200d", "ർ", "ല്\u200d", "ൽ", "ള്\u200d", "ൾ",
-	"\u200c", "", "\u200d", "",
-)
-
-// FoldScript returns s with every chillu in its atomic spelling and no
-// zero-width joiners. It is applied wherever text is prepared for matching:
-// the stored search text, a search query, an Ask question. Text with no
-// joiner in it has nothing to fold and is returned as it is.
-func FoldScript(s string) string {
-	if !strings.ContainsAny(s, "\u200c\u200d") {
-		return s
-	}
-	return chilluFold.Replace(s)
-}
-
 // Tokenize splits a question into the terms retrieval scores by: lowercased,
 // stopwords removed, at least two runes each. A token is a word as
 // llm.Words cuts them (letters, digits and combining marks of any script,
-// not the emoji variation selectors), after the chillu fold. Duplicates are kept out so a
+// not the emoji variation selectors, the chillu spellings folded). Duplicates are kept out so a
 // repeated word does not double its weight, and the first MaxQueryTerms terms
 // are kept, in the order spoken.
 func Tokenize(question string) []string {
-	fields := llm.Words(FoldScript(question))
+	fields := llm.Words(question)
 	seen := make(map[string]struct{}, len(fields))
 	out := make([]string, 0, len(fields))
 	for _, f := range fields {
@@ -266,14 +242,14 @@ func score(n model.NoteIndex, terms []string) float64 {
 	}
 	// Folded the way Tokenize folds the question, so a title in either
 	// chillu spelling scores for a question in either (T58).
-	title := strings.ToLower(FoldScript(n.Title))
-	names := strings.ToLower(FoldScript(strings.Join(n.Aliases, " ") + " " + strings.Join(n.Tags, " ")))
+	title := strings.ToLower(llm.FoldScript(n.Title))
+	names := strings.ToLower(llm.FoldScript(strings.Join(n.Aliases, " ") + " " + strings.Join(n.Tags, " ")))
 	// SearchText is already lowercased, folded and marker-stripped. A note
 	// written before the field existed has none and falls back to its
 	// snippet, which is the first few hundred runes of the body.
 	body := n.SearchText
 	if body == "" {
-		body = strings.ToLower(FoldScript(n.Snippet))
+		body = strings.ToLower(llm.FoldScript(n.Snippet))
 	}
 	var total float64
 	for _, term := range terms {
