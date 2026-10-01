@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
 import { ASK_MODE, ROUTES } from '@/app/routes.ts';
-import { historyIndex, useTabNavigation } from '@/app/useTabNavigation.ts';
+import { useTabNavigation } from '@/app/useTabNavigation.ts';
 import { Icon } from '@/components/Icon.tsx';
 import type { AskThread } from '@/features/ask/useAskThread.ts';
 import { useMediaQuery } from '@/hooks/useMediaQuery.ts';
@@ -66,7 +66,7 @@ export function LibraryField({
    * should be in nobody's history or shared link.
    */
   const [question, setQuestion] = useState('');
-  const { goHome, goTab } = useTabNavigation();
+  const { goBackTo, goTab } = useTabNavigation();
   const inputRef = useRef<HTMLInputElement>(null);
   const chipsRef = useRef<HTMLDivElement>(null);
   /** A thread is open, so the field is its follow-up rather than a first question. */
@@ -211,8 +211,7 @@ export function LibraryField({
                 // screen (R8, F2), pushed above Home so Back from it is Home,
                 // and left by going back down to that Home.
                 if (view !== 'archived') goTab(ROUTES.archive);
-                else if (historyIndex() > 0) goHome();
-                else setFilter({ view: null });
+                else goBackTo(ROUTES.home);
               }}
             />
           )}

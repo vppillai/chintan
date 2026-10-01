@@ -266,7 +266,15 @@ You → About → Home → You → About and then Back walked every screen visit
   it, in a tab it goes wherever the tab was before. There is no "press again
   to exit" (owner decision D6).
 - The index is React Router's private `history.state.idx`, read only through
-  `historyIndex()`. Tabs stay real links, so a modified click opens a new tab.
+  `historyIndex()`, and only inside `useTabNavigation` and `useBackGuard`: a
+  note's "‹ Notes" and the archive chip go through `goBackTo` like "‹ You".
+  Tabs stay real links, so a modified click opens a new tab.
+- A tab move from deep in the stack is two halves — a Back, then a replace
+  once the POP lands — and the second half waits in `sessionStorage`
+  (`chintan.nav.pending`), stamped with the entry it was made from and the
+  time: a `history.go(-n)` that never moved (the index overstating the real
+  stack) leaves a pending that the next reload's initial POP would otherwise
+  act on; one taken at its own entry, or older than ten seconds, is dropped.
 
 The Archived chip is the archive's other door and moves the same way: on
 from Home it pushes the archive (`goTab`), off at entry 1 it goes back down

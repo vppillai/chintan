@@ -213,6 +213,23 @@ describe('Back always means back', () => {
     expect(shell()).toHaveAttribute('data-screen', 'library');
   });
 
+  it('"‹ Notes" with nothing beneath takes Home in the note\'s place rather than pushing it', async () => {
+    /*
+     * A memory router keeps no `history.state.idx`, so the back-link reads
+     * entry 0 — the cold case `useBackGuard` seeds past in a browser — and
+     * replaces rather than pushing a Home above the note, which left Back
+     * returning to the note it had just left.
+     */
+    const user = userEvent.setup();
+    const { router } = mount(['/notes/roof-repair']);
+    await settle();
+    await user.click(await screen.findByRole('button', { name: /back to\s*notes/i }));
+    await waitFor(() => {
+      expect(path(router)).toBe('/');
+    });
+    expect(router.state.historyAction).toBe('REPLACE');
+  });
+
   it('seeds the library beneath a cold-start deep link so Back stays in the app', async () => {
     // Entering directly at a note gives the app one history entry, so Back
     // would leave the tab. useBackGuard seeds home beneath it.
@@ -331,6 +348,25 @@ describe("an app's stack, not a browser's", () => {
     await landed(router, { url: '/settings', idx: 1 });
     await goBack(router);
     await landed(router, { url: '/', idx: 0 });
+  });
+
+  it('sends "‹ Notes" back down to Home from a note opened there', async () => {
+    const user = userEvent.setup();
+    const router = mountBrowser();
+    await user.click(await screen.findByRole('button', { name: /roof repair/i }));
+    await landed(router, { url: '/notes/roof-repair', idx: 1 });
+    await user.click(await screen.findByRole('button', { name: /back to\s*notes/i }));
+    await landed(router, { url: '/', idx: 0 });
+    expect(router.state.historyAction).toBe('POP');
+  });
+
+  it('sends "‹ Notes" back to the Home seeded under a cold note', async () => {
+    const user = userEvent.setup();
+    const router = mountBrowser('/notes/roof-repair');
+    await landed(router, { url: '/notes/roof-repair', idx: 1 });
+    await user.click(await screen.findByRole('button', { name: /back to\s*notes/i }));
+    await landed(router, { url: '/', idx: 0 });
+    expect(router.state.historyAction).toBe('POP');
   });
 
   it('sends "‹ You" back to You instead of stacking a second one', async () => {

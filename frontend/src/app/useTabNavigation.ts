@@ -50,26 +50,48 @@ export function isPlainClick(event: MouseEvent): boolean {
  * (`usePendingTab`). In `sessionStorage`, like the tab's history itself, so a
  * reload between the two halves still finishes the move; denied storage
  * falls back to memory.
+ *
+ * Stamped with the key of the entry it was set from and the time: a
+ * `history.go(-n)` is a silent no-op when the router's index overstates the
+ * real stack, and a pending that never landed used to be taken on the next
+ * reload — `usePendingTab` runs on the initial POP — and replace whatever
+ * URL was loaded (review 2026-10-01, FE-14). One set from this very entry,
+ * or older than `PENDING_TTL_MS`, is dropped instead.
  */
 const PENDING_KEY = 'chintan.nav.pending';
-let pendingInMemory: string | null = null;
+export const PENDING_TTL_MS = 10_000;
 
-function takePending(): string | null {
-  let target = pendingInMemory;
-  try {
-    target = sessionStorage.getItem(PENDING_KEY) ?? target;
-    sessionStorage.removeItem(PENDING_KEY);
-  } catch {
-    /* Storage denied: the copy in memory is the one. */
-  }
-  pendingInMemory = null;
-  return target;
+interface Pending {
+  target: string;
+  /** `location.key` of the entry the move was made from. */
+  from: string;
+  at: number;
 }
 
-function setPending(target: string): void {
-  pendingInMemory = target;
+let pendingInMemory: Pending | null = null;
+
+/** The pending move's target, once, at the entry keyed `here`; null when there is none or it is stale. */
+export function takePending(here: string, now = Date.now()): string | null {
+  let pending = pendingInMemory;
   try {
-    sessionStorage.setItem(PENDING_KEY, target);
+    const stored = sessionStorage.getItem(PENDING_KEY);
+    // Removed before it is read, so one that will not parse is gone too.
+    sessionStorage.removeItem(PENDING_KEY);
+    if (stored !== null) pending = JSON.parse(stored) as Pending;
+  } catch {
+    /* Storage denied or unreadable: the copy in memory is the one. */
+  }
+  pendingInMemory = null;
+  if (typeof pending?.target !== 'string') return null;
+  if (pending.from === here || now - pending.at > PENDING_TTL_MS) return null;
+  return pending.target;
+}
+
+export function setPending(target: string, from: string, now = Date.now()): void {
+  const pending: Pending = { target, from, at: now };
+  pendingInMemory = pending;
+  try {
+    sessionStorage.setItem(PENDING_KEY, JSON.stringify(pending));
   } catch {
     /* Storage denied: memory holds it for this page. */
   }
@@ -100,13 +122,13 @@ function scrollToTop(): void {
  */
 export function useTabNavigation() {
   const navigate = useNavigate();
-  const { pathname, search } = useLocation();
+  const { pathname, search, key } = useLocation();
 
   /** The Home tab: back down to entry 0, which is a POP, so the list's place comes back with it. */
   const goHome = (): void => {
     const index = historyIndex();
     if (index > 0 && !isHome(pathname, search)) {
-      setPending(ROUTES.home);
+      setPending(ROUTES.home, key);
       void navigate(-index);
       return;
     }
@@ -126,21 +148,23 @@ export function useTabNavigation() {
     if (index === 0) void navigate(to, { state: RESTORE_SCROLL });
     else if (index === 1) void navigate(to, { replace: true, state: RESTORE_SCROLL });
     else {
-      setPending(to);
+      setPending(to, key);
       void navigate(-(index - 1));
     }
   };
 
   /**
-   * A screen's "‹ You": Back when You is beneath it, and otherwise (a cold
-   * deep link, which seeds only Home) You in this entry's place, so the stack
-   * still ends [Home, You].
+   * A screen's "‹ You" or a note's "‹ Notes": Back when the screen beneath
+   * is there — Home is entry 0, You and the archive entry 1, so anything
+   * above them is Back — and otherwise (a cold deep link, which seeds only
+   * Home; a cold archive) `to` in this entry's place, so the stack still
+   * ends [Home] or [Home, You].
    */
   const goBackTo = (to: string): void => {
-    if (historyIndex() >= 2) {
+    if (historyIndex() > (to === ROUTES.home ? 0 : 1)) {
       // A Back cannot carry a hash, so one in the target (About's link to
       // the Devices card) is put on the landed entry by `usePendingTab`.
-      if (to.includes('#')) setPending(to);
+      if (to.includes('#')) setPending(to, key);
       void navigate(-1);
     } else void navigate(to, { replace: true, state: RESTORE_SCROLL });
   };
@@ -161,7 +185,7 @@ export function usePendingTab(): void {
 
   useEffect(() => {
     if (navigationType !== 'POP') return;
-    const target = takePending();
+    const target = takePending(location.key);
     if (target === null) return;
     if (arrived(target, location.pathname, location.search)) return;
     void navigate(target, { replace: true, state: RESTORE_SCROLL });
