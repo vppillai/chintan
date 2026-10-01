@@ -554,11 +554,16 @@ export function ChecklistEditor({
           </p>
         </>
       )}
+      {/* Seen above the rows; heard through a live region that is always
+          mounted, since one inserted with its text is often not announced. */}
       {tidying && (
-        <p className="checklist-editor__status" role="status">
+        <p className="checklist-editor__status" aria-hidden="true">
           Tidying the list…
         </p>
       )}
+      <p className="visually-hidden" role="status">
+        {tidying ? 'Tidying the list…' : ''}
+      </p>
       <ul
         ref={listRef}
         className="checklist"

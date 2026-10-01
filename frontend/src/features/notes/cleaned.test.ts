@@ -32,6 +32,13 @@ describe('cleanSettled — when to stop asking after a 202', () => {
   it('stops early on an error the backend reports', () => {
     expect(cleanSettled(VIEW, { ...VIEW, error: 'The provider refused the request.' })).toBe(true);
   });
+
+  it('does not stop on the error the view already carried: that is the last run’s, not this one’s', () => {
+    const failed = { ...VIEW, error: 'The provider refused the request.' };
+    expect(cleanSettled(failed, failed)).toBe(false);
+    expect(cleanSettled(failed, { ...failed, error: 'The daily spend cap was reached.' })).toBe(true);
+    expect(cleanSettled(failed, { ...failed, generated_at: '2026-09-04T10:00:05.000Z' })).toBe(true);
+  });
 });
 
 describe('the cleaned view as a document to copy or save', () => {

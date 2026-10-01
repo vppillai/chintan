@@ -62,7 +62,10 @@ export function NoteDrawer({
 }) {
   const headingId = notePanelHeadingId(note.id);
   const { draft } = editor.model;
-  const cleaned = note.cleaned?.body.trim() ? note.cleaned : null;
+  // A checklist has no Cleaned tab (R8-F8); the tasks view it may still
+  // carry is Tidy's transport, not something to share.
+  const checklist = (draft.kind ?? note.kind ?? 'note') === 'checklist';
+  const cleaned = !checklist && note.cleaned?.body.trim() ? note.cleaned : null;
   const queryClient = useQueryClient();
   const startTidy = useStartTidy();
   /*

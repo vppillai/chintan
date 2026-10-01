@@ -72,8 +72,9 @@ function server(
   {
     split = SPLIT.body,
     error,
+    failures = Infinity,
     path = `/notes/${initial.id}`,
-  }: { split?: string; error?: string; path?: string } = {},
+  }: { split?: string; error?: string; failures?: number; path?: string } = {},
 ) {
   const state = {
     note: structuredClone(initial),
@@ -85,14 +86,15 @@ function server(
     const method = init?.method ?? 'GET';
     if (url.pathname.endsWith('/clean') && method === 'POST') {
       state.cleans.push(init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null);
+      const failing = error !== undefined && state.cleans.length <= failures;
       setTimeout(() => {
         state.note = {
           ...state.note,
           cleaned: {
             ...SPLIT,
-            body: error ? '' : split,
+            body: failing ? '' : split,
             generated_at: new Date().toISOString(),
-            ...(error ? { error } : {}),
+            ...(failing ? { error } : {}),
           },
         };
       }, 50);
@@ -276,8 +278,12 @@ describe('a checklist note', () => {
     await tidyFromMenu(user);
 
     // No mode in the request: the server picks tasks for a checklist.
-    expect(api.cleans).toEqual([null]);
-    expect(screen.getByText('Tidying the list…')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(api.cleans).toEqual([null]);
+    });
+    // Seen above the rows, and said by the status region that stays mounted.
+    expect(screen.getByText('Tidying the list…', { selector: '.checklist-editor__status' })).toBeInTheDocument();
+    expect(screen.getByText('Tidying the list…', { selector: '[role="status"]' })).toBeInTheDocument();
     // The rows stay editable under the status line.
     expect(screen.getByRole('textbox', { name: 'Item 1' })).toBeEnabled();
 
@@ -288,7 +294,7 @@ describe('a checklist note', () => {
     expect(api.patches[0]).toEqual(expect.objectContaining({ body: SPLIT.body }));
     expect(screen.getByRole('textbox', { name: 'Item 3' })).toHaveValue('Butter');
     expect(toastText()).toBe('List tidied: 3 lines → 4 items.');
-    expect(screen.queryByText('Tidying the list…')).toBeNull();
+    expect(screen.queryByText('Tidying the list…', { selector: '.checklist-editor__status' })).toBeNull();
 
     await user.click(screen.getByRole('button', { name: 'Undo' }));
     await waitFor(() => {
@@ -341,7 +347,9 @@ describe('a checklist note', () => {
     expect(api.note.body).toBe('- [ ] Milk\n- [x] Eggs\n- [x] Bread');
 
     await user.click(screen.getByRole('button', { name: 'Tidy again' }));
-    expect(api.cleans).toHaveLength(2);
+    await waitFor(() => {
+      expect(api.cleans).toHaveLength(2);
+    });
   });
 
   it('a list that comes back the same is left alone: Already tidy', async () => {
@@ -369,6 +377,48 @@ describe('a checklist note', () => {
     expect(api.patches).toHaveLength(0);
   });
 
+  it('Try again after a failed tidy waits for its own answer rather than the old error, and lands', async () => {
+    const user = userEvent.setup();
+    const api = server(SHOPPING, { error: 'The model did not answer.', failures: 1 });
+    await screen.findByRole('textbox', { name: 'Item 1' });
+    await tidyFromMenu(user);
+    await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
+    await waitFor(() => {
+      expect(toastText()).toBe('Couldn’t tidy the list.');
+    });
+
+    // The note still carries the first run's error: that is not this run's answer.
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => {
+      expect(api.cleans).toHaveLength(2);
+    });
+    await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(1);
+    });
+    expect(api.patches[0]).toEqual(expect.objectContaining({ body: SPLIT.body }));
+    expect(toastText()).toBe('List tidied: 3 lines → 4 items.');
+  });
+
+  it('a tidy saves unsaved typing first, so the answer is for the list as typed', async () => {
+    const user = userEvent.setup();
+    const api = server(SHOPPING, { split: '- [ ] Oat milk\n- [x] Eggs\n- [ ] Bread' });
+    const first = await screen.findByRole('textbox', { name: 'Item 1' });
+    await user.type(first, 'Oat ', { initialSelectionStart: 0, initialSelectionEnd: 0 });
+    expect(api.patches).toHaveLength(0);
+    await tidyFromMenu(user);
+    await waitFor(() => {
+      expect(api.cleans).toHaveLength(1);
+    });
+    expect(api.patches[0]).toEqual(expect.objectContaining({ body: '- [ ] Oat Milk\n- [x] Eggs\n- [ ] Bread' }));
+
+    await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(2);
+    });
+    expect(api.patches[1]).toEqual(expect.objectContaining({ body: '- [ ] Oat milk\n- [x] Eggs\n- [ ] Bread' }));
+  });
+
   it('a tidy under way survives the Items editor unmounting: it lands from the Recordings tab', async () => {
     const user = userEvent.setup();
     const api = server(SHOPPING);
@@ -384,6 +434,17 @@ describe('a checklist note', () => {
     expect(api.patches[0]).toEqual(expect.objectContaining({ body: SPLIT.body }));
     await user.click(screen.getByRole('tab', { name: 'Items' }));
     expect(screen.getByRole('textbox', { name: 'Item 3' })).toHaveValue('Butter');
+  });
+
+  it('Share offers no cleaned view for a checklist, even one carrying an old tasks view', async () => {
+    const user = userEvent.setup();
+    server({ ...SHOPPING, cleaned: SPLIT });
+    await screen.findByRole('textbox', { name: 'Item 1' });
+    await user.click(screen.getByRole('button', { name: 'Note actions' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Share' }));
+    expect(screen.getByRole('button', { name: 'Copy note' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Copy cleaned view' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Download cleaned view' })).toBeNull();
   });
 
   it('the menu offers no tidy for a list with nothing open', async () => {

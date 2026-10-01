@@ -140,7 +140,7 @@ test('Tidy up list in the ⋮ writes the split list into the body, with Undo tha
   await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
 
   await noteAction(page, 'Tidy up list');
-  await expect(page.getByText('Tidying the list…')).toBeVisible();
+  await expect(page.locator('.checklist-editor__status')).toHaveText('Tidying the list…');
   // The request named no mode; the server applied `tasks` itself.
   const clean = api.requests.find((r) => r.method === 'POST' && r.url === '/v1/notes/shopping/clean');
   expect(clean).toBeTruthy();
@@ -150,7 +150,7 @@ test('Tidy up list in the ⋮ writes the split list into the body, with Undo tha
   await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [ ] butter');
   expect(saves(api)).toBe(1);
   await expect(page.getByText('List tidied: 3 lines → 4 items.')).toBeVisible();
-  await expect(page.getByText('Tidying the list…')).toHaveCount(0);
+  await expect(page.locator('.checklist-editor__status')).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Undo' }).click();
   await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);

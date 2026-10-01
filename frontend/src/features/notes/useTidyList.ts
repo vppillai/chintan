@@ -47,6 +47,12 @@ interface Pending {
  * sits unused in `cleaned_body`, which is harmless.
  */
 const pending = new Map<string, Pending>();
+/*
+ * Each open note's `saveNow`, registered by `useApplyTidy`: a tidy saves the
+ * person's unsaved typing first, since the model cleans the server's body
+ * and an answer for a body the draft has moved past is never applied.
+ */
+const savers = new Map<string, () => Promise<void>>();
 const listeners = new Set<() => void>();
 
 function emit(): void {
@@ -89,7 +95,8 @@ function startTidy(
   const before = queryClient.getQueryData<NoteDetailWire>(queryKeys.note(noteId))?.cleaned;
   pending.set(noteId, { before: before ?? null, since: Date.now(), converted });
   emit();
-  api.cleanNote(noteId).catch(() => {
+  const save = savers.get(noteId)?.() ?? Promise.resolve();
+  save.then(() => api.cleanNote(noteId)).catch(() => {
     settle(noteId);
     showToast({
       message: TIDY_FAILED,
@@ -124,6 +131,14 @@ export function useApplyTidy(note: NoteDetailWire, editor: NoteEditor): void {
   const start = useStartTidy();
   const queryClient = useQueryClient();
   const cleaned = note.cleaned ?? null;
+  const { saveNow } = editor;
+
+  useEffect(() => {
+    savers.set(note.id, saveNow);
+    return () => {
+      if (savers.get(note.id) === saveNow) savers.delete(note.id);
+    };
+  }, [note.id, saveNow]);
 
   /*
    * The note asked for again on the `cleanPollInterval` ladder. A timer of
@@ -202,25 +217,37 @@ export function useApplyTidy(note: NoteDetailWire, editor: NoteEditor): void {
     });
   }, [entry, cleaned, note.id, note.body, note.kind, editor, start]);
 
-  // A worker that never answers must not leave "Tidying…" up for good.
+  /*
+   * A worker that never answers must not leave "Tidying…" up for good. The
+   * note is read once more first: a screen mounted again after the minute
+   * (the person came back to the note) has not polled, and the answer may
+   * be there; then the apply effect above takes it on the re-render.
+   */
   useEffect(() => {
     if (!entry) return;
     const giveUp = setTimeout(
       () => {
-        if (pending.get(note.id) !== entry) return;
-        settle(note.id);
-        showToast({ message: TIDY_FAILED, action: { label: 'Try again', onSelect: () => start(note.id) } });
+        void queryClient
+          .refetchQueries({ queryKey: queryKeys.note(note.id), exact: true })
+          .then(() => {
+            if (pending.get(note.id) !== entry) return;
+            const now = queryClient.getQueryData<NoteDetailWire>(queryKeys.note(note.id))?.cleaned;
+            if (cleanSettled(entry.before, now)) return;
+            settle(note.id);
+            showToast({ message: TIDY_FAILED, action: { label: 'Try again', onSelect: () => start(note.id) } });
+          });
       },
       Math.max(0, CLEAN_POLL_TIMEOUT_MS - (Date.now() - entry.since)),
     );
     return () => {
       clearTimeout(giveUp);
     };
-  }, [entry, note.id, start]);
+  }, [entry, note.id, queryClient, start]);
 }
 
 /** For tests: forgets every tidy under way. */
 export function resetTidies(): void {
   pending.clear();
+  savers.clear();
   emit();
 }
