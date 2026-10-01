@@ -784,9 +784,8 @@
 
 /*
  * The shell's "Recording — tap to return" row is for a microphone left open
- * on another screen. A hold or a locked recording on the tab bar is not
- * that: the bar says so, from the press through the "Sent" beat that covers
- * the stop. Without this the row appeared above the bar for the length of
+ * on another screen. A hold on the tab bar is not that: the bar says so,
+ * from the press through the "Sent" beat that covers the stop. Without this the row appeared above the bar for the length of
  * every hold and shoved the screen up under the thumb, and two things would
  * state one fact.
  */

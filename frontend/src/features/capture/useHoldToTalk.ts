@@ -25,7 +25,6 @@ import {
 import {
   BLOCKED_NOTICE_MS,
   CLICK_SUPPRESS_MS,
-  DISCARD_CONFIRM_MS,
   HOLD_ARM_MS,
   HOLD_NOTICE_MS,
 } from './holdTiming.ts';
@@ -41,10 +40,17 @@ import { useCaptureStore } from './store.ts';
  * as from the capture screen, so the filing row and the note's banner take
  * it from there.
  *
- * Nothing here touches history: the bar draws the hold in place, so system
- * Back still does what it did, and a locked recording survives a route
- * change because the bar is the shell's.
+ * While held, nothing touches history: the bar draws the hold in place, so
+ * system Back still does what it did. A lock pushes `/capture`, which takes
+ * over the live take (it does not start a second one) and replaces itself
+ * on leave, as it does from a tap.
  */
+
+/**
+ * The navigation state of a lock's hand-off, so the shell announces
+ * "Recording, hands-free" on the capture screen rather than its name.
+ */
+export const HANDS_FREE = { handsFree: true } as const;
 
 export interface HoldHandlers {
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -63,10 +69,6 @@ export interface HoldToTalk {
   /** The notice in the clock pill, if one is up. */
   notice: HoldNotice | null;
   handlers: HoldHandlers;
-  /** The locked bar's buttons. */
-  send: () => void;
-  stop: () => void;
-  discard: () => void;
 }
 
 /**
@@ -115,7 +117,7 @@ function inField(target: EventTarget | null): boolean {
 /**
  * Whether a key belongs to something else on the page: a field, a dialog or
  * menu that is open, or a handler that already took it. Escape closing Find,
- * a ⋮ menu or a dialog must not also discard a locked take, and R typed or
+ * a ⋮ menu or a dialog must not also cancel a hold, and R typed or
  * pressed behind a modal must not start one. As `SelectionBar` does.
  */
 function keyTaken(event: KeyboardEvent): boolean {
@@ -146,7 +148,6 @@ export function useHoldToTalk({
   const suppressUntil = useRef(0);
   const timers = useRef({
     arm: undefined as ReturnType<typeof setTimeout> | undefined,
-    confirm: undefined as ReturnType<typeof setTimeout> | undefined,
     notice: undefined as ReturnType<typeof setTimeout> | undefined,
   });
   const target = useRef(noteId);
@@ -158,17 +159,19 @@ export function useHoldToTalk({
     const pending = timers.current;
     return () => {
       clearTimeout(pending.arm);
-      clearTimeout(pending.confirm);
       clearTimeout(pending.notice);
     };
   }, []);
 
-  const openCapture = useCallback(() => {
-    // The recording's own note when there is one, else the bar's target.
-    const { model } = useCaptureStore.getState();
-    const into = model.state === 'idle' ? target.current : model.noteId;
-    void navigate(into ? ROUTES.captureInto(into) : ROUTES.capture);
-  }, [navigate]);
+  const openCapture = useCallback(
+    (state?: typeof HANDS_FREE) => {
+      // The recording's own note when there is one, else the bar's target.
+      const { model } = useCaptureStore.getState();
+      const into = model.state === 'idle' ? target.current : model.noteId;
+      void navigate(into ? ROUTES.captureInto(into) : ROUTES.capture, { state });
+    },
+    [navigate],
+  );
 
   // Assigned below; effects that dispatch read it through this ref.
   const dispatchRef = useRef<(event: GestureEvent) => void>(() => {});
@@ -188,10 +191,6 @@ export function useHoldToTalk({
         case 'send':
           void store.stopAndSend(api);
           return;
-        case 'stop':
-          void store.stop();
-          openCapture();
-          return;
         case 'openCapture':
           openCapture();
           return;
@@ -208,12 +207,11 @@ export function useHoldToTalk({
           );
           return;
         }
-        case 'lockFeedback':
+        case 'lock':
+          // The take is already running; the capture screen shows it with
+          // its waveform, clock, Pause, Stop, Send and Discard.
           lockFeedback();
-          // A keyboard lock has no finger on the disc; Send is the next key.
-          if (current.current.source !== 'pointer') {
-            document.querySelector<HTMLButtonElement>('.record-button')?.focus();
-          }
+          openCapture(HANDS_FREE);
           return;
         case 'cancelFeedback':
           cancelFeedback();
@@ -243,12 +241,6 @@ export function useHoldToTalk({
         timers.current.arm = setTimeout(() => {
           dispatchRef.current({ type: 'tick', now: Date.now() });
         }, left);
-      }
-      if (after.discardArmedUntil !== null && after.discardArmedUntil !== before.discardArmedUntil) {
-        clearTimeout(timers.current.confirm);
-        timers.current.confirm = setTimeout(() => {
-          dispatchRef.current({ type: 'tick', now: Date.now() });
-        }, DISCARD_CONFIRM_MS);
       }
       for (const effect of effects) run(effect);
     },
@@ -282,14 +274,12 @@ export function useHoldToTalk({
     dispatch({ type: 'interrupt', now: Date.now(), model: model() });
   }, [dispatch]);
 
-  // The store's word reaches a hold in progress: a failure, or a locked take
-  // the call or the cap stopped.
+  // The store's word reaches a hold in progress: a microphone that failed.
   useEffect(
     () =>
       useCaptureStore.subscribe((state, previous) => {
         if (state.model === previous.model) return;
-        const { phase } = current.current;
-        if (phase === 'holding' || phase === 'locked') {
+        if (current.current.phase === 'holding') {
           dispatch({ type: 'modelChanged', model: state.model });
         }
       }),
@@ -308,8 +298,8 @@ export function useHoldToTalk({
    * the permission prompt takes focus without the finger leaving the disc.
    *
    * A hidden page (a call, the lock screen, an app switch) ends a hold as a
-   * release too, not a discard. A locked recording carries on, as it does
-   * on the capture screen.
+   * release too, not a discard. A locked recording is the capture screen's
+   * by then, which keeps recording through it.
    */
   useEffect(() => {
     const isR = (event: KeyboardEvent): boolean =>
@@ -388,11 +378,10 @@ export function useHoldToTalk({
     /*
      * Space on the focused disc holds as a finger does, with the same arm:
      * a quick press is a tap. Its default is stopped so the button's own
-     * click does not follow the release. While locked, Space is the plain
-     * button press it always was, which is Send.
+     * click does not follow the release.
      */
     onKeyDown: (event) => {
-      if (event.key !== ' ' || current.current.phase === 'locked') return;
+      if (event.key !== ' ') return;
       event.preventDefault();
       if (!event.repeat) press('space');
     },
@@ -413,10 +402,6 @@ export function useHoldToTalk({
      */
     onClick: () => {
       if (Date.now() < suppressUntil.current) return;
-      if (current.current.phase === 'locked') {
-        dispatch({ type: 'send', now: Date.now(), model: model() });
-        return;
-      }
       if (current.current.phase !== 'idle') return;
       void navigate(target.current ? ROUTES.captureInto(target.current) : ROUTES.capture);
     },
@@ -426,19 +411,5 @@ export function useHoldToTalk({
     gesture,
     notice,
     handlers,
-    send: () => {
-      dispatch({ type: 'send', now: Date.now(), model: model() });
-    },
-    stop: () => {
-      dispatch({ type: 'stop' });
-    },
-    discard: () => {
-      dispatch({ type: 'discard', now: Date.now(), model: model() });
-      // The Discard button goes with the locked bar; focus goes back to the
-      // disc rather than being dropped on the page.
-      if (current.current.phase === 'idle') {
-        document.querySelector<HTMLButtonElement>('.record-button')?.focus();
-      }
-    },
   };
 }

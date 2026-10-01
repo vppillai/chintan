@@ -316,7 +316,7 @@
    Push-to-talk on the bar (R8, F5)
 
    Held, the Home slot is "Slide to cancel" and the You slot the live level;
-   locked, they are Discard and Stop. Each sits in its tab's grid cell over
+   a lock hands the take to the capture screen. Each sits in its tab's grid cell over
    the hidden tab, so the bar keeps its height and nothing above it moves.
    Only the disc wears the accent; the pills are ink and ground.
    -------------------------------------------------------------------------- */
@@ -431,16 +431,6 @@
   block-size: 0.25rem;
   border-radius: var(--radius-full);
   background-color: var(--color-ground);
-}
-
-/* Discard armed for its second tap: outlined, and the label asks. */
-.tab-bar__tab[data-armed] {
-  outline: 1.5px solid var(--color-ink);
-  color: var(--color-ink);
-}
-
-.tab-bar__tab[data-armed] .tab-bar__label {
-  font-weight: var(--font-weight-semibold);
 }
 
 @media (prefers-reduced-motion: reduce) {

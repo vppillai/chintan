@@ -12,8 +12,6 @@ import {
 } from './holdGesture.ts';
 import {
   CANCEL_DX_PX,
-  DISCARD_CONFIRM_AFTER_MS,
-  DISCARD_CONFIRM_MS,
   HOLD_ARM_MS,
   LOCK_DY_PX,
   MIN_TALK_MS,
@@ -117,25 +115,24 @@ describe('the hold gesture', () => {
     expect(progress.lock).toBe(0);
   });
 
-  it('locks at 72 px up, and the finger lifting does not send', () => {
+  it('locks at 72 px up by handing the live take to the capture screen; the finger lifting sends nothing', () => {
     expect(play([move(0, -(LOCK_DY_PX - 1))], held()).gesture.phase).toBe('holding');
     const locked = play([move(0, -LOCK_DY_PX)], held());
-    expect(locked.gesture.phase).toBe('locked');
-    expect(locked.types).toEqual(['lockFeedback']);
+    expect(locked.gesture.phase).toBe('idle');
+    // No discard, no send, no second start: the capture screen takes it over.
+    expect(locked.types).toEqual(['lock']);
     const lifted = play([up(5_000)], locked.gesture);
-    expect(lifted.gesture.phase).toBe('locked');
     expect(lifted.types).toEqual(['suppressClick']);
   });
 
   it('lets the first line crossed win on a diagonal', () => {
     // Up first, then left: locked, and the later leftward slide does nothing.
     const lockedFirst = play([move(-40, -LOCK_DY_PX), move(-CANCEL_DX_PX - 20, -LOCK_DY_PX)], held());
-    expect(lockedFirst.gesture.phase).toBe('locked');
-    expect(lockedFirst.types).not.toContain('discard');
+    expect(lockedFirst.types).toEqual(['lock']);
     // Left first, then up: cancelled, and the later lock-direction move does nothing.
     const cancelledFirst = play([move(-CANCEL_DX_PX, -30), move(-CANCEL_DX_PX, -LOCK_DY_PX - 20)], held());
     expect(cancelledFirst.gesture.phase).toBe('cancelled');
-    expect(cancelledFirst.types).not.toContain('lockFeedback');
+    expect(cancelledFirst.types).not.toContain('lock');
   });
 
   it('sends a release with enough audio', () => {
@@ -162,8 +159,8 @@ describe('the hold gesture', () => {
         armTick,
         up(HOLD_ARM_MS + 50, requesting),
       ]);
-      expect(gesture.phase).toBe('locked');
-      expect(types).toEqual(['start', 'suppressClick', 'lockFeedback']);
+      expect(gesture.phase).toBe('idle');
+      expect(types).toEqual(['start', 'suppressClick', 'lock']);
     }
     // Already granted: a release during a slow start is a slip.
     const granted = play([down({ permission: 'granted' }), armTick, up(HOLD_ARM_MS + 50, requesting)]);
@@ -177,51 +174,6 @@ describe('the hold gesture', () => {
       held(),
     );
     expect(types).toEqual(['suppressClick', 'send', 'notice']);
-  });
-
-  it('opens review when a locked take stops on its own, never sending or discarding it', () => {
-    const locked = play([move(0, -LOCK_DY_PX)], held()).gesture;
-    const review: CaptureModel = { ...recording(), state: 'review', startedAt: null, bytes: 900 };
-    const { gesture, types } = play([{ type: 'modelChanged', model: review }], locked);
-    expect(gesture.phase).toBe('idle');
-    expect(types).toEqual(['openCapture']);
-  });
-
-  it('asks once before discarding a locked take of ten seconds or more', () => {
-    const locked = play([move(0, -LOCK_DY_PX)], held()).gesture;
-    // 9.9 s: gone on the first tap.
-    const short = play([{ type: 'discard', now: 9_900, model: recording(0) }], locked);
-    expect(short.gesture.phase).toBe('idle');
-    expect(short.types).toContain('discard');
-    // 10 s: the first tap arms "Discard?", the second throws it away.
-    const first = play(
-      [{ type: 'discard', now: DISCARD_CONFIRM_AFTER_MS, model: recording(0) }],
-      locked,
-    );
-    expect(first.gesture.phase).toBe('locked');
-    expect(first.gesture.discardArmedUntil).toBe(DISCARD_CONFIRM_AFTER_MS + DISCARD_CONFIRM_MS);
-    expect(first.types).toEqual([]);
-    const second = play(
-      [{ type: 'discard', now: DISCARD_CONFIRM_AFTER_MS + 1_000, model: recording(0) }],
-      first.gesture,
-    );
-    expect(second.gesture.phase).toBe('idle');
-    expect(second.types).toContain('discard');
-    // Left alone, "Discard?" lapses and the next tap asks again.
-    const lapsed = play(
-      [{ type: 'tick', now: DISCARD_CONFIRM_AFTER_MS + DISCARD_CONFIRM_MS }],
-      first.gesture,
-    );
-    expect(lapsed.gesture.discardArmedUntil).toBeNull();
-  });
-
-  it('sends from the locked disc, and Stop opens review', () => {
-    const locked = play([move(0, -LOCK_DY_PX)], held()).gesture;
-    expect(play([{ type: 'send', now: 5_000, model: recording(0) }], locked).types).toEqual([
-      'send',
-      'notice',
-    ]);
-    expect(play([{ type: 'stop' }], locked).types).toEqual(['stop']);
   });
 
   it('stands down while the last recording is leaving, and says so', () => {

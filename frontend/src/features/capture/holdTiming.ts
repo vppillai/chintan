@@ -23,9 +23,5 @@ export const LOCK_DY_PX = 72;
 export const HOLD_NOTICE_MS = 1_500;
 /** "Microphone blocked" stays longer: it is the one notice that needs acting on. */
 export const BLOCKED_NOTICE_MS = 3_000;
-/** A locked take at least this long asks once before Discard throws it away. */
-export const DISCARD_CONFIRM_AFTER_MS = 10_000;
-/** How long "Discard?" stays armed for the second tap. */
-export const DISCARD_CONFIRM_MS = 3_000;
 /** The click a browser sends after a long press is swallowed for this long. */
 export const CLICK_SUPPRESS_MS = 600;

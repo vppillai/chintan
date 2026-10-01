@@ -54,7 +54,6 @@ export type IconName =
   | 'pin'
   | 'grip'
   | 'bindu'
-  | 'lock'
   | 'lock-open'
   | 'chevrons-up';
 
@@ -147,9 +146,8 @@ export const PATHS: Record<IconName, string> = {
   // Two columns of three dots: the handle a pinned row is dragged by. Dots
   // are zero-length strokes, as in `more`, so the weight matches.
   grip: 'M9.5 6.5v.01M14.5 6.5v.01M9.5 12v.01M14.5 12v.01M9.5 17.5v.01M14.5 17.5v.01',
-  // A padlock, shut: a held recording that goes on with the finger lifted.
-  lock: 'M7.5 11h9a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 18.5v-6A1.5 1.5 0 0 1 7.5 11zM9 11V8a3 3 0 0 1 6 0v3',
-  // The same padlock with its shackle lifted: where the slide up goes.
+  // A padlock with its shackle lifted: where the slide up goes, which locks
+  // the take hands-free on the capture screen.
   'lock-open':
     'M7.5 11h9a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 18.5v-6A1.5 1.5 0 0 1 7.5 11zM9 11V7a3 3 0 0 1 5.8-1.1',
   // Two chevrons stacked: slide up.

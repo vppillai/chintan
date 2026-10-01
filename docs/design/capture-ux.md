@@ -128,20 +128,26 @@ effects. The numbers are `holdTiming.ts`'s, measured from the press point:
   crossing: discarded, "Cancelled", and the rest of the drag is ignored. It
   used to be 80 px past the edge of the `/talk` disc, which on a phone was
   off the screen, so it never cancelled (F6).
-- **Slide up `LOCK_DY_PX` (72 px)** locks: the finger may lift and the
-  recording goes on in place. The disc becomes Send, the Home slot Discard
-  and the You slot Stop (review on `/capture`). A locked take of
-  `DISCARD_CONFIRM_AFTER_MS` (10 s) or more asks "Discard?" for
-  `DISCARD_CONFIRM_MS` (3 s) before it goes. A locked take that stops on its
-  own (a call, the cap) opens review; it is never sent or discarded for you.
+- **Slide up `LOCK_DY_PX` (72 px)** locks: the finger may lift, and the
+  live take moves to the full recording screen. `/capture` is pushed (Back
+  returns to where the hold began) with its waveform, clock and controls:
+  Cancel, Pause, Stop, Send and the target chooser. It is the same
+  recording, not a new one: the capture screen takes over a recording that
+  is already running (`isCaptureBusy`), so there is no gap, no second
+  recorder, the target note is kept and the clock carries on from the
+  press. The shell announces "Recording, hands-free" on arrival. Until
+  2026-10-01 a lock stayed on the bar, with Discard, Stop and Send in the
+  tab slots (owner decision D1); the owner asked for the recording screen
+  instead.
 - **Interruptions are releases, never discards.** `pointercancel`,
   `lostpointercapture`, a hidden page and, for a key hold, the window losing
   focus all count as a release. `/talk` discarded on blur. A locked
-  recording carries on through a hidden page, as `/capture` does.
+  recording is the capture screen's, and carries on through a hidden page.
 - **The first press on a fresh install** raises the permission prompt, and
   the finger lifts to answer it. Released while still `requesting`, with the
-  permission not already granted, the hold locks ("Allow the microphone…")
-  instead of failing as too short. A refused microphone starts nothing and
+  permission not already granted, the hold locks, so the capture screen
+  waits on the prompt and records once allowed, instead of failing as too
+  short. An R or Space hold that locks this way takes the same path. A refused microphone starts nothing and
   says "Microphone blocked" for 3 s.
 - **Stand-down.** While the last recording is stopping or uploading, a hold
   says "Still sending the last one…". With another recording live or unsent
@@ -149,8 +155,8 @@ effects. The numbers are `holdTiming.ts`'s, measured from the press point:
   `/capture` shows that recording.
 - **Keys.** Space on the focused disc holds with the same arm; a quick Space
   is a tap. R held from anywhere outside a field, with no modifier, is
-  push-to-talk; a quick R does nothing. Escape cancels a hold and is Discard
-  while locked. Space is not taken globally, because it pages the content.
+  push-to-talk; a quick R does nothing. Escape cancels a hold, unless a
+  field, an open dialog or menu, or another handler has it. Space is not taken globally, because it pages the content.
 
 What the bar draws: while held, the disc follows the finger at 1.2× with the
 accent ring, the Home slot reads "‹ Slide to cancel" (drifting with half
@@ -160,11 +166,10 @@ level, and a lock pill stands above the disc. The tabs keep their boxes,
 hidden and inert, so the bar keeps its height and nothing in `.app__main`
 moves. The clock pill rides the bar's top edge where "Into this note" sits,
 and carries the notices. Reduced motion drops the travel, the scale and the
-bob. One polite `role="status"` in the bar announces "Recording", "Locked.
-Recording hands-free.", "Cancelled", "Sent", "Too short" and "Microphone
+bob. One polite `role="status"` in the bar announces "Recording", "Cancelled", "Sent", "Too short" and "Microphone
 blocked". The disc's `aria-description` says how to hold, and
 `aria-keyshortcuts` is R. The shell's recording indicator hides while the
-bar holds or is locked, and through the "Sent" beat. On Home, the first
+bar holds, and through the "Sent" beat. On Home, the first
 three launches show "Hold to talk · tap to record" in the pill, until a hold
 first sends (`chintan.coach.ptt`).
 
@@ -272,7 +277,7 @@ ladder and focus refetch), `filing/model.test.ts`, `filing/FilingItem.test.tsx`,
 `filing/TargetPrompt.test.tsx`, `holdGesture.test.ts` (every transition, on a
 fake clock), `components/RecordButton.test.tsx` (tap, hold, Space, Enter, Escape,
 the swallowed click, blur, the first-press prompt), `RecordingIndicator.test.tsx`,
-`TabBar.test.tsx` (the slots, lock, Discard, Stop, Send, R, the coach); end to end,
+`TabBar.test.tsx` (the slots, the lock's hand-off to `/capture`, R, the coach); end to end,
 `frontend/e2e/capture.spec.ts` (Send while recording, the return and the banner,
 the four discs on one row at 320 px, hold to send, drag left to cancel, drag up to
-lock, and the F6 touch slide on a 412 px phone), `manifest.spec.ts`.
+lock onto the recording screen and then Send or Cancel there, and the F6 touch slide on a 412 px phone), `manifest.spec.ts`.

@@ -1,7 +1,5 @@
 import {
   CANCEL_DX_PX,
-  DISCARD_CONFIRM_AFTER_MS,
-  DISCARD_CONFIRM_MS,
   HOLD_ARM_MS,
   LOCK_DY_PX,
   MIN_TALK_MS,
@@ -14,9 +12,10 @@ import { hasBufferedAudio, isCaptureBusy, type CaptureModel } from './machine.ts
  *
  * A tap opens the capture screen. A press held past `HOLD_ARM_MS` records;
  * letting go sends. Sliding up `LOCK_DY_PX` locks the recording so the finger
- * can lift (hands-free, in place, with Send, Stop and Discard on the bar);
- * sliding left `CANCEL_DX_PX` throws it away. Both are measured from the
- * press point, so they fit the narrowest phone.
+ * can lift: the take carries on, hands-free, on the full recording screen
+ * with its waveform, clock and controls (owner, 2026-10-01, reversing the
+ * locked bar of D1). Sliding left `CANCEL_DX_PX` throws it away. Both are
+ * measured from the press point, so they fit the narrowest phone.
  *
  * The reducer only decides. `useHoldToTalk` feeds it pointer, key, timer and
  * capture-store events and runs the effects it returns, which is what lets
@@ -43,9 +42,7 @@ export type GesturePhase =
   /** Slid past the cancel line. Nothing more happens until the finger lifts. */
   | 'cancelled'
   /** A press that will not record (busy, or blocked). Waits for the release. */
-  | 'standdown'
-  /** Recording hands-free, finger up. Send, Stop and Discard are on the bar. */
-  | 'locked';
+  | 'standdown';
 
 export type HoldNotice = 'sent' | 'short' | 'cancelled' | 'busy' | 'blocked' | 'unavailable';
 
@@ -53,12 +50,14 @@ export type HoldEffect =
   | { type: 'start' }
   | { type: 'discard' }
   | { type: 'send' }
-  /** Stop and review: the capture screen with the player, Send and Discard. */
-  | { type: 'stop' }
   /** To the capture screen, which shows or starts the recording. */
   | { type: 'openCapture' }
+  /**
+   * Locked: the lock tick, and the live take handed to the capture screen,
+   * which takes over a recording already running rather than starting one.
+   */
+  | { type: 'lock' }
   | { type: 'notice'; notice: HoldNotice }
-  | { type: 'lockFeedback' }
   | { type: 'cancelFeedback' }
   | { type: 'errorFeedback' }
   /** The click a browser sends after a long press must not count as a tap. */
@@ -90,8 +89,6 @@ export interface Gesture {
   suppress: boolean;
   permission: MicPermission;
   standDown: StandDown | null;
-  /** While set and in the future, a second Discard throws the take away. */
-  discardArmedUntil: number | null;
 }
 
 export const IDLE_GESTURE: Gesture = {
@@ -106,7 +103,6 @@ export const IDLE_GESTURE: Gesture = {
   suppress: false,
   permission: 'unknown',
   standDown: null,
-  discardArmedUntil: null,
 };
 
 export type GestureEvent =
@@ -119,18 +115,14 @@ export type GestureEvent =
       model: CaptureModel;
       permission: MicPermission;
     }
-  /** A timer fired: the arm, or the end of "Discard?". */
+  /** The arm's timer fired. */
   | { type: 'tick'; now: number }
   | { type: 'move'; x: number; y: number }
   | { type: 'up'; now: number; model: CaptureModel }
   /** The browser or the OS took the press: pointercancel, a hidden page, a lost keyup. */
   | { type: 'interrupt'; now: number; model: CaptureModel }
   | { type: 'modelChanged'; model: CaptureModel }
-  /** The locked bar's buttons, and Escape. */
-  | { type: 'send'; now: number; model: CaptureModel }
-  | { type: 'stop' }
-  | { type: 'discard'; now: number; model: CaptureModel }
-  | { type: 'escape'; now: number; model: CaptureModel };
+  | { type: 'escape'; now: number; model: CaptureModel }
 
 export interface GestureStep {
   gesture: Gesture;
@@ -189,7 +181,7 @@ function failed(gesture: Gesture, model: CaptureModel): GestureStep {
   );
 }
 
-/** Sends what was recorded, or calls it a slip. Shared by release and the locked Send. */
+/** Sends what was recorded, or calls it a slip. */
 function finish(gesture: Gesture, model: CaptureModel, now: number): GestureStep {
   if (model.state === 'failed') return failed(gesture, model);
   if (sendable(model) && elapsedNow(model, now) >= MIN_TALK_MS) {
@@ -243,16 +235,14 @@ function lift(gesture: Gesture, model: CaptureModel, now: number, tap: boolean):
        * The first press on a fresh install raises the permission prompt, and
        * the finger has to lift to answer it. Calling that "Too short" made
        * the first press always fail; it locks instead, so the recording goes
-       * on hands-free once allowed. With the microphone already granted, a
-       * release during a slow start is the slip it looks like.
+       * on hands-free on the capture screen once allowed. With the
+       * microphone already granted, a release during a slow start is the
+       * slip it looks like.
        */
       if (model.state === 'requesting' && gesture.permission !== 'granted') {
-        return out(step({ ...lifted, phase: 'locked', dx: 0, dy: 0 }, { type: 'lockFeedback' }));
+        return out(step(rest(lifted), { type: 'lock' }));
       }
       return out(finish(lifted, model, now));
-    case 'locked':
-      // The lift after the slide up: the recording carries on.
-      return out(step(lifted));
     case 'idle':
     case 'cancelled':
     case 'standdown':
@@ -279,9 +269,7 @@ function move(gesture: Gesture, x: number, y: number): GestureStep {
   };
   // Lock is checked first: if one move crosses both lines, keeping the audio
   // is the mistake that costs nothing.
-  if (dy <= -LOCK_DY_PX) {
-    return step({ ...held, phase: 'locked', dx: 0, dy: 0 }, { type: 'lockFeedback' });
-  }
+  if (dy <= -LOCK_DY_PX) return step(rest(held), { type: 'lock' });
   if (dx <= -CANCEL_DX_PX) {
     return step(
       { ...held, phase: 'cancelled' },
@@ -291,15 +279,6 @@ function move(gesture: Gesture, x: number, y: number): GestureStep {
     );
   }
   return step(held);
-}
-
-function discard(gesture: Gesture, model: CaptureModel, now: number): GestureStep {
-  const armed = gesture.discardArmedUntil !== null && now < gesture.discardArmedUntil;
-  if (armed || elapsedNow(model, now) < DISCARD_CONFIRM_AFTER_MS) {
-    return step(rest(gesture), { type: 'discard' }, notice('cancelled'));
-  }
-  // Ten seconds of speech is worth one more tap before it is gone.
-  return step({ ...gesture, discardArmedUntil: now + DISCARD_CONFIRM_MS });
 }
 
 export function holdReducer(gesture: Gesture, event: GestureEvent): GestureStep {
@@ -322,13 +301,6 @@ export function holdReducer(gesture: Gesture, event: GestureEvent): GestureStep 
       if (gesture.phase === 'armed' && event.now - gesture.pressedAt >= HOLD_ARM_MS) {
         return arm(gesture);
       }
-      if (
-        gesture.phase === 'locked' &&
-        gesture.discardArmedUntil !== null &&
-        event.now >= gesture.discardArmedUntil
-      ) {
-        return step({ ...gesture, discardArmedUntil: null });
-      }
       return step(gesture);
 
     case 'move':
@@ -340,36 +312,14 @@ export function holdReducer(gesture: Gesture, event: GestureEvent): GestureStep 
     case 'interrupt':
       return lift(gesture, event.model, event.now, false);
 
-    case 'modelChanged': {
-      const { model } = event;
-      if (gesture.phase !== 'holding' && gesture.phase !== 'locked') return step(gesture);
-      if (model.state === 'failed') return failed(gesture, model);
-      if (gesture.phase === 'locked') {
-        // The call ended the track or the cap stopped it: the person decides
-        // on the review screen. Never an automatic send, never a discard.
-        if (model.state === 'review') return step(rest(gesture), { type: 'openCapture' });
-        // Discarded or sent from somewhere else.
-        if (model.state === 'idle' || model.state === 'uploading' || model.state === 'uploaded') {
-          return step(rest(gesture));
-        }
+    case 'modelChanged':
+      // A microphone that failed under the finger: say why, nothing to discard.
+      if (gesture.phase === 'holding' && event.model.state === 'failed') {
+        return failed(gesture, event.model);
       }
       return step(gesture);
-    }
-
-    case 'send':
-      if (gesture.phase !== 'locked') return step(gesture);
-      return finish(gesture, event.model, event.now);
-
-    case 'stop':
-      if (gesture.phase !== 'locked') return step(gesture);
-      return step(rest(gesture), { type: 'stop' });
-
-    case 'discard':
-      if (gesture.phase !== 'locked') return step(gesture);
-      return discard(gesture, event.model, event.now);
 
     case 'escape':
-      if (gesture.phase === 'locked') return discard(gesture, event.model, event.now);
       if (gesture.phase === 'holding') {
         return step(
           { ...gesture, phase: 'cancelled' },
