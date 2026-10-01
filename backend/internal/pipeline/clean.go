@@ -11,6 +11,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/breaker"
 	"github.com/vppillai/chintan/backend/internal/cleanup"
 	"github.com/vppillai/chintan/backend/internal/keys"
+	"github.com/vppillai/chintan/backend/internal/llm"
 	"github.com/vppillai/chintan/backend/internal/meter"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
@@ -76,8 +77,11 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 		// worth its wait (routing.ShortDictationWords). The tidy is stored as the
 		// clean text, so the append and every reader of CleanKey see it as
 		// they see the model's; the usage meter simply has no cleanup call
-		// to record.
-		obs.Count(ctx, "CaptureCleanupTidied", nil)
+		// to record. The line below is the tidy's only trace since its
+		// counter went (D6, 2026-10-01); it carries a word count, never the words.
+		obs.Log(ctx).Info("short dictation tidied without a cleanup call",
+			slog.String("capture_id", capture.ID),
+			slog.Int("words", len(llm.Words(source))))
 		cleanKey, err := keys.CaptureClean(tenantID, capture.ID)
 		if err != nil {
 			return fmt.Errorf("pipeline: clean key: %w", err)

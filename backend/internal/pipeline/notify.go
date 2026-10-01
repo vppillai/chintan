@@ -124,7 +124,7 @@ func (p *Pipeline) notify(ctx context.Context, capture model.CaptureIndex) {
 			// endpoint; only the reason is logged.
 			log.Warn("push send failed", slog.String("subscription_id", sub.ID), slog.Int("status", status),
 				slog.Int64("failures", sub.Failures), slog.String("error", pushErrorText(err)))
-			obs.Count(ctx, "PushSendFailures", map[string]string{"Kind": kind})
+			obs.CountWithRollup(ctx, "PushSendFailures", map[string]string{"Kind": kind})
 		}
 		// The counters only, and only on a row that still exists: the person
 		// may have turned the switch off between the list and this send, and

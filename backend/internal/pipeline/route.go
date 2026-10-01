@@ -50,7 +50,6 @@ func (p *Pipeline) stripInstructions(ctx context.Context, tenantID string, captu
 	}
 	transcript := string(rawBytes)
 	if p.cfg.Router == nil || !routing.MentionsInstruction(transcript) {
-		obs.Count(ctx, "TargetedInstructionCheck", map[string]string{"Outcome": "no_cue"})
 		return nil
 	}
 
@@ -66,7 +65,6 @@ func (p *Pipeline) stripInstructions(ctx context.Context, tenantID string, captu
 		obs.Log(ctx).Warn("instruction check failed; keeping the dictation as spoken",
 			slog.String("capture_id", capture.ID),
 			slog.String("error", err.Error()))
-		obs.Count(ctx, "TargetedInstructionCheck", map[string]string{"Outcome": "failed"})
 		return nil
 	}
 
@@ -78,11 +76,6 @@ func (p *Pipeline) stripInstructions(ctx context.Context, tenantID string, captu
 		return fmt.Errorf("pipeline: store routed text: %w", err)
 	}
 	capture.RoutedKey = routedKey
-	outcome := "nothing_removed"
-	if decision.Content != transcript {
-		outcome = "removed"
-	}
-	obs.Count(ctx, "TargetedInstructionCheck", map[string]string{"Outcome": outcome})
 	return nil
 }
 
@@ -215,7 +208,6 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 		obs.Log(ctx).Info("a note this recording names appeared while it was being routed; appending to it instead of creating one",
 			slog.String("capture_id", capture.ID),
 			slog.String("note_id", noteID))
-		obs.Count(ctx, "RouterCreateDeduped", map[string]string{})
 		decision, matchedBy = filedInto(decision, noteID), by
 		capture.NoteID = noteID
 		capture.RouteConfidence = decision.Confidence

@@ -134,14 +134,16 @@ Parameters:
     Default: 'true'
     AllowedValues: ['true', 'false']
     Description: >
-      Create the CloudWatch alarms for this stack. The template declares eight
-      (seven, plus the spend-cap alarm when a cap is set): API function errors,
-      a gateway 4xx flood, a gateway 5xx count, refused inbox keys, the capture
-      dead-letter queue, a rejected provider key, failed captures, and the
-      spend cap. CloudWatch's always-free
-      allowance is ten alarm-months for the whole
-      account, and the account's other project holds alarms too, so a second
-      environment's copies are billed. Set false on an environment whose
+      Create the CloudWatch alarms for this stack. The template declares
+      thirteen (twelve, plus the spend-cap alarm when a cap is set): API
+      function errors, a gateway 4xx flood, a gateway 5xx count, refused inbox
+      keys, the capture dead-letter queue, a rejected provider key, failed
+      captures, failed push sends, a failed expiry purge, a worker message it
+      could not read, a clean the API could not hand to the worker, provider
+      calls running out of time, and the spend cap. CloudWatch's always-free
+      allowance is ten alarm-months for the whole account, so the three above
+      it are billed at $0.10 an alarm-month, and a second environment's
+      copies are billed in full. Set false on an environment whose
       failures are already caught some other way; the deploy's own smoke test
       is what gates staging.
 
@@ -2328,8 +2330,9 @@ Resources:
   # alarm says the same thing; and a 5xx-rate alarm, an average over a quiet
   # five minutes, trips on a single 500 in ten requests. The 4xx and 5xx
   # alarms above are counts with thresholds one stray request does not reach,
-  # which is why they earn their alarm-months and a rate does not. Eight
-  # alarms exist, and none notifies on OK: an OK transition is not something
+  # which is why they earn their alarm-months and a rate does not. Thirteen
+  # alarms exist (decision D6, 2026-10-01, added the five failure counters
+  # below the capture-failures alarm), and none notifies on OK: an OK transition is not something
   # anyone needs an e-mail about. InboxKeyRefusedAlarm above earns its slot as
   # the only signal between one mistyped header and the thousand-in-five-
   # minutes flood: a device left posting with a revoked key is invisible to
@@ -2434,6 +2437,142 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       # The metric does not exist until the first failure, which is the
       # healthy state.
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # The five failure counters that page beside CaptureFailuresAlarm (decision
+  # D6, 2026-10-01; the sixth is that alarm): each was
+  # emitted and read by nobody, so the failure it counts was invisible until
+  # the person noticed. All six emit through obs.CountWithRollup, which the
+  # obs rollup test holds them to, and each threshold is set where one
+  # occurrence is the retry's business and the number here is the fault
+  # continuing.
+
+  # A 404 or 410 from the push service prunes the subscription and is not a
+  # failure; this counts, once per subscription per send, the service
+  # answering 5xx or the network failing. One is a blip the next notification
+  # sends past; three in fifteen minutes at this instance's one or two
+  # subscriptions is every notification failing, and the person stops hearing
+  # that their recordings filed.
+  PushSendFailuresAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-push-send-failures'
+      AlarmDescription: >-
+        Three or more push notifications failed to send in fifteen minutes.
+        The push service is failing or unreachable; the worker log carries the
+        status and the reason.
+      Namespace: Chintan
+      MetricName: PushSendFailures
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 2
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # A note the person archived was promised gone in thirty days; a failed
+  # purge is its audio and text still there. The sweep returns an error, so
+  # the invocation retries and the third attempt reaches the dead-letter
+  # queue, but that alarm says only that a sweep failed; this one fires on
+  # the first attempt and its datapoint is how many notes are still waiting.
+  # The sweep runs weekly and emits zero when all is well, hence the hour.
+  ExpiredNotesFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-expired-notes-failed'
+      AlarmDescription: >-
+        The weekly expiry sweep could not purge at least one archived note past
+        its deadline. The worker log names the note ids; the sweep retries on
+        its next run.
+      Namespace: Chintan
+      MetricName: ExpiredNotesFailed
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # An unparseable message is a request the API wrote in a shape this worker
+  # build cannot read — a deploy skew between the two functions, or an event
+  # sent by hand — and it is dropped without a retry, so the recording or the
+  # clean it asked for never happens and nothing else says so. One is a bug,
+  # not noise.
+  WorkerMessagesDiscardedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-worker-messages-discarded'
+      AlarmDescription: >-
+        The worker dropped a message it could not parse. The API and the worker
+        disagree on a message shape, usually a half-finished deploy; the worker
+        log carries the reason, and the request has to be made again.
+      Namespace: Chintan
+      MetricName: WorkerMessagesDiscarded
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # The API could not record a clean request or could not invoke the worker
+  # for it, so the note keeps a stale cleaned view and its "cleaning" promise.
+  # One failed hand-off is re-requested by the next save or the next press of
+  # Clean; two in fifteen minutes is the API unable to reach the table or the
+  # worker, which no other alarm sees from this side.
+  NoteCleanInvokeFailuresAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-note-clean-invoke-failures'
+      AlarmDescription: >-
+        The API failed twice in fifteen minutes to hand a note to the worker for
+        cleaning. The API log names the note and the error; the cleaned view
+        stays stale until a save or Clean asks again.
+      Namespace: Chintan
+      MetricName: NoteCleanInvokeFailures
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # A stage's own deadline fired (pipeline-deadlines.md): the provider is
+  # answering, slowly. One stalled capture counts at most three — one per
+  # Lambda attempt — before it lands in the dead-letter queue under that
+  # alarm, and each attempt also counts a capture failure above; five in
+  # fifteen minutes is more than one recording waiting on a slow provider,
+  # the latency outage neither of those alarms names.
+  ProviderTimedOutAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-provider-timed-out'
+      AlarmDescription: >-
+        Five or more provider calls ran out of time in fifteen minutes. The
+        transcription, cleanup or clean-note provider is stalling; the worker
+        log names the stage, and the captures retry on their own.
+      Namespace: Chintan
+      MetricName: ProviderTimedOut
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 4
+      ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
       AlarmActions:
         - !Ref AlarmTopic

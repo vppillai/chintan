@@ -241,7 +241,7 @@ func (p *Pipeline) handleProviderError(ctx context.Context, capture *model.Captu
 			slog.Bool("stage_deadline", stalled),
 			slog.String("error", cause.Error()))
 		if stalled {
-			obs.Count(ctx, "ProviderTimedOut", map[string]string{"Stage": stage})
+			obs.CountWithRollup(ctx, "ProviderTimedOut", map[string]string{"Stage": stage})
 		}
 		return fmt.Errorf("pipeline: %s: provider call ran out of time: %w", stage, cause)
 	}

@@ -125,7 +125,6 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	if verdict.echoed {
 		// The transcript is kept, nothing else of it is: no segments, no
 		// excerpt, nothing routed (transcriptOutcome).
-		obs.Count(ctx, verdict.metric, nil)
 		capture.RawKey = rawKey
 		capture.Language = language
 		capture.LanguageDetected = result.Language
@@ -148,6 +147,7 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		slog.Int("segments", len(result.Segments)),
 		slog.String("language_sent", language),
 		slog.String("language_detected", result.Language),
+		slog.String("gate", verdict.gate),
 		slog.Any("raw", rawShape),
 	}
 	if len(result.Segments) > 0 {
@@ -176,9 +176,6 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		capture.DurationMS = ms
 	}
 	capture.Status = verdict.status
-	if verdict.metric != "" {
-		obs.Count(ctx, verdict.metric, nil)
-	}
 	capture.Error = ""
 	if capture.NoteID == "" && capture.Status == model.StatusTranscribed {
 		// Routing is next, and its setStatus is the very next call. A
@@ -192,13 +189,16 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 }
 
 // transcriptVerdict is what transcriptOutcome decides from the provider's
-// answer: the status the stage leaves the capture in, the counter that says
-// why ("" when the transcript goes on to routing), and whether the transcript
+// answer: the status the stage leaves the capture in and whether the transcript
 // is the spelling prompt read back, which keeps the text and nothing else of
 // it — no segments, no excerpt, no duration.
 type transcriptVerdict struct {
 	status model.CaptureStatus
-	metric string
+	// gate names the gate that ended the capture — hint_echo (R7-10b) or
+	// no_speech (R7-10c) — on the "transcribed capture" log line, "" when
+	// the transcript goes on; the two had counters until D6 (2026-10-01)
+	// and would otherwise be one status in prod.
+	gate   string
 	echoed bool
 }
 
@@ -210,19 +210,18 @@ type transcriptVerdict struct {
 //   - the hint echo (R7-10b): Whisper can answer silence by reading its
 //     prompt back, with confident log-probs, so neither the silence gate nor
 //     a letter test catches it; filed, the person's note titles would become
-//     the dictation. no_content, counted as CaptureHintEcho;
+//     the dictation. no_content;
 //   - no speech (R7-10c, provider.Transcription.NoSpeech): nothing was said,
 //     so there is nothing to route or file; left to go on, a tone became a
-//     new note called "Dictation" whose body was ".". no_content, counted as
-//     CaptureNoSpeech; the transcript and segments stay stored beside the
-//     audio;
+//     new note called "Dictation" whose body was ".". no_content; the
+//     transcript and segments stay stored beside the audio;
 //   - otherwise transcribed, and routing or cleanup is next.
 func transcriptOutcome(result provider.Transcription, hints []string) transcriptVerdict {
 	switch {
 	case echoesHints(result.Text, hints):
-		return transcriptVerdict{status: model.StatusNoContent, metric: "CaptureHintEcho", echoed: true}
+		return transcriptVerdict{status: model.StatusNoContent, gate: "hint_echo", echoed: true}
 	case result.NoSpeech():
-		return transcriptVerdict{status: model.StatusNoContent, metric: "CaptureNoSpeech"}
+		return transcriptVerdict{status: model.StatusNoContent, gate: "no_speech"}
 	default:
 		return transcriptVerdict{status: model.StatusTranscribed}
 	}

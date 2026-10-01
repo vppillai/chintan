@@ -21,11 +21,11 @@ func TestTranscriptOutcomeOrdersTheThreeGates(t *testing.T) {
 		want   transcriptVerdict
 	}{
 		"the prompt read back": {provider.Transcription{Text: "Chintan feedback, app bugs.", Segments: confident}, hints,
-			transcriptVerdict{status: model.StatusNoContent, metric: "CaptureHintEcho", echoed: true}},
+			transcriptVerdict{status: model.StatusNoContent, gate: "hint_echo", echoed: true}},
 		"a tone": {provider.Transcription{Text: ".", Segments: silent}, hints,
-			transcriptVerdict{status: model.StatusNoContent, metric: "CaptureNoSpeech"}},
+			transcriptVerdict{status: model.StatusNoContent, gate: "no_speech"}},
 		"the stock silence phrase, confident": {provider.Transcription{Text: "Thank you.", Segments: confident}, nil,
-			transcriptVerdict{status: model.StatusNoContent, metric: "CaptureNoSpeech"}},
+			transcriptVerdict{status: model.StatusNoContent, gate: "no_speech"}},
 		"speech": {provider.Transcription{Text: "Buy milk", Segments: confident}, hints,
 			transcriptVerdict{status: model.StatusTranscribed}},
 		"part of a name said alone is speech": {provider.Transcription{Text: "App", Segments: confident}, hints,

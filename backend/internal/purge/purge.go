@@ -119,7 +119,9 @@ func (s *Sweeper) Sweep(ctx context.Context) (Report, error) {
 		slog.Int("expired", report.Expired),
 		slog.Int("purged", report.Purged),
 		slog.Int("failed", report.Failed))
-	obs.Emit(ctx, nil,
+	// With no dimensions the rollup adds no second identity; the form is what
+	// the obs rollup test requires of an alarmed metric (ExpiredNotesFailedAlarm).
+	obs.EmitWithRollup(ctx, nil,
 		obs.Metric{Name: "ExpiredNotesPurged", Value: float64(report.Purged), Unit: obs.UnitCount},
 		obs.Metric{Name: "ExpiredNotesFailed", Value: float64(report.Failed), Unit: obs.UnitCount},
 	)
