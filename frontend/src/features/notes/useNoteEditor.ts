@@ -69,6 +69,12 @@ export interface NoteEditor {
   /** Keep my edits and add the newer version's paragraph after them (see `keepBoth`). */
   keepBoth: () => void;
   /**
+   * Carries the draft onto `fresh`'s version when its text is what this
+   * editor last saved: for a caller holding a copy it knows is the server's
+   * own, such as the poll that brought a tidy's answer (see `useApplyTidy`).
+   */
+  adopt: (fresh: NoteDetailWire) => void;
+  /**
    * The draft as it stands this instant, from the mirror `edit` and `commit`
    * write synchronously. For a closure that outlives the component that made
    * it — a toast's Undo pressed after a tab switch — which a prop, or a ref
@@ -538,6 +544,16 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     keepBoth: useCallback(() => {
       commit({ type: 'keepBoth' });
     }, [commit]),
+    // The sync effect's rule, on demand: the version moves only when the words
+    // did not, so a real change on the server still meets the version check.
+    adopt: useCallback(
+      (fresh: NoteDetailWire) => {
+        if (sameText(draftFrom(fresh), latest.current.saved)) {
+          commit({ type: 'rebase', version: fresh.version });
+        }
+      },
+      [commit],
+    ),
     // A getter, not a value: the reader is a closure made seconds before.
     current: () => latest.current.draft,
   };

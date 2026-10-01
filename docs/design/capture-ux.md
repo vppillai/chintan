@@ -153,8 +153,9 @@ effects. The numbers are `holdTiming.ts`'s, measured from the press point:
   while locked. Space is not taken globally, because it pages the content.
 
 What the bar draws: while held, the disc follows the finger at 1.2× with the
-accent ring, the Home slot reads "‹ Slide to cancel" (fading, and
-destructive with a bin from 60 % of the way), the You slot shows the live
+accent ring, the Home slot reads "‹ Slide to cancel" (drifting with half
+the finger's travel but never closer than 16 px to the screen's edge,
+fading, and destructive with a bin from 60 % of the way), the You slot shows the live
 level, and a lock pill stands above the disc. The tabs keep their boxes,
 hidden and inert, so the bar keeps its height and nothing in `.app__main`
 moves. The clock pill rides the bar's top edge where "Into this note" sits,
@@ -206,7 +207,7 @@ supersedes R7-7a's hidden × (F9 asked for notices "clearly identifiable as
 dismissible"); the width is paid back by the chevron's column and the gaps
 between rows, both gone. It is named "Dismiss" on every row. A failed or
 stuck row has Retry and the ×, which replaced its text "Dismiss" button; a
-`no_content` row has the × alone; a row asking "which note?" has no ×, since
+`no_content` row has the × alone; a row asking "which note?" deliberately has no ×, since
 putting it away would hide a recording that is in no note yet — answering is
 its way off the screen. This device's failed upload keeps "Discard" as a
 word, never an ×: it deletes the audio, and an × here means "put away". The

@@ -523,6 +523,17 @@ for (const theme of THEMES) {
           Math.abs(fold.x - failed.x),
           'the fold sentence and the titles share a left edge',
         ).toBeLessThanOrEqual(1);
+
+        // And its Clear all ends where the ×'s glyph does, not on the tray's edge (R8-P3).
+        const clear = await filing.getByRole('button', { name: 'Clear all' }).boundingBox();
+        const cross = await filing
+          .locator('.filing-row[data-status="failed"] .filing-row__dismiss svg')
+          .boundingBox();
+        if (!clear || !cross) throw new Error('Clear all or the × has no box');
+        expect(
+          Math.abs(clear.x + clear.width - (cross.x + cross.width)),
+          'Clear all and the × share a right edge',
+        ).toBeLessThanOrEqual(2);
       });
 
       test('a receipt swiped open shows one Dismiss, the tray\'s', async ({

@@ -639,6 +639,28 @@ test('a hold dragged left past the line is cancelled, and nothing is sent', asyn
   expect(sent).toHaveLength(0);
 });
 
+for (const width of [390, 360]) {
+  test(`at ${String(width)} px the slide-to-cancel hint stays 16 px inside the screen as the finger slides left`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto('/');
+    const hint = page.locator('.tab-bar__cancel');
+    const { x, y } = await discCentre(page);
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await expect(hint).toBeVisible();
+    // Just short of the cancel line, where the hint has drifted furthest (R8-P2).
+    await page.mouse.move(x - CANCEL_DX_PX + 5, y, { steps: 8 });
+    await expect(page.locator('.tab-bar')).toHaveAttribute('data-hold', 'holding');
+    const box = (await hint.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(16 - 0.5);
+    expect(box.x + box.width).toBeLessThanOrEqual(width - 16 + 0.5);
+    await page.mouse.move(x, y, { steps: 4 });
+    await page.mouse.up();
+  });
+}
+
 test('a hold dragged up locks: it keeps recording with the button up, and Send sends', async ({
   page,
   api,
