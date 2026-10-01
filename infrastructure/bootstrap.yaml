@@ -1170,14 +1170,13 @@ Resources:
                   ForAnyValue:StringEquals:
                     aws:CalledVia: ['cloudformation.amazonaws.com']
 
-              # SSM parameter read for deploy verification; Put remains a human/agent-cli step.
-              - Effect: Allow
-                Action:
-                  - ssm:GetParameter
-                  - ssm:GetParameters
-                  - ssm:DescribeParameters
-                Resource:
-                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/*'
+              # No SSM read. One sat here from 2026-08 to 2026-10 "for deploy
+              # verification": GetParameter and GetParameters on /chintan/*, which
+              # the boundary's DenyReadingProviderSecretValues refuses to every
+              # principal that is not a Lambda role, and DescribeParameters, which
+              # is not resource-scoped and so was not denied, but nothing the role
+              # runs (deploy.sh, the ci-*.sh wrappers, the workflows) calls it or
+              # any other SSM action; the whole statement was dead.
 
   # The build jobs' role. deploy-backend.yaml's `build` compiles the two Lambda
   # zips and uploads them to the artifact bucket; deploy-frontend.yaml's `build`
