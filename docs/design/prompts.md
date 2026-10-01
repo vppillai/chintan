@@ -483,6 +483,30 @@ passes over its runs and a 95% Wilson interval (`pass rate route/03  9/10
 95% CI [0.60, 0.98]`), so `-count=10` says how often a case passes, not only
 whether it did.
 
+### Baseline of 2026-10-01
+
+The owed runs (platform review D14) ran on 2026-10-01 against the instance key, with the worker's default model: `TestLiveEval/route -count=3` (32 cases, 96 calls, 185 s) and `TestLiveEval/(items|tasks) -count=3` (17 + 9 cases, 78 calls, 106 s). Every case not listed passed 3/3: route 24 of 32, items 14 of 17, tasks 5 of 9. This is the baseline the next prompt change is measured against; a case below 3/3 here is a known weakness of the current prompt, not a regression.
+
+| Case | Transcript or body | Runs | What the model did |
+|---|---|---|---|
+| route/08 | "I was thinking about the roof today and how the Portugal trip went over budget" | 2/3 | once `append` to Roof repair at `conf=0.50` (the 0.75 bar parks it at `needs_target`), not `new` |
+| route/12 | പുതിയ കുറിപ്പ് പേര് ദന്തഡോക്ടർ നാളെ വിളിക്കണം | 2/3 | once `append` to an existing note instead of a new note titled ദന്തഡോക്ടർ |
+| route/18 | "create a shopping list and add chickpeas and green gram into it" | 1/3 | `new` checklist "Shopping list" every time, but the content came back `""` and `"and"` in two runs |
+| route/19 | "Add umbrella to shopping list" | 0/3 | `append` to Shopping list every time, content `""` every time — the item is dropped from the reply |
+| route/24 | "Business ideas by Priyanka seated pool for dogs" | 2/3 | once `new "Business ideas by Priyanka"` instead of naming the listed "Business ideas" |
+| route/29 | "these are things that we need to include in our daily report the memory controller…" | 1/3 | once content trimmed to the clause after the cue, once `new "Things to include in our daily report"` |
+| route/30 | "The dog is having his dinner" | 1/3 | twice titled with the whole sentence (the R6-RT-8 shape; its sentence was reverted) |
+| route/31 | "Add milk, eggs and protein powder to shopping list" | 0/3 | `append` to Shopping list every time; content `"to shopping list"`, `""`, `""` |
+| items/04 | "for the party plates, cups and napkins" | 1/3 | the group named "For the party" instead of "Party" |
+| items/13 | the wall of speech | 1/3 | Milk, Bread, Eggs left top-level (5 top-level, want 3) with the Hardware store grouped |
+| items/15 | "salt and pepper and fish and chips" | 0/3 | "Salt and pepper · Fish and chips" every time (2 items, want 3–4) |
+| tasks/02 | eggs from Walmart and meat from Costco | 2/3 | once the whole line kept as a parent over the two stores (6 lines, want 5) |
+| tasks/05 | "buy milk and call the plumber" | 2/3 | once "Call the plumber" nested under Milk |
+| tasks/06 | `- [ ] Milk` / `- [x] milk` / `- [ ] Eggs` | 0/3 | the model merged the duplicate as done; `SplitOutput`'s coverage guard (R9-BE1) refused the answer with `an open item was lost` — open did not win |
+| tasks/08 | "book flights and hotel for Lisbon and tell Anu the dates" | 2/3 | once kept as one item |
+
+Two of these are not prompt shape but a dropped payload: route/19 and route/31 return an empty `content` on an append to a listed list, so what the worker files there is whatever `decide()` and the items prompt make of the raw transcript (the R7-9 replay would show the outcome; it is still unrecorded). tasks/06 is the one case the deterministic guard refuses on every run.
+
 ### Record and replay
 
 **Status: a manual, owner-run procedure.** Nothing in CI gates a prompt

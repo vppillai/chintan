@@ -19,6 +19,8 @@
 #                         config); the site base and the CORS origin follow it
 #   ALLOWED_ORIGIN        default: https://$APP_HOST, else https://$PAGES_HOST
 #   CFN_DEPLOY_ROLE_ARN   passed through to deploy.sh
+#   FAIL_WORKER_SMOKE     "staging" fails the worker smoke on purpose (the
+#                         rollback rehearsal); deploy.sh honours it on staging only
 #   TEMPLATE              default: infrastructure/template.yaml
 #
 # Unlike every other script in scripts/, this one always applies. It is the CI

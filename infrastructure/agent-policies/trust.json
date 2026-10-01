@@ -2,9 +2,9 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "AccountPrincipalsMayAssume",
+      "Sid": "OnlyTheMinimalCliUserMayAssume",
       "Effect": "Allow",
-      "Principal": { "AWS": "arn:aws:iam::ACCOUNT_ID:root" },
+      "Principal": { "AWS": "arn:aws:iam::ACCOUNT_ID:user/chintan-agent-cli" },
       "Action": "sts:AssumeRole"
     }
   ]

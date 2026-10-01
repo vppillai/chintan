@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"strings"
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
@@ -123,9 +122,6 @@ func runBackfillSearchText(ctx context.Context, e *env, explicitTenants []string
 			note, err := noteFromItem(it)
 			if err != nil {
 				return nil, err
-			}
-			if note.ID == "" {
-				note.ID = strings.TrimPrefix(it.SK(), "NOTE#")
 			}
 			outcome, size, err := backfillOne(tctx, e, tenantID, it, note, apply)
 			if err != nil {

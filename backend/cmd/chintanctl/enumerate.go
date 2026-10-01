@@ -200,17 +200,11 @@ func buildIndex(ctx context.Context, part Partition, tenantID string, visit item
 			if err != nil {
 				return err
 			}
-			if n.ID == "" {
-				n.ID = strings.TrimPrefix(sk, "NOTE#")
-			}
 			idx.Notes[n.ID] = n
 		case strings.HasPrefix(sk, "CAPTURE#"):
 			c, err := captureFromItem(it)
 			if err != nil {
 				return err
-			}
-			if c.ID == "" {
-				c.ID = strings.TrimPrefix(sk, "CAPTURE#")
 			}
 			idx.Captures[c.ID] = c
 			if c.NoteID != "" {
@@ -237,88 +231,49 @@ func buildIndex(ctx context.Context, part Partition, tenantID string, visit item
 	return idx, nil
 }
 
-// noteFromItem decodes the note record. Every writer in internal/repository
-// puts the whole model in the `data` blob alongside the promoted attributes,
-// so the blob is the complete record; the promoted attributes are the
-// fallback for a row written before promotion.
+// noteFromItem decodes the note record from the `data` blob, which every
+// writer in internal/repository fills with the whole model. The promoted
+// attributes beside it are for queries, not for reading the record back: the
+// only two it reads are the ones the blob deliberately omits (json:"-"). A row
+// without the blob, or whose blob names no id, fails the run: the error goes
+// up through buildIndex, backfill, latency and reconcile --apply, and nothing
+// is half-reconstructed from the sort key. Until 2026-10-01 a 21-key
+// fallback rebuilt a note or capture from the promoted attributes; a scan of
+// both tables that day found no NOTE# or CAPTURE# row without `data` (0 of 225),
+// so the fallback had nothing to decode and was deleted (PR9-50, PR10-5).
 func noteFromItem(it Item) (model.NoteIndex, error) {
 	var n model.NoteIndex
-	if blob := it.Str("data"); blob != "" {
-		if err := json.Unmarshal([]byte(blob), &n); err != nil {
-			return model.NoteIndex{}, fmt.Errorf("decode note %s: %w", it.SK(), err)
-		}
-		if n.ID != "" {
-			// The two fields the blob deliberately omits (json:"-") live only
-			// as promoted attributes.
-			n.SearchText = it.Str("search_text")
-			n.CleanedBody = it.Str("cleaned_body")
-			return n, nil
-		}
+	blob := it.Str("data")
+	if blob == "" {
+		return model.NoteIndex{}, fmt.Errorf("decode note %s: no data blob", it.SK())
 	}
-	// A blob without an id, or no blob: the promoted attributes are all there
-	// is, and the sort key is the one identity a row cannot lack.
-	n.ID = it.Str("note_id")
+	if err := json.Unmarshal([]byte(blob), &n); err != nil {
+		return model.NoteIndex{}, fmt.Errorf("decode note %s: %w", it.SK(), err)
+	}
 	if n.ID == "" {
-		n.ID = strings.TrimPrefix(it.SK(), "NOTE#")
+		return model.NoteIndex{}, fmt.Errorf("decode note %s: the data blob names no id", it.SK())
 	}
+	n.SearchText = it.Str("search_text")
 	n.CleanedBody = it.Str("cleaned_body")
-	n.Title = it.Str("title")
-	n.UpdatedAt = it.Str("updated_at")
-	n.S3MarkdownKey = it.Str("s3_markdown_key")
-	n.S3MetaKey = it.Str("s3_meta_key")
-	n.DeletedAt = it.Str("deleted_at")
-	n.PurgeAfter = it.Str("purge_after")
-	n.PurgeAfterEpoch = it.Num("purge_after_epoch")
-	n.Version = it.Num("version")
-	if v, ok := it["aliases"]; ok {
-		n.Aliases = stringsFromAttr(v)
-	}
-	if v, ok := it["tags"]; ok {
-		n.Tags = stringsFromAttr(v)
-	}
 	return n, nil
 }
 
 // captureFromItem decodes the capture record, same contract as noteFromItem:
-// the blob when it identifies itself, the promoted attributes otherwise, and
-// the sort key when neither names the capture. A row written in August 2026 is
-// the blob alone, so what the blob says about note_id is what reconcile
-// judges it by.
+// the blob is the record. What the blob says about note_id is what reconcile
+// judges a capture by.
 func captureFromItem(it Item) (model.CaptureIndex, error) {
 	var c model.CaptureIndex
-	if blob := it.Str("data"); blob != "" {
-		if err := json.Unmarshal([]byte(blob), &c); err != nil {
-			return model.CaptureIndex{}, fmt.Errorf("decode capture %s: %w", it.SK(), err)
-		}
-		if c.ID != "" {
-			return c, nil
-		}
+	blob := it.Str("data")
+	if blob == "" {
+		return model.CaptureIndex{}, fmt.Errorf("decode capture %s: no data blob", it.SK())
 	}
-	c.ID = it.Str("capture_id")
+	if err := json.Unmarshal([]byte(blob), &c); err != nil {
+		return model.CaptureIndex{}, fmt.Errorf("decode capture %s: %w", it.SK(), err)
+	}
 	if c.ID == "" {
-		c.ID = strings.TrimPrefix(it.SK(), "CAPTURE#")
+		return model.CaptureIndex{}, fmt.Errorf("decode capture %s: the data blob names no id", it.SK())
 	}
-	c.NoteID = it.Str("note_id")
-	c.Status = model.CaptureStatus(it.Str("status"))
-	c.CreatedAt = it.Str("created_at")
-	c.Version = it.Num("version")
-	c.DurationMS = it.Num("duration_ms")
-	c.SegmentsKey = it.Str("segments_key")
-	c.PeaksKey = it.Str("peaks_key")
 	return c, nil
-}
-
-func stringsFromAttr(v AttrValue) []string {
-	if v.SS != nil {
-		return append([]string(nil), v.SS...)
-	}
-	out := make([]string, 0, len(v.L))
-	for _, e := range v.L {
-		if e.S != nil {
-			out = append(out, *e.S)
-		}
-	}
-	return out
 }
 
 // referencedKeys returns every S3 key one tenant's index rows point at. It is
