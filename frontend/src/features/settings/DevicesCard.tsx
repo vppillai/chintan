@@ -189,12 +189,18 @@ export function DevicesCard() {
    * card costs one tap, and the cases that need it open open it themselves.
    */
   const [open, setOpen] = useState(linkedTo);
+  // About's "Devices & shortcuts" lands here with the hash, on a mounted You
+  // as well as a fresh one: open the card as the hash arrives (state adjusted
+  // during render, React's pattern for following a prop).
+  const [seenLink, setSeenLink] = useState(linkedTo);
+  if (linkedTo !== seenLink) {
+    setSeenLink(linkedTo);
+    if (linkedTo) setOpen(true);
+  }
 
-  // About's "Devices & shortcuts" lands here with the hash: open the card
-  // and bring it into view. Instant, so reduced motion needs no case.
+  // …and bring it into view. Instant, so reduced motion needs no case.
   useEffect(() => {
     if (!linkedTo) return;
-    setOpen(true);
     const card = document.getElementById(DEVICES_ANCHOR);
     // jsdom has no scrollIntoView; nothing to do there is the right thing.
     if (card && typeof card.scrollIntoView === 'function') card.scrollIntoView({ block: 'start' });
@@ -203,12 +209,15 @@ export function DevicesCard() {
   // The key box mounts already filled, which a live region often does not
   // announce; focusing it reads the sentence and the key, and puts the next
   // Tab on Copy key.
-  // A minted key is shown once, so the card holding it stays open.
   useEffect(() => {
-    if (!minted) return;
-    setOpen(true);
-    keyRef.current?.focus();
+    if (minted) keyRef.current?.focus();
   }, [minted]);
+
+  /** A minted key is shown once, so the card holding it is opened with it and held open. */
+  const showKey = (device: DeviceCreatedWire): void => {
+    setMinted(device);
+    setOpen(true);
+  };
 
   const items = devices.data?.items ?? [];
   const full = items.length >= MAX_DEVICES;
@@ -221,7 +230,7 @@ export function DevicesCard() {
       { name: trimmed, ...(expiresIn ? { expires_in_days: Number(expiresIn) } : {}) },
       {
         onSuccess: (device) => {
-          setMinted(device);
+          showKey(device);
           setAdding(false);
           setName('');
           setExpiresIn('');
@@ -253,7 +262,7 @@ export function DevicesCard() {
       { name: device.name },
       {
         onSuccess: (created) => {
-          setMinted(created);
+          showKey(created);
           setRotating(device);
         },
         onError: (error) => {
