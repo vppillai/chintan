@@ -173,6 +173,8 @@ function SheetPanel({
               value={name}
               maxLength={TITLE_MAX}
               autoComplete="off"
+              // "New note" was just chosen: naming it is what this field opened for.
+              // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus
               onChange={(event) => {
                 setName(event.target.value);

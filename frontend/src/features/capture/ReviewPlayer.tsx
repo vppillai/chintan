@@ -103,6 +103,9 @@ export function ReviewPlayer({ clip, envelope, durationMs }: ReviewPlayerProps) 
 
   return (
     <div className="review-player" data-testid="review-player">
+      {/* The take just recorded, played back before it is sent: there is no
+          transcript yet, and nothing but the person's own voice to caption. */}
+      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
       {src && <audio ref={audioRef} src={src} preload="auto" crossOrigin="anonymous" />}
 
       <div className="review-player__row">

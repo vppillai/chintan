@@ -780,7 +780,8 @@ describe('the note is panels under one strip', () => {
       await loaded();
       await openPanel(user, 'Details');
 
-      const section = screen.getByRole('heading', { name: 'Note id' }).closest('section')!;
+      // A caption, not a heading: the section is named by it (FE-22).
+      const section = screen.getByRole('region', { name: 'Note id' });
       expect(within(section).getByText('roof-repair')).toHaveClass('note-id');
       expect(section).toHaveTextContent('X-Chintan-Note-Id');
       await user.click(within(section).getByRole('button', { name: 'Copy note id' }));

@@ -653,7 +653,7 @@ test('with the keyboard up, the banner mic records into the note being typed in'
   const body = page.getByRole('textbox', { name: 'Note body' });
   await expect(body).toBeVisible();
   const banner = page.locator('.app__banner');
-  const mic = banner.getByRole('button', { name: 'Record into this note (while typing)' });
+  const mic = banner.getByRole('button', { name: 'Record into this note' });
   const bannerBox = await banner.boundingBox();
   await expect(mic).toBeHidden();
 
@@ -727,7 +727,7 @@ test('offline on a 360 px phone, the banner mic leaves the offline pill on one l
     document.documentElement.setAttribute('data-keyboard', '');
   });
   await body.focus();
-  const mic = banner.getByRole('button', { name: 'Record into this note (while typing)' });
+  const mic = banner.getByRole('button', { name: 'Record into this note' });
   await expect(mic).toBeVisible();
   // The mic squeezed the pill onto two lines at 360–393 px, and the banner grew.
   expect((await pill.boundingBox())!.height).toBe(pillBefore);

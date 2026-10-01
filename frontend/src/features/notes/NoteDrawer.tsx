@@ -62,6 +62,7 @@ export function NoteDrawer({
   onOpenChange: (open: NotePanelKind | null) => void;
 }) {
   const headingId = notePanelHeadingId(note.id);
+  const noteIdCaptionId = useId();
   const { draft } = editor.model;
   // A checklist has no Cleaned tab (R8-F8); the tasks view it may still
   // carry is Tidy's transport, not something to share.
@@ -196,8 +197,10 @@ export function NoteDrawer({
                 (owner, 2026-09-29). `CopyButton` handles the clipboard fallback
                 and says Copied or failed.
               */}
-              <section className="language-field">
-                <h2 className="tag-editor__label">Note id</h2>
+              <section className="language-field" aria-labelledby={noteIdCaptionId}>
+                <p id={noteIdCaptionId} className="tag-editor__label">
+                  Note id
+                </p>
                 <code className="note-id">{note.id}</code>
                 <CopyButton
                   label="Copy note id"
@@ -348,9 +351,12 @@ function VerbatimSwitch({
   onChange: (checked: boolean) => void;
 }) {
   const id = useId();
+  const captionId = useId();
   return (
-    <section className="language-field">
-      <h2 className="tag-editor__label">Word for word</h2>
+    <section className="language-field" aria-labelledby={captionId}>
+      <p id={captionId} className="tag-editor__label">
+        Word for word
+      </p>
       <label className="cleaned__auto" htmlFor={id}>
         <input
           id={id}
@@ -391,9 +397,12 @@ function ChecklistSwitch({
   onChange: (checked: boolean) => void;
 }) {
   const id = useId();
+  const captionId = useId();
   return (
-    <section className="language-field">
-      <h2 className="tag-editor__label">Checklist</h2>
+    <section className="language-field" aria-labelledby={captionId}>
+      <p id={captionId} className="tag-editor__label">
+        Checklist
+      </p>
       <label className="cleaned__auto" htmlFor={id}>
         <input
           id={id}

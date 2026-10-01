@@ -12,6 +12,7 @@ import { useNavigate } from 'react-router';
 import { useApi } from '@/api/ApiProvider.tsx';
 import { ROUTES } from '@/app/routes.ts';
 import { useSwallowNextClick } from '@/hooks/swallowNextClick.ts';
+import { keyTaken } from '@/hooks/keyTaken.ts';
 
 import { cancelFeedback, errorFeedback, lockFeedback } from './feedback.ts';
 import {
@@ -107,27 +108,6 @@ function usePermission(): RefObject<MicPermission> {
     };
   }, []);
   return permission;
-}
-
-/** Whether a key press belongs to a field rather than to the app. */
-function inField(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || target.closest('input, textarea, select') !== null;
-}
-
-/**
- * Whether a key belongs to something else on the page: a field, a dialog or
- * menu that is open, or a handler that already took it. Escape closing Find,
- * a ⋮ menu or a dialog must not also cancel a hold, and R typed or
- * pressed behind a modal must not start one. As `SelectionBar` does.
- */
-function keyTaken(event: KeyboardEvent): boolean {
-  return (
-    event.defaultPrevented ||
-    event.repeat ||
-    inField(event.target) ||
-    document.querySelector('[role="dialog"], [role="menu"]') !== null
-  );
 }
 
 export function useHoldToTalk({

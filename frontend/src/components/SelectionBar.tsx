@@ -1,5 +1,7 @@
 import { useEffect, type ReactNode } from 'react';
 
+import { keyTaken } from '@/hooks/keyTaken.ts';
+
 /**
  * The bar that appears while things are selected: how many, select all, the
  * actions, Cancel — and one line beneath for what the last action did.
@@ -42,9 +44,8 @@ export function SelectionBar({
 }) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return;
-      // A dialog above the bar owns Escape while it is open.
-      if (document.querySelector('[role="dialog"]')) return;
+      // A dialog or menu above the bar, or a field, owns Escape while it is open.
+      if (event.key !== 'Escape' || keyTaken(event)) return;
       onCancel();
     };
     document.addEventListener('keydown', onKeyDown);

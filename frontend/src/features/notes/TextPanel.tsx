@@ -170,14 +170,15 @@ function FindMirror({
   );
 
   return (
+    // A pointer's way back to editing. The keyboard's is Escape in the bar,
+    // which does the same thing; the mirror itself is text, not a control,
+    // so a screen reader can read it and its marks.
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions
     <section
       ref={ref}
       className="note-body-mirror prose"
       lang={lang}
       aria-label="Note body, read-only while finding"
-      // A pointer's way back to editing. The keyboard's is Escape in the
-      // bar, which does the same thing; the mirror itself is text, not a
-      // control, so a screen reader can read it and its marks.
       onClick={onDismiss}
     >
       {markMatches(body, matches, find.active)}
@@ -267,13 +268,15 @@ function FlashMirror({
 
   if (!range) return children;
   return (
+    // Any tap goes back to editing at once; the flash ends on its own for
+    // everyone else, and the mirror is text, not a control.
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions
     <section
       ref={mirrorRef}
       tabIndex={-1}
       className="note-body-mirror prose"
       lang={lang}
       aria-label="Note body"
-      // Any tap goes back to editing at once.
       onClick={onDone}
     >
       {body.slice(0, range.start)}

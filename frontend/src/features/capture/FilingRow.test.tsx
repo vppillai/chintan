@@ -616,7 +616,7 @@ describe('a row leaves when it is acted on, and stays gone', () => {
     // is <body> throughout; `fireEvent.click` is that tap. The heading stands
     // in for the library's: focusing it from here scrolled a reader who
     // dismissed a mid-list receipt back to the top of Home.
-    render(<h1 className="library-heading" tabIndex={-1} />);
+    render(<h1 className="library-heading" tabIndex={-1}>Notes</h1>);
     mount([filed]);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Dismiss' }));
@@ -1196,7 +1196,7 @@ describe('the section is a tray of notices under the heading "Filing" (F9)', () 
 
   it("hands focus from a failed row's × to the next row, and from the last to the heading", async () => {
     const user = userEvent.setup();
-    render(<h1 className="library-heading" tabIndex={-1} />);
+    render(<h1 className="library-heading" tabIndex={-1}>Notes</h1>);
     mount([
       capture({ id: 'first', status: 'failed', error: 'First failure' }),
       capture({ id: 'second', status: 'failed', error: 'Second failure' }),

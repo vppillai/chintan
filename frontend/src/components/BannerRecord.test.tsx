@@ -29,7 +29,7 @@ function mount(note: NoteDetailWire) {
   );
 }
 
-const name = 'Record into this note (while typing)';
+const name = 'Record into this note';
 const ROOF: NoteDetailWire = { ...TEST_NOTES[0]!, body: '', captures: [] };
 
 /*
@@ -41,6 +41,8 @@ describe('the banner mic', () => {
   it('opens recording into this note, and keeps the field focused on the press', async () => {
     mount(ROOF);
     const mic = screen.getByRole('button', { name });
+    // When it is here is a state, so it is the description, not the name.
+    expect(mic).toHaveAccessibleDescription(/while you type/);
     // The press must not take focus from the editor, or the keyboard falls
     // and the button goes with it before the click lands.
     // `fireEvent` answers false when the default was prevented.

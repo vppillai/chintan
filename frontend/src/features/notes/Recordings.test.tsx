@@ -280,6 +280,23 @@ describe('selecting several recordings', () => {
     expect(onSelectingChange).toHaveBeenLastCalledWith(false);
   });
 
+  it('Escape on a selected row’s checkbox ends the selection: a checkbox is not a field', async () => {
+    const user = userEvent.setup();
+    bucketStub();
+    mount(apiStub(TWO).fetchImpl);
+    await user.click((await screen.findAllByRole('button', { name: /more for recording from/i }))[0]!);
+    await user.click(screen.getByRole('menuitem', { name: 'Select' }));
+    await screen.findByRole('toolbar', { name: 'Recording actions' });
+
+    // Selected from the keyboard, the focus is on the box when Escape is pressed.
+    const box = screen.getAllByRole('checkbox')[1]!;
+    box.focus();
+    await user.keyboard(' ');
+    expect(box).toBeChecked();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('toolbar')).toBeNull();
+  });
+
   it('enters selection on a long press, and the press is not also a tap', async () => {
     bucketStub();
     mount(apiStub(TWO).fetchImpl);

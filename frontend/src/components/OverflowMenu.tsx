@@ -143,6 +143,9 @@ export function OverflowMenu({
       )}
 
       {open && (
+        // The items are the focusable parts (focus moves among them); the menu
+        // only relays the arrow and Escape keys they bubble up.
+        // eslint-disable-next-line jsx-a11y/interactive-supports-focus
         <div id={menuId} className="overflow-menu" role="menu" onKeyDown={onMenuKeyDown}>
           {items.map((item) => (
             <button

@@ -88,6 +88,9 @@ export function FindBar({
           placeholder="Find in note"
           value={query}
           disabled={disabled}
+          // The bar was just opened to type into: focus goes to its field, as
+          // a dialog's does; the rule is about focus stolen on page load.
+          // eslint-disable-next-line jsx-a11y/no-autofocus
           autoFocus
           autoComplete="off"
           spellCheck={false}

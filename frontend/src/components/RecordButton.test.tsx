@@ -47,8 +47,7 @@ describe('the record button', () => {
     const record = screen.getByRole('button', { name: 'Record' });
     expect(record.querySelector('svg path')).toHaveAttribute('d', PATHS.mic);
     expect(record).toHaveTextContent('Record');
-    expect(record).toHaveAttribute(
-      'aria-description',
+    expect(record).toHaveAccessibleDescription(
       'Hold to talk and release to send. While holding, slide up to lock or left to cancel.',
     );
     expect(record).toHaveAttribute('aria-keyshortcuts', 'R');

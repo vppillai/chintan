@@ -199,6 +199,9 @@ export function RecordingRow({
          * player is closed, so a tap anywhere on the row toggles it.
          */
         <div className="recording__head">
+          {/* The click is the checkbox's own, relayed by its label; the
+              keyboard path is the checkbox itself, so no key handler here. */}
+          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */}
           <label
             className="recording__select"
             htmlFor={checkId}
@@ -435,6 +438,9 @@ export function RecordingRow({
                 requests to a bucket whose rule already allows this origin;
                 `runDownload` also asks for `no-store`.
               */}
+              {/* The recording's transcript is the panel under this player,
+                  as text and by segment; a caption track would repeat it. */}
+              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
               <audio ref={audioRef} src={audioUrl} preload="metadata" crossOrigin="anonymous" />
 
               <div className="player__controls">
