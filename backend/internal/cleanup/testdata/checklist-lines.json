@@ -356,6 +356,32 @@
           "depth": 2
         }
       ]
+    },
+    {
+      "name": "prose between items is a top-level item, and the next item is at most one under it",
+      "body": "- [ ] Party\n  - [ ] Plates\nBuy candles\n    - [ ] Paper ones",
+      "items": [
+        {
+          "text": "Party",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "Plates",
+          "done": false,
+          "depth": 1
+        },
+        {
+          "text": "Buy candles",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "Paper ones",
+          "done": false,
+          "depth": 1
+        }
+      ]
     }
   ]
 }

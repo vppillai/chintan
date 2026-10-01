@@ -361,18 +361,23 @@ type Line struct {
 // clamped to one under the item before it and to MaxDepth, so a jump of two
 // levels reads as one, a line nested deeper than MaxDepth reads as MaxDepth
 // (clamped, never dropped) and a sub-item with no item above it is top
-// level. A line that is not an item — a marker, a blank, prose — has depth
-// 0 and OK false, and the clamp reads past it: a capture marker between a
-// parent and a sub-item a later recording merged under it does not cut the
-// two apart.
+// level. A line that is not an item has depth 0 and OK false. The clamp
+// reads past a blank and a capture marker, which the editor never sees (it
+// drops blanks, and the API strips markers), so a marker between a parent
+// and a sub-item a later recording merged under it does not cut the two
+// apart. A prose line is a top-level item to the editor, so the next item's
+// clamp counts from it: at most a sub-item.
 func ParseLines(lines []string) []Line {
 	out := make([]Line, len(lines))
 	prev := -1
 	for i, line := range lines {
 		text, done, depth, ok := ParseLine(line)
-		if ok {
+		switch trimmed := strings.TrimSpace(line); {
+		case ok:
 			depth = min(depth, prev+1, MaxDepth)
 			prev = depth
+		case trimmed != "" && !strings.HasPrefix(trimmed, "<!--"):
+			prev = 0
 		}
 		out[i] = Line{Text: text, Done: done, Depth: depth, OK: ok}
 	}

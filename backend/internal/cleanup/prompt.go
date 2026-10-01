@@ -218,8 +218,11 @@ var ErrNotATaskList = fmt.Errorf("cleanup: the model did not return a task list"
 //     and the append's merge keep the same rule), so "- [x] Costco" that
 //     gains "chicken from costco" as a child is wanted again (DB6-11,
 //     settled as "the parent reopens"). The lost-tick and reopened checks
-//     exempt exactly that: a done line whose words are an open answer item
-//     with an open item under it.
+//     exempt that only when the list put the open item there: its body
+//     line names the group, or the body already had it open under that
+//     line, or it is itself such a reopened group. A group invented over an
+//     open line ("- [x] Milk", "- [ ] Eggs" as Milk › Eggs) still loses a
+//     tick and is refused.
 //
 // The pre-2026-09-29 rule that done lines come back verbatim and in order is
 // gone: it is what forced "Add milk to the shopping list" to survive a
@@ -267,20 +270,50 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 			answerOpen[llm.FoldWords(it.Text)] = true
 		}
 	}
-	// The open answer items with an open item under them: a done line with
-	// one's words was reopened by the item it gained (DB6-11), not by the
-	// model.
-	gained := map[string]bool{}
-	var walk func([]Item)
-	walk = func(items []Item) {
+	// The open answer items that a done body line's tick was given up for
+	// (DB6-11): reopened by an open item the list put under them, not by
+	// the model. The list put it there when the body already had it open
+	// under that line, or when its own body line names the group ("chicken
+	// from costco" under Costco), or when it is itself such a group, one
+	// level down. A group the model invented over an open line ("- [x]
+	// Milk", "- [ ] Eggs" answered Milk › Eggs) is none of these, and the
+	// tick stays refused as lost.
+	underInBody := map[[2]string]bool{}
+	var edges func(parent string, items []Item)
+	edges = func(parent string, items []Item) {
 		for _, it := range items {
-			if !it.Done && anyOpen(it.Children) {
-				gained[llm.FoldWords(it.Text)] = true
+			w := llm.FoldWords(it.Text)
+			if parent != "" && !it.Done {
+				underInBody[[2]string{parent, w}] = true
 			}
-			walk(it.Children)
+			edges(w, it.Children)
 		}
 	}
-	walk(kept)
+	edges("", ItemsFromLines(body))
+	gained := map[string]bool{}
+	var reopenedBy func(it Item) bool
+	reopenedBy = func(it Item) bool {
+		w := llm.FoldWords(it.Text)
+		found := false
+		for _, c := range it.Children {
+			// Every child is visited, so a group lower down is recorded too.
+			if reopenedBy(c) {
+				found = true
+				continue
+			}
+			if !c.Done && (underInBody[[2]string{w, llm.FoldWords(c.Text)}] || namesGroup(c.Text, it.Text, bodyOpen)) {
+				found = true
+			}
+		}
+		if !found || it.Done || !bodyDone[w] {
+			return false
+		}
+		gained[w] = true
+		return true
+	}
+	for _, it := range kept {
+		reopenedBy(it)
+	}
 	for line := range bodyDone {
 		if bodyOpen[line] || gained[line] {
 			// Two lines naming one thing, one of them open: they merge and
@@ -302,7 +335,7 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 	check := func(it Item, parent bool) error {
 		w := llm.FoldWords(it.Text)
 		switch {
-		case !it.Done && bodyDone[w] && !bodyOpen[w] && !anyOpen(it.Children),
+		case !it.Done && bodyDone[w] && !bodyOpen[w] && !gained[w],
 			!it.Done && !parent && subsequenceOfAny(it.Text, bodyDone) && !subsequenceOfAny(it.Text, bodyOpen):
 			return fmt.Errorf("%w: a done item was reopened", ErrNotATaskList)
 		case it.Done && bodyOpen[w] && !answerOpen[w]:
@@ -347,10 +380,12 @@ func reopenParents(items []Item) bool {
 	return open
 }
 
-// anyOpen reports whether one of items is open.
-func anyOpen(items []Item) bool {
-	for _, it := range items {
-		if !it.Done {
+// namesGroup reports whether an open body line holds both the child's words
+// and the group's, each in order: "chicken from costco" for Chicken under
+// Costco.
+func namesGroup(child, group string, open map[string]bool) bool {
+	for line := range open {
+		if llm.VerifySubsequence(child, line) && llm.VerifySubsequence(group, line) {
 			return true
 		}
 	}

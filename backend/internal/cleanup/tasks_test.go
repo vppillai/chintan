@@ -235,6 +235,22 @@ func TestSplitOutputReopensADoneParentThatGainsAnOpenChild(t *testing.T) {
 		"- [x] Party\n  - [x] Costco\n    - [x] Plates\n- [ ] cups from costco"); err != nil || got != "- [ ] Party\n  - [ ] Costco\n    - [x] Plates\n    - [ ] Cups" {
 		t.Errorf("a two-level reopen = %q, %v", got, err)
 	}
+	// A done line the body already held an open sub-item under is stored
+	// open: the list put the item there.
+	if got, _, err := cleanup.SplitOutput(`{"items":[{"text":"Party","done":true,"children":[{"text":"Plates"}]}]}`, "- [x] Party\n  - [ ] Plates"); err != nil || got != "- [ ] Party\n  - [ ] Plates" {
+		t.Errorf("a done parent over an open sub-item = %q, %v", got, err)
+	}
+	// A group the model invents over an open line is not the list's: Milk
+	// › Eggs out of "- [x] Milk", "- [ ] Eggs" would lose Milk's tick, done
+	// or open in the answer.
+	for _, reply := range []string{
+		`{"items":[{"text":"Milk","children":[{"text":"Eggs"}]}]}`,
+		`{"items":[{"text":"Milk","done":true,"children":[{"text":"Eggs"}]}]}`,
+	} {
+		if got, _, err := cleanup.SplitOutput(reply, "- [x] Milk\n- [ ] Eggs"); !errors.Is(err, cleanup.ErrNotATaskList) {
+			t.Errorf("an invented group over a done line = %q, %v; want ErrNotATaskList", got, err)
+		}
+	}
 	// The exemption is exactly that: a done group reopened with no open item
 	// under it is still a reopened tick.
 	if got, _, err := cleanup.SplitOutput(`{"items":[{"text":"Costco","children":[{"text":"Meat","done":true}]},"Chicken from costco"]}`, body); !errors.Is(err, cleanup.ErrNotATaskList) {

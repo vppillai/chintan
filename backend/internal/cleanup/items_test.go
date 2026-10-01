@@ -238,16 +238,30 @@ func TestItemsFromLinesMatchesTheSharedFixture(t *testing.T) {
 			if !reflect.DeepEqual(got, tc.Items) {
 				t.Errorf("cleanup.ItemsFromLines(%q) = %+v, want %+v", tc.Body, got, tc.Items)
 			}
-			// ParseLines reads the same depths where every line is an
-			// item or a blank; prose is an item only to ItemsFromLines.
-			lines := []line{}
-			for _, l := range cleanup.ParseLines(strings.Split(tc.Body, "\n")) {
-				if l.OK {
-					lines = append(lines, line{l.Text, l.Done, l.Depth})
+			// ParseLines reads the same depth for every item line. A
+			// non-blank line it does not take as an item is one of the
+			// fixture's prose items, which it does not read; it is
+			// counted, so the two cannot fall out of step unseen.
+			body := strings.Split(tc.Body, "\n")
+			next := 0
+			for i, l := range cleanup.ParseLines(body) {
+				if strings.TrimSpace(body[i]) == "" {
+					continue
+				}
+				if next == len(tc.Items) {
+					t.Fatalf("cleanup.ParseLines(%q) reads more items than the fixture's %d", tc.Body, len(tc.Items))
+				}
+				want := tc.Items[next]
+				next++
+				if !l.OK {
+					continue
+				}
+				if got := (line{strings.Join(strings.Fields(l.Text), " "), l.Done, l.Depth}); got != want {
+					t.Errorf("cleanup.ParseLines(%q) line %d = %+v, want %+v", tc.Body, i, got, want)
 				}
 			}
-			if len(lines) == len(tc.Items) && !reflect.DeepEqual(lines, tc.Items) {
-				t.Errorf("cleanup.ParseLines(%q) = %+v, want %+v", tc.Body, lines, tc.Items)
+			if next != len(tc.Items) {
+				t.Errorf("cleanup.ParseLines(%q) reads %d lines, the fixture has %d items", tc.Body, next, len(tc.Items))
 			}
 		})
 	}
@@ -265,8 +279,10 @@ func TestParseLinesClampsAndReadsPastMarkers(t *testing.T) {
 		"  - [ ] Plates",
 		"",
 		"      - [x] Paper",
-		"Some prose",
+		"<!-- chintan:capture:c_2 -->",
 		"        - [ ] Deeper still",
+		"Some prose",
+		"    - [ ] After prose",
 	}
 	want := []cleanup.Line{
 		{Text: "orphan", Depth: 0, OK: true},
@@ -277,6 +293,8 @@ func TestParseLinesClampsAndReadsPastMarkers(t *testing.T) {
 		{Text: "Paper", Done: true, Depth: 2, OK: true},
 		{},
 		{Text: "Deeper still", Depth: 2, OK: true},
+		{},
+		{Text: "After prose", Depth: 1, OK: true},
 	}
 	if got := cleanup.ParseLines(body); !reflect.DeepEqual(got, want) {
 		t.Errorf("ParseLines = %+v, want %+v", got, want)
