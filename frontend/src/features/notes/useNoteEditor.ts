@@ -8,6 +8,7 @@ import type { NoteDetailWire } from '@/api/schema.ts';
 import { enqueueReplacing } from '@/offline/queue.ts';
 import {
   clearQueuedEdit,
+  queuedEditBody,
   queuedEditFor,
   queuedEditId,
   queuedEditKey,
@@ -48,6 +49,29 @@ function draftFrom(note: NoteDetailWire): NoteDraft {
     // The mode is only known from a cleaned view that exists; with none, the
     // draft leaves it unset and nothing is sent until the user picks one.
     ...(note.cleaned?.mode ? { cleaned_mode: note.cleaned.mode } : {}),
+  };
+}
+
+/**
+ * `base` with the draft's text and settings over it: the note as the caches
+ * should show it once the draft has been sent — or queued, since a note
+ * reopened on the device must read as the device last left it.
+ */
+function withDraft(base: NoteDetailWire, draft: NoteDraft): NoteDetailWire {
+  // `''` means "inherits the default", which the wire spells as absence.
+  const { language: _previous, ...rest } = base;
+  return {
+    ...rest,
+    title: draft.title,
+    body: draft.body,
+    aliases: draft.aliases,
+    tags: draft.tags,
+    ...(draft.language ? { language: draft.language } : {}),
+    // The list row the PATCH answers with may not carry these; the toggles
+    // must not flip back to what the cache held before the save.
+    ...(draft.auto_clean !== undefined ? { auto_clean: draft.auto_clean } : {}),
+    ...(draft.verbatim !== undefined ? { verbatim: draft.verbatim } : {}),
+    ...(draft.kind !== undefined ? { kind: draft.kind } : {}),
   };
 }
 
@@ -257,20 +281,8 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
        * note reopened within `staleTime` showed the pre-edit body and its
        * next save lost a version check to the user's own edit.
        */
-      const { language: _previous, ...base } = { ...note, ...stored };
       recordSavedNote(queryClient, {
-        ...base,
-        title: attempted.title,
-        body: attempted.body,
-        aliases: attempted.aliases,
-        tags: attempted.tags,
-        // `''` means "inherits the default", which the wire spells as absence.
-        ...(attempted.language ? { language: attempted.language } : {}),
-        // The list row the PATCH answers with may not carry it; the toggle
-        // must not flip back to what the cache held before the save.
-        ...(attempted.auto_clean !== undefined ? { auto_clean: attempted.auto_clean } : {}),
-        ...(attempted.verbatim !== undefined ? { verbatim: attempted.verbatim } : {}),
-        ...(attempted.kind !== undefined ? { kind: attempted.kind } : {}),
+        ...withDraft({ ...note, ...stored }, attempted),
         ...(note.captures ? { captures: note.captures } : {}),
       });
       // The version is the server's, not `current.version + 1`. The two agree
@@ -298,11 +310,28 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
        */
       if (error instanceof ApiError && error.isOffline) {
         try {
+          /*
+           * Over what the queue already holds, field by field. The PATCH
+           * names only what differs from the server's copy, and after the
+           * caches below are patched that copy is the queued text: a
+           * keystroke on a reopened note would otherwise replace a queued
+           * title-and-body with the body alone (review 2026-10-01, FE-1).
+           */
+          const held = await queuedEditBody(note.id);
           await enqueueReplacing({
             id: queuedEditId(note.id),
             kind: 'updateNote',
-            payload: { noteId: note.id, body },
+            payload: { noteId: note.id, body: { ...held, ...body } },
           });
+          /*
+           * The caches this screen reads from next time, as a landed save
+           * patches them — at the same version, since the server has not
+           * seen it. Without this the note reopened offline showed the
+           * pre-edit body under "Saved on this device — will sync", and the
+           * next keystroke queued that body plus one character over the
+           * edit (FE-1).
+           */
+          recordSavedNote(queryClient, withDraft(note, attempted));
           // Seeded rather than invalidated: between the write and a refetch the
           // query would still answer "nothing queued", and the screen would
           // read "Saved" for an edit the server has never seen.

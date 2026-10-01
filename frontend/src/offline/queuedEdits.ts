@@ -78,6 +78,19 @@ export async function queuedEditFor(noteId: string): Promise<QueuedEdit | null> 
   return { pending: !dead, dead, error: entry.lastError };
 }
 
+/**
+ * The PATCH body the device is holding for a note, or null. What the editor
+ * folds a later offline keystroke into — `enqueueReplacing` keeps one entry
+ * per note, so a replacement that carried only the field just typed would
+ * drop a title or tag change queued before it — and what it shows as the
+ * user's side once the server has refused the entry.
+ */
+export async function queuedEditBody(noteId: string): Promise<NoteUpdateWire | null> {
+  const db = await openChintanDB();
+  const entry = await db.get('mutations', queuedEditId(noteId));
+  return entry ? (queuedEditPayload(entry)?.body ?? null) : null;
+}
+
 /** Forgets a note's queued edit, once a direct save has superseded it. */
 export async function clearQueuedEdit(noteId: string): Promise<void> {
   const db = await openChintanDB();
