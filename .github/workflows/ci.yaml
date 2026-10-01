@@ -350,12 +350,40 @@ jobs:
       - name: Install
         working-directory: frontend
         run: bun install --frozen-lockfile
+      # The browsers are ~370 MB from cdn.playwright.dev, and that download was
+      # this workflow's whole wall-clock tail: p50 49 s, p95 9 min, worst 28
+      # min when the CDN stalled (249 runs, 27 Sept–1 Oct). The cache is keyed
+      # on the Playwright version bun.lock resolves — browser builds change
+      # only with it — so a lockfile bump that leaves Playwright alone is still
+      # a hit, and a Playwright bump seeds a new entry on its first run. What
+      # it buys is the tail, not the median (measured on #210): a miss is the
+      # same 51 s download plus a 6 s save; a hit restores in 4–7 s and then
+      # spends 47–95 s on WebKit's 181 apt packages, which the runner image
+      # lacks and which come from Azure's mirrors rather than a CDN that
+      # stalls for twenty minutes. Caching the debs is the next step if the
+      # median ever matters.
+      - name: Playwright version
+        id: playwright
+        working-directory: frontend
+        run: echo "version=$(bunx playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       - name: Install Chromium and WebKit
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         working-directory: frontend
         # WebKit runs the non-microphone specs (playwright.config.ts's second
         # project): the app's target is an iPhone, and until this the suite
         # had never executed on the engine it ships to.
         run: bunx playwright install --with-deps chromium webkit
+      # On a hit the browsers are already in place; only their apt packages
+      # are missing from the runner image.
+      - name: Install the browsers' system packages
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        working-directory: frontend
+        run: bunx playwright install-deps chromium webkit
       # playwright.config.ts's webServer runs `bun run build && bun run preview`
       # itself, because three of the specs need the service worker and the hashed
       # asset paths that only exist in a real build. There is no separate build
