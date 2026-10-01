@@ -805,6 +805,52 @@ describe('the note is panels under one strip', () => {
     await user.click(screen.getByRole('button', { name: 'Close share' }));
     expect(screen.getByRole('button', { name: 'Note actions' })).toHaveFocus();
   });
+
+  it('is a dialog while on screen: Tab stays inside, Escape closes it and hands focus back to the ⋮', async () => {
+    // After R8-S1 the sheet reads as a dialog but let Tab walk out into the
+    // note and ignored Escape, unlike the Move sheet and the confirm dialogs
+    // (review 2026-10-01, FE-3).
+    const user = userEvent.setup();
+    const api = server([withRecording]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await loaded();
+
+    await openPanel(user, 'Share');
+    const dialog = screen.getByRole('dialog', { name: 'Share' });
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    // The heading keeps the focus the screen gives it; Tab from the last
+    // control wraps to the first, and Shift+Tab from the first to the last.
+    expect(screen.getByRole('heading', { name: 'Share' })).toHaveFocus();
+    const controls = within(dialog).getAllByRole('button');
+    controls.at(-1)?.focus();
+    await user.tab();
+    expect(controls[0]).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(controls.at(-1)).toHaveFocus();
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Note actions' })).toHaveFocus();
+  });
+
+  it('stops being a dialog while hidden behind the selection bar, so Escape cancels the selection', async () => {
+    const user = userEvent.setup();
+    const api = server([withRecording]);
+    mount(api.fetchImpl, '/notes/roof-repair?tab=recordings');
+    await loaded();
+    await openPanel(user, 'Details');
+    expect(screen.getByRole('dialog', { name: 'Details' })).toBeInTheDocument();
+
+    await user.click(await screen.findByRole('button', { name: /more for recording from/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Select' }));
+    expect(await screen.findByRole('toolbar', { name: 'Recording actions' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { hidden: true })).toBeNull();
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('toolbar', { name: 'Recording actions' })).toBeNull();
+    // Back, and a dialog again.
+    expect(screen.getByRole('dialog', { name: 'Details' })).toBeInTheDocument();
+  });
 });
 
 /**
