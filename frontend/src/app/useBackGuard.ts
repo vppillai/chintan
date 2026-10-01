@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 
 import { ROUTES, legacyRedirect } from './routes.ts';
+import { isHome } from './useTabNavigation.ts';
 
 /**
  * Guarantees that Back always has somewhere to go inside the app.
@@ -28,7 +29,9 @@ export function useBackGuard(): void {
   useEffect(() => {
     if (seeded.current) return;
     seeded.current = true;
-    if (location.pathname === ROUTES.home) return;
+    // The archive is the library's path too, but it is not Home: a cold
+    // start there seeds Home beneath it like any other deep link (R8, F2).
+    if (isHome(location.pathname, location.search)) return;
     if (legacyRedirect(location.pathname, location.search)) return;
 
     const target = `${location.pathname}${location.search}${location.hash}`;

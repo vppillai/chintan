@@ -1,7 +1,4 @@
-import { Link } from 'react-router';
-
-import { ROUTES } from '@/app/routes.ts';
-import { Icon } from '@/components/Icon.tsx';
+import { YouBackLink } from '@/components/YouBackLink.tsx';
 import { UsageSection } from '@/features/settings/UsageSection.tsx';
 
 /**
@@ -16,10 +13,7 @@ export function UsageScreen() {
   return (
     <div className="screen you">
       <header className="screen__header you__header">
-        <Link to={ROUTES.settings} className="back-link">
-          <Icon name="back" size={18} />
-          <span className="visually-hidden">Back to </span>You
-        </Link>
+        <YouBackLink />
         <h1>Usage</h1>
       </header>
       <UsageSection />

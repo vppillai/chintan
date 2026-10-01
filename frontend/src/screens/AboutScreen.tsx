@@ -1,8 +1,10 @@
 import { Link } from 'react-router';
 
 import { ROUTES } from '@/app/routes.ts';
+import { isPlainClick, useTabNavigation } from '@/app/useTabNavigation.ts';
 import { Icon, type IconName } from '@/components/Icon.tsx';
 import { Mark } from '@/components/Wordmark.tsx';
+import { YouBackLink } from '@/components/YouBackLink.tsx';
 import { config } from '@/config/env.ts';
 import { describeVersion } from '@/features/settings/VersionFootnote.tsx';
 
@@ -55,14 +57,12 @@ const STORES: readonly { what: string; where: string }[] = [
  */
 export function AboutScreen() {
   const { release, build } = describeVersion(config.version);
+  const { goBackTo } = useTabNavigation();
 
   return (
     <div className="screen about">
       <header className="screen__header screen__header--detail">
-        <Link to={ROUTES.settings} className="back-link">
-          <Icon name="back" size={18} />
-          <span className="visually-hidden">Back to </span>You
-        </Link>
+        <YouBackLink />
       </header>
 
       <div className="about__hero">
@@ -127,7 +127,16 @@ export function AboutScreen() {
             Other devices can post recordings and text into your notes with a device key &mdash; a
             watch, a ring, a phone shortcut &mdash; and each is filed the same way. The keys, and
             how to point each device at the app, are under{' '}
-            <Link className="text-link" to={ROUTES.settings}>
+            {/* To You the way "‹ You" goes, so You is never stacked twice. */}
+            <Link
+              className="text-link"
+              to={ROUTES.settings}
+              onClick={(event) => {
+                if (!isPlainClick(event)) return;
+                event.preventDefault();
+                goBackTo(ROUTES.settings);
+              }}
+            >
               Devices &amp; shortcuts
             </Link>{' '}
             on You.

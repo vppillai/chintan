@@ -240,3 +240,33 @@ tap menu, a CDP touch drag on a phone up and down to reorder and sideways to
 nest, the Done disclosure across a reload, Delete done undone from the
 keyboard, Uncheck all, Tidy up list replacing the rows with Undo),
 `a11y.spec.ts` (the Items tab with a grip menu open, both themes).
+
+## Back
+
+Home is the bottom of a short stack, app-style, not a browser's trail (R8,
+F2; `app/useTabNavigation.ts`). Before, every tab and "‹ You" pushed, so
+You → About → Home → You → About and then Back walked every screen visited.
+
+- Home `/` (any search or Ask mode, but not `?view=archived`) is always the
+  app's first history entry. `useBackGuard` seeds it under any cold deep link,
+  the archive included.
+- You and the archive are the top-level screens and only ever sit at entry 1.
+  From Home they push; from entry 1 (the other one, or a note opened from
+  Home) they replace it; from deeper they go back to entry 1 and then replace
+  it (`usePendingTab`, which waits for the POP because `history.go` returns
+  nothing to wait on). The same tab while on it does nothing.
+- The Home tab goes back to entry 0, a POP, so the list comes back at its
+  place under Home's own key (R7-6a). On Home it clears a filter and scrolls
+  to the top, as before.
+- A note, About and Usage push. "‹ You" goes Back when You is beneath it,
+  and otherwise (a cold `/about`) replaces itself with You.
+- Back from Home leaves the app: in the installed PWA Android's Back closes
+  it, in a tab it goes wherever the tab was before. There is no "press again
+  to exit" (owner decision D6).
+- The index is React Router's private `history.state.idx`, read only through
+  `historyIndex()`. Tabs stay real links, so a modified click opens a new tab.
+
+Known edge, left as the spec has it: the Archived chip is a filter and
+replaces like the others, so the archive reached by the chip (rather than by
+the "Archive" row at the list's end) takes Home's entry 0, and Back from it
+leaves the app. The Home tab there replaces it with Home.
