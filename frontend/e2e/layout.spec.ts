@@ -500,6 +500,66 @@ for (const theme of THEMES) {
         expect(colours.note).not.toBeNull();
         expect(colours.tray).not.toBe(colours.note);
       });
+
+      test('the fold\'s sentence starts where every other title does', async ({ page, api }) => {
+        await withoutServiceWorker(page);
+        await useTheme(page, theme);
+        const now = new Date().toISOString();
+        const row = { created_at: now, version: 1 } as const;
+        api.captures.push(
+          { ...row, id: 'cap-broken', status: 'failed', note_id: null, error: 'Couldn’t transcribe this' },
+          { ...row, id: 'cap-a', status: 'appended', appended_at: now, note_id: 'roof-repair' },
+          { ...row, id: 'cap-b', status: 'appended', appended_at: now, note_id: 'reading-list' },
+        );
+
+        await page.goto('/');
+        const filing = page.getByRole('region', { name: 'Filing' });
+        const fold = await filing.locator('.filing-fold__toggle .filing-row__title').boundingBox();
+        const failed = await filing
+          .locator('.filing-row[data-status="failed"] .filing-row__title')
+          .boundingBox();
+        if (!fold || !failed) throw new Error('a title has no box');
+        expect(
+          Math.abs(fold.x - failed.x),
+          'the fold sentence and the titles share a left edge',
+        ).toBeLessThanOrEqual(1);
+      });
+
+      test('a receipt swiped open shows one Dismiss, the tray\'s', async ({ page, api }) => {
+        test.skip(device.name !== 'Pixel 7', 'the swipe tray is for a finger');
+        await withoutServiceWorker(page);
+        await useTheme(page, theme);
+        const now = new Date().toISOString();
+        api.captures.push({
+          id: 'cap-filed',
+          status: 'appended',
+          created_at: now,
+          appended_at: now,
+          version: 1,
+          note_id: 'roof-repair',
+        });
+
+        await page.goto('/');
+        const receipt = page.locator('.filing-swipe');
+        const box = await receipt.boundingBox();
+        if (!box) throw new Error('the receipt has no box');
+        // A real touch, through the browser's own pipeline (see swipe.spec.ts).
+        const cdp = await page.context().newCDPSession(page);
+        const x = box.x + box.width / 2;
+        const y = box.y + box.height / 2;
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+        for (let i = 1; i <= 12; i += 1) {
+          await cdp.send('Input.dispatchTouchEvent', {
+            type: 'touchMove',
+            touchPoints: [{ x: x - (200 * i) / 12, y }],
+          });
+        }
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+
+        await expect(receipt).toHaveAttribute('data-open');
+        await expect(receipt.locator('.swipe__action')).toBeVisible();
+        await expect(receipt.locator('.filing-row__dismiss')).toBeHidden();
+      });
     });
   }
 }

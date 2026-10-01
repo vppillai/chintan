@@ -75,6 +75,11 @@
   color: var(--color-notice-glyph);
 }
 
+/* "Started" stands out (R7-7c): a misroute into a fresh note should be seen. */
+.filing-row[data-kind='started'] .filing-row__glyph {
+  color: var(--color-accent-strong);
+}
+
 .filing-row[data-kind='needs'] .filing-row__glyph {
   color: var(--color-ink);
 }
@@ -665,6 +670,11 @@
     color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
+/* Swiped open, the tray's Dismiss is the one on offer; two side by side read as two different things. */
+.filing-swipe[data-shifted] .filing-row__dismiss {
+  visibility: hidden;
+}
+
 @media (hover: hover) and (pointer: fine) {
   .filing-row__dismiss:hover {
     background-color: var(--color-line);
@@ -692,9 +702,16 @@
   border-start-end-radius: var(--radius-lg);
 }
 
-.filing__tray > .filing-swipe:last-child {
+.filing__tray > .filing-swipe:last-child,
+.filing__tray > .filing-fold:last-child .filing-fold__rows > .filing-swipe:last-child {
   border-end-start-radius: var(--radius-lg);
   border-end-end-radius: var(--radius-lg);
+}
+
+/* The row's focus ring follows those corners: an outline takes its box's radius. */
+.filing-swipe > .swipe__content,
+.filing-swipe .filing-row {
+  border-radius: inherit;
 }
 
 /*
@@ -712,6 +729,8 @@
 }
 
 .filing-fold__toggle {
+  /* No UA inline padding, so the sentence starts on the other titles' edge. */
+  padding: 0;
   display: flex;
   align-items: center;
   gap: var(--space-1);
