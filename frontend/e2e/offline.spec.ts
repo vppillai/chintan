@@ -26,7 +26,7 @@ test('a recording made offline survives and is sent on reconnect', async ({ page
   // Send hands off to the library at once; the failure lands in the upload's
   // row there, honestly, and says where the recording is.
   await expect(page).toHaveURL(/\/$/);
-  const filing = page.getByRole('region', { name: /recordings being filed/i });
+  const filing = page.getByRole('region', { name: 'Filing' });
   await expect(filing.getByText(/safe on this device/i)).toBeVisible({ timeout: 15_000 });
   await expect(filing.getByRole('button', { name: 'Retry' })).toBeVisible();
   // Not doubled by the "unsent recording" prompt: this row is the offer.
