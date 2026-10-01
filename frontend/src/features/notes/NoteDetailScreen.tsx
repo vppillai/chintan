@@ -4,7 +4,6 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
-  useMemo,
   useReducer,
   useRef,
   useState,
@@ -12,33 +11,26 @@ import {
   type RefObject,
 } from 'react';
 import { flushSync } from 'react-dom';
-import { useNavigate, useParams } from 'react-router';
+import { useParams } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
 import { queryKeys, useInFlightCaptures, useNote, useSettings } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
-import { historyIndex } from '@/app/useTabNavigation.ts';
+import { useTabNavigation } from '@/app/useTabNavigation.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
+import { announce } from '@/components/StatusRegion.tsx';
 import { FilingBanner } from '@/features/capture/FilingBanner.tsx';
 import { useLocalUpload } from '@/features/capture/FilingRow.tsx';
 import type { CaptureModel } from '@/features/capture/machine.ts';
 import { languageName } from '@/features/settings/languages.ts';
-import { useAutoGrow } from '@/hooks/useAutoGrow.ts';
 import { useHorizontalSwipe } from '@/hooks/useHorizontalSwipe.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
-import { useReducedMotion } from '@/hooks/useReducedMotion.ts';
 import { useCachedNote } from '@/offline/useNotesCache.ts';
 
 import { CleanedPanel } from './CleanedPanel.tsx';
-import {
-  FindBar,
-  markMatches,
-  useReportTotal,
-  useScrollToActiveMatch,
-  type FindTarget,
-} from './FindBar.tsx';
+import { FindBar, type FindTarget } from './FindBar.tsx';
 import { NoteMenu } from './NoteActions.tsx';
 import {
   NoteDrawer,
@@ -55,12 +47,12 @@ import {
   type NoteTabDescriptor,
 } from './NoteTabs.tsx';
 import { Recordings } from './Recordings.tsx';
-import { SAVE_LABELS, additionTo } from './autosave.ts';
-import { FIND_CLOSED, findMatches, findReducer, type FindState, type FindAction } from './find.ts';
+import { SAVE_LABELS, type SaveState } from './autosave.ts';
+import { FIND_CLOSED, findReducer, type FindState, type FindAction } from './find.ts';
 import { describeRecordings, formatRowTime } from './groups.ts';
-import { ChecklistEditor } from './ChecklistEditor.tsx';
 import { describeProgress, parseChecklist, progressOf } from './checklist.ts';
 import { describePurge, purgeCountdown } from './purge.ts';
+import { TextPanel, type Flash } from './TextPanel.tsx';
 import { useNoteEditor, type NoteEditor } from './useNoteEditor.ts';
 
 /**
@@ -606,261 +598,6 @@ function NotePanel({
   );
 }
 
-/**
- * The editable body: as tall as its text, and the page is what scrolls.
- *
- * While the find bar has a query the textarea gives way to a read-only mirror
- * of the same text in the same box, because a `<mark>` cannot be drawn inside
- * a textarea. Closing the bar — or tapping the mirror — brings the textarea
- * back with the caret on the match that was current, so finding a word and
- * editing it is one gesture, not a find followed by a hunt.
- *
- * A checklist's body is items, not a text: `ChecklistEditor` stands in for the
- * textarea. The mirror still serves the find bar — the raw lines, marked — so
- * a word in a long list can still be found.
- */
-function TextPanel({
-  noteId,
-  editor,
-  checklist,
-  lang,
-  find,
-  onDismissFind,
-  flash = null,
-  onFlashDone = () => {},
-}: {
-  /** For the Items tab's Done disclosure, remembered per note. */
-  noteId: string;
-  editor: NoteEditor;
-  checklist: boolean;
-  lang: string | undefined;
-  find: FindTarget | null;
-  /** A tap on the mirror: close the bar and go back to editing. */
-  onDismissFind: () => void;
-  /** A recording's addition to point at, from the filing banner's Show. */
-  flash?: Flash | null;
-  onFlashDone?: () => void;
-}) {
-  const body = editor.model.draft.body;
-  // Measured here, in the panel, so re-opening the Text tab measures again:
-  // a hook in the screen would keep a ref to a textarea that had left the
-  // document and never see the one that replaced it.
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
-  const mirrorRef = useRef<HTMLElement>(null);
-  useAutoGrow(bodyRef, body);
-
-  const query = find?.query ?? '';
-  const matches = useMemo(() => findMatches(body, query), [body, query]);
-  const mirrored = find !== null;
-  useReportTotal(find, matches.length);
-  useScrollToActiveMatch(mirrorRef, find?.active ?? null, matches.length);
-
-  /*
-   * Where the caret goes when the textarea returns: the match that was
-   * current when the mirror was last shown. Remembered in a ref because by
-   * the time the textarea is back, `find` is null and the match is gone.
-   */
-  const lastActive = useRef<{ start: number; end: number } | null>(null);
-  const current = find ? matches[find.active] : undefined;
-  useEffect(() => {
-    if (current) lastActive.current = current;
-  }, [current]);
-  // Declared after the remembering effect, so the caret is placed from the
-  // match remembered by this render, not the one before it.
-  const wasMirrored = useRef(false);
-  useEffect(() => {
-    if (wasMirrored.current && !mirrored) {
-      const textarea = bodyRef.current;
-      const range = lastActive.current;
-      if (textarea) {
-        // The mirror and the textarea are the same box, so the match is where
-        // the mark was and the page need not move; `preventScroll` keeps the
-        // browser from re-centring on the whole field.
-        textarea.focus({ preventScroll: true });
-        if (range) {
-          try {
-            textarea.setSelectionRange(range.start, range.end);
-          } catch {
-            /* A browser that will not place the caret still has the focus. */
-          }
-        }
-      }
-    }
-    wasMirrored.current = mirrored;
-  }, [mirrored]);
-
-  /*
-   * Show on "Added at the end": the recording's addition, marked for
-   * `FLASH_MS` and scrolled to (R7-6b). Prose draws it in the find mirror's
-   * box, since a textarea cannot colour a range; a checklist marks the rows
-   * the recording added. Find outranks it: its marks are the ones asked for.
-   */
-  const reduced = useReducedMotion();
-  const flashing = flash !== null && find === null;
-  const flashRange = useMemo(
-    () => (flashing && !checklist ? addedRange(flash.before, body) : null),
-    [flashing, checklist, flash, body],
-  );
-  const flashItems = useMemo(
-    () => (flashing && checklist ? addedItems(flash.before, body) : null),
-    [flashing, checklist, flash, body],
-  );
-  /*
-   * Focus follows Show, so a keyboard or a screen reader lands on the
-   * addition too, and nothing drops to <body> when the banner's button goes:
-   * onto the mirror while it stands, then into the textarea with the caret at
-   * the paragraph's start; on a checklist, into the first added row's field
-   * at once, since the rows stay.
-   */
-  const flashMirrorRef = useRef<HTMLElement>(null);
-  const caretAfterFlash = useRef<number | null>(null);
-  useLayoutEffect(() => {
-    if (!flashing) return;
-    const target = document.querySelector<HTMLElement>('[data-flash]');
-    if (target && typeof target.scrollIntoView === 'function') {
-      target.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
-    }
-    // With nothing to mark (every added item was already on the list, or a
-    // body with no text) focus still lands in the text, never on <body>.
-    if (checklist) {
-      const field =
-        target?.querySelector<HTMLTextAreaElement>('textarea') ??
-        document.querySelector<HTMLTextAreaElement>('.checklist textarea');
-      field?.focus({ preventScroll: true });
-    } else if (flashRange) {
-      caretAfterFlash.current = flashRange.start;
-      flashMirrorRef.current?.focus({ preventScroll: true });
-    } else {
-      bodyRef.current?.focus({ preventScroll: true });
-    }
-    const timer = setTimeout(onFlashDone, FLASH_MS);
-    return () => {
-      clearTimeout(timer);
-    };
-    // A new Show (`n`) is a new flash; the body settling under it is not.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flashing, flash?.n]);
-  useEffect(() => {
-    if (flashing) return;
-    const at = caretAfterFlash.current;
-    caretAfterFlash.current = null;
-    const textarea = bodyRef.current;
-    if (at === null || !textarea) return;
-    textarea.focus({ preventScroll: true });
-    try {
-      textarea.setSelectionRange(at, at);
-    } catch {
-      /* A browser that will not place the caret still has the focus. */
-    }
-  }, [flashing]);
-
-  if (flashRange) {
-    return (
-      <section
-        ref={flashMirrorRef}
-        tabIndex={-1}
-        className="note-body-mirror prose"
-        lang={lang}
-        aria-label="Note body"
-        // Any tap goes back to editing at once.
-        onClick={onFlashDone}
-      >
-        {body.slice(0, flashRange.start)}
-        <mark className="note-flash" data-flash="">
-          {body.slice(flashRange.start, flashRange.end)}
-        </mark>
-        {body.slice(flashRange.end)}
-      </section>
-    );
-  }
-
-  if (find) {
-    return (
-      <section
-        ref={mirrorRef}
-        className="note-body-mirror prose"
-        lang={lang}
-        aria-label="Note body, read-only while finding"
-        // A pointer's way back to editing. The keyboard's is Escape in the
-        // bar, which does the same thing; the mirror itself is text, not a
-        // control, so a screen reader can read it and its marks.
-        onClick={onDismissFind}
-      >
-        {markMatches(body, matches, find.active)}
-      </section>
-    );
-  }
-
-  if (checklist) {
-    return (
-      <ChecklistEditor
-        noteId={noteId}
-        body={body}
-        currentBody={() => editor.current().body}
-        flash={flashItems}
-        onChange={(next) => {
-          editor.edit({ body: next });
-        }}
-        onSave={() => void editor.saveNow()}
-      />
-    );
-  }
-
-  return (
-    <>
-      <label className="visually-hidden" htmlFor="note-body">
-        Note body
-      </label>
-      <textarea
-        id="note-body"
-        ref={bodyRef}
-        className="note-body-input prose"
-        lang={lang}
-        value={body}
-        rows={6}
-        onChange={(event) => {
-          editor.edit({ body: event.target.value });
-        }}
-        onBlur={() => void editor.saveNow()}
-      />
-    </>
-  );
-}
-
-/** A recording's addition to point at: the body from before it, and which Show this is. */
-interface Flash {
-  before: string;
-  n: number;
-}
-
-/** How long Show's mark stays on the addition. */
-const FLASH_MS = 2000;
-
-/**
- * Where in `body` a recording's addition is: what it added to `before` at
- * the end, found where it now stands; or, when the body changed some other
- * way meanwhile, its last paragraph, which is where the worker appends.
- */
-export function addedRange(before: string, body: string): { start: number; end: number } | null {
-  const addition = additionTo(before, body);
-  const start = addition === null ? -1 : body.lastIndexOf(addition);
-  if (addition !== null && start >= 0) return { start, end: start + addition.length };
-  const end = body.trimEnd().length;
-  if (end === 0) return null;
-  const gap = body.lastIndexOf('\n\n', end - 1);
-  return { start: gap < 0 ? 0 : gap + 2, end };
-}
-
-/** The open items of `body` whose words `before` did not have: what a recording merged in. */
-export function addedItems(before: string, body: string): ReadonlySet<string> {
-  const had = new Set(parseChecklist(before).map((item) => item.text.trim()));
-  return new Set(
-    parseChecklist(body)
-      .filter((item) => !item.done && !had.has(item.text.trim()))
-      .map((item) => item.text.trim()),
-  );
-}
-
 /** How long "Loading…" is allowed to stand before the screen says what it knows. */
 export const LOADING_PATIENCE_MS = 6_000;
 
@@ -983,26 +720,41 @@ export function effectiveLanguage(
  *
  * Goes back through history when there is history to go back through, so a
  * note opened from a filtered library returns to that filter; only a cold
- * start with nothing beneath it goes to the library directly. React Router
- * numbers its entries (`historyIndex`), and `useBackGuard` seeds the
- * library under any deep link, so the fallback is rarely taken — it is here
- * for the case where it is.
+ * start with nothing beneath it takes Home in this entry's place
+ * (`goBackTo`, the one back-link rule). `useBackGuard` seeds the library
+ * under any deep link, so the fallback is rarely taken — it is here for the
+ * case where it is.
  */
 function BackLink() {
-  const navigate = useNavigate();
+  const { goBackTo } = useTabNavigation();
   return (
     <button
       type="button"
       className="back-link"
       onClick={() => {
-        if (historyIndex() > 0) void navigate(-1);
-        else void navigate(ROUTES.notes);
+        goBackTo(ROUTES.notes);
       }}
     >
       <Icon name="back" size={18} />
       <span className="visually-hidden">Back to </span>Notes
     </button>
   );
+}
+
+/**
+ * The indicator's word, said through the shell's one region rather than from
+ * a live region of its own, which a tick's toast and the editor's status used
+ * to overlap (review 2026-10-01, FE-4). Only an outcome is said — saved,
+ * queued, failed: "Saving…" and "Unsaved changes" follow every tick and
+ * keystroke in the same task and would talk over what the editor just said
+ * ("Marked done" → "Saving…"); the visible line still shows them.
+ */
+function SaveWord({ state, text }: { state: SaveState; text: string }) {
+  const outcome = state === 'saved' || state === 'queued' || state === 'error';
+  useEffect(() => {
+    if (outcome) announce(text);
+  }, [outcome, text]);
+  return text;
 }
 
 /**
@@ -1074,13 +826,8 @@ function SaveIndicator({ editor }: { editor: ReturnType<typeof useNoteEditor> })
   }
 
   return (
-    <p
-      className="save-indicator"
-      data-state={model.state}
-      role="status"
-      aria-live="polite"
-    >
-      {model.error ?? SAVE_LABELS[model.state]}
+    <p className="save-indicator" data-state={model.state}>
+      <SaveWord state={model.state} text={model.error ?? SAVE_LABELS[model.state]} />
       {model.state === 'error' && (
         <button
           type="button"

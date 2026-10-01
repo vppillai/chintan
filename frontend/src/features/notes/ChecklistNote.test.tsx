@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CAPTURE_POLL_FAST_MS } from '@/api/queries/captures.ts';
 import type { CaptureWire, CleanedWire, NoteDetailWire } from '@/api/schema.ts';
+import { StatusRegion } from '@/components/StatusRegion.tsx';
 import { Toast, dismissToast } from '@/components/Toast.tsx';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
@@ -151,8 +152,9 @@ function server(
   render(
     <TestProviders api={testApiContext(fetchImpl)}>
       <RouterProvider router={router} />
-      {/* The shell's, in the app; here so the Undo that adopting offers can be pressed. */}
+      {/* The shell's, in the app; here so the Undo that adopting offers can be pressed, and what the editor says read. */}
       <Toast />
+      <StatusRegion />
     </TestProviders>,
   );
   return {
@@ -509,6 +511,34 @@ describe('a checklist note', () => {
     expect(api.patches[2]).toEqual(
       expect.objectContaining({ body: '- [ ] Ridge tiles have slipped.\n- [ ] Get two quotes.' }),
     );
+  });
+
+  it('a tick whose toast is kept away is said by the region, and the save does not talk over it', async () => {
+    const user = userEvent.setup();
+    const api = server(SHOPPING);
+    await screen.findByRole('textbox', { name: 'Item 1' });
+    // Delete done's Undo stands, so the tick's weak toast is refused and the
+    // region says the tick; the save that follows in the same task must not
+    // replace it with "Saving…" (PR 218 review).
+    await user.click(screen.getByRole('button', { name: 'Delete done' }));
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(1);
+    });
+    // Every word the region says from the tick on, in order.
+    const region = screen.getByTestId('status-region');
+    const said: string[] = [];
+    const observer = new MutationObserver(() => said.push(region.textContent ?? ''));
+    observer.observe(region, { childList: true, characterData: true, subtree: true });
+    await user.click(screen.getByRole('checkbox', { name: 'Milk' }));
+    expect(screen.getByText('1 done item deleted', { selector: '.toast__text' })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(2);
+    });
+    await waitFor(() => {
+      expect(region).toHaveTextContent('Saved');
+    });
+    observer.disconnect();
+    expect(said).toEqual(['Marked done', 'Saved']);
   });
 
   it('Delete done’s Undo on Items refuses from the Recordings tab too, once a recording has landed', async () => {

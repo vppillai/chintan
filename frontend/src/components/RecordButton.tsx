@@ -1,3 +1,5 @@
+import { useId } from 'react';
+
 import type { HoldToTalk } from '@/features/capture/useHoldToTalk.ts';
 
 import { Icon } from './Icon.tsx';
@@ -31,6 +33,7 @@ export function RecordButton({
   noteId?: string | null;
   hold: HoldToTalk;
 }) {
+  const hintId = useId();
   // The hint a mouse user can hover for; a touch screen has no hover to show it.
   const fine =
     typeof window.matchMedia === 'function' &&
@@ -41,7 +44,9 @@ export function RecordButton({
       type="button"
       className="record-button"
       aria-label={noteId !== null ? 'Record into this note' : 'Record'}
-      aria-description="Hold to talk and release to send. While holding, slide up to lock or left to cancel."
+      // By reference rather than `aria-description`, which screen readers
+      // still read unevenly and the a11y lint does not know on a button.
+      aria-describedby={hintId}
       aria-keyshortcuts="R"
       title={fine ? 'Click to record · hold to talk (or hold R)' : undefined}
       {...hold.handlers}
@@ -54,6 +59,9 @@ export function RecordButton({
       />
       <span className="record-button__label" aria-hidden="true">
         Record
+      </span>
+      <span id={hintId} className="visually-hidden">
+        Hold to talk and release to send. While holding, slide up to lock or left to cancel.
       </span>
     </button>
   );

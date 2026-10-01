@@ -9,6 +9,9 @@ import {
   type RefObject,
 } from 'react';
 
+import { GESTURE_SLOP_PX } from './gesture.ts';
+import { useSwallowNextClick } from './swallowNextClick.ts';
+
 /**
  * A horizontal swipe across a region that steps between its segments — the
  * note's Text · Cleaned · Recordings — for one hand (R6-NAV-1).
@@ -64,12 +67,9 @@ import {
  * and the two leaves are read once, when the axis is decided, and nothing in
  * the move path reads layout or touches React; only `dragging` is state.
  *
- * The click that follows a committed drag is swallowed once, so lifting over
- * the new panel neither focuses the textarea nor toggles a recording.
- * Chromium synthesises no click after a touch that moved, so the flag can
- * outlive the gesture until the next pointer; a keyboard activation's click
- * carries `detail` 0 and is let through — Enter on a tab after a swipe did
- * nothing (review 2026-09-29) — and a cancelled pointer sets no flag.
+ * The click that follows a committed drag is swallowed once
+ * (`useSwallowNextClick`), so lifting over the new panel neither focuses the
+ * textarea nor toggles a recording; a cancelled pointer arms no swallow.
  *
  * Known trades: a single-line input inside the region — the Find field —
  * loses the horizontal drag-scroll of an overflowing value (its caret keys
@@ -78,8 +78,6 @@ import {
  * rather than selecting.
  */
 
-/** Travel before the axis is decided. */
-export const SWIPE_SLOP_PX = 12;
 /** A start this close to either screen edge is the system's. */
 export const SWIPE_EDGE_PX = 24;
 /** Letting go this far across the region steps. */
@@ -205,7 +203,7 @@ export function useHorizontalSwipe({
 } {
   const [dragging, setDragging] = useState(false);
   const gesture = useRef<Gesture | null>(null);
-  const swallowClick = useRef(false);
+  const swallow = useSwallowNextClick();
   const enter = useRef<Enter | null>(null);
   // The latest callbacks, so the handlers never go stale without changing
   // (the same shape as `usePullToRefresh`'s `refresh`).
@@ -245,7 +243,7 @@ export function useHorizontalSwipe({
 
   const onPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
-      swallowClick.current = false;
+      swallow.reset();
       cutEnter();
       if (event.pointerType === 'mouse' || event.button !== 0 || gesture.current) return;
       const target = event.target as Element;
@@ -267,7 +265,7 @@ export function useHorizontalSwipe({
         indicator: null,
       };
     },
-    [cutEnter],
+    [cutEnter, swallow],
   );
 
   const onPointerMove = useCallback(
@@ -278,7 +276,7 @@ export function useHorizontalSwipe({
       const dy = event.clientY - g.y0;
       const region = ref.current;
       if (g.axis === 'undecided') {
-        if (Math.hypot(dx, dy) < SWIPE_SLOP_PX) return;
+        if (Math.hypot(dx, dy) < GESTURE_SLOP_PX) return;
         if (Math.abs(dy) >= Math.abs(dx) || (g.onSwipeRow && dx < 0) || g.onOpenRow) {
           // A scroll, or the row's own gesture (its tray opening, or an open
           // row closing): not ours for the rest of this touch.
@@ -336,7 +334,7 @@ export function useHorizontalSwipe({
         snapBack();
         return;
       }
-      swallowClick.current = true;
+      swallow.arm();
       const direction: SwipeDirection = g.dx < 0 ? 'left' : 'right';
       const far = Math.abs(g.dx) >= g.width * SWIPE_COMMIT_FRACTION;
       // A still finger fires no move, so the last fast move's velocity would
@@ -367,7 +365,7 @@ export function useHorizontalSwipe({
       };
       latest.current.onSwipe(direction);
     },
-    [],
+    [swallow],
   );
 
   useEffect(() => {
@@ -401,9 +399,7 @@ export function useHorizontalSwipe({
         if (event.target === event.currentTarget) end(event, true);
       },
       onClickCapture: (event) => {
-        // A keyboard or script activation carries `detail` 0; a tap's carries 1.
-        if (!swallowClick.current || event.detail === 0) return;
-        swallowClick.current = false;
+        if (!swallow.take(event)) return;
         event.preventDefault();
         event.stopPropagation();
       },

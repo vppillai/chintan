@@ -217,3 +217,39 @@ export function noticeKind(row: CaptureWire | ReceiptGroup): NoticeKind {
       return isStuck(row) ? 'failed' : 'moving';
   }
 }
+
+/** The library's filing tiers, in the order the tray draws them (`FilingRow`). */
+export interface FilingTiers {
+  /** Rows still moving through the pipeline. */
+  moving: CaptureWire[];
+  /** Rows that need the person: failed, capped, asking for a note, stuck. Never grouped, never folded. */
+  needsYou: CaptureWire[];
+  /** One receipt per note the rest landed in, newest landing first. */
+  groups: ReceiptGroup[];
+  /** One receipt is shown as itself. */
+  shown: ReceiptGroup[];
+  /** Two or more fold into one summary row. */
+  folded: ReceiptGroup[];
+}
+
+/**
+ * Sorts the captures the tray shows into its tiers. A stuck capture is
+ * non-terminal but needs the person, so it sits with the failed ones rather
+ * than among the rows still moving. Pure, beside `groupReceipts`, so the
+ * tiering is testable without a poll.
+ */
+export function tierCaptures(captures: readonly CaptureWire[]): FilingTiers {
+  const moving = captures.filter((capture) => !isTerminalStatus(capture.status) && !isStuck(capture));
+  const needsYou = captures.filter(
+    (capture) =>
+      (isTerminalStatus(capture.status) && capture.status !== 'appended') || isStuck(capture),
+  );
+  const groups = groupReceipts(captures);
+  return {
+    moving,
+    needsYou,
+    groups,
+    shown: groups.length === 1 ? groups : [],
+    folded: groups.length > 1 ? groups : [],
+  };
+}

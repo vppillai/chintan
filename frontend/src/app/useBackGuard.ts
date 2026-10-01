@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useLocation, useNavigate } from 'react-router';
+import { useLocation, useNavigate, type NavigateFunction } from 'react-router';
 
 import { ROUTES, legacyRedirect } from './routes.ts';
 import { historyIndex, isHome } from './useTabNavigation.ts';
@@ -38,13 +38,21 @@ export function useBackGuard(): void {
     if (historyIndex() > 0) return;
     if (legacyRedirect(location.pathname, location.search)) return;
 
-    const target = `${location.pathname}${location.search}${location.hash}`;
-    void (async () => {
-      await navigate(ROUTES.home, { replace: true });
-      await navigate(target);
-    })();
+    seedHome(navigate, `${location.pathname}${location.search}${location.hash}`);
     // Intentionally first-mount only: this seeds the history stack once, and
     // re-running it on every navigation would rewrite history under the user.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+}
+
+/**
+ * Puts Home beneath `target`: this entry becomes Home, and `target` is pushed
+ * above it, so Back from a cold deep link has somewhere to go. The one seed,
+ * shared with `Redirect`, which knows where a legacy alias is going.
+ */
+export function seedHome(navigate: NavigateFunction, target: string): void {
+  void (async () => {
+    await navigate(ROUTES.home, { replace: true });
+    if (target !== ROUTES.home) await navigate(target);
+  })();
 }

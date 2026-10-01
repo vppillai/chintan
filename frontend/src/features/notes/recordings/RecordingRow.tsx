@@ -3,7 +3,7 @@ import { useEffect, useId, useRef } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
-import { useRetryCapture } from '@/api/queries.ts';
+import { queryKeys, useRetryCapture } from '@/api/queries.ts';
 import { isTerminalStatus, type CaptureWire } from '@/api/schema.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { OverflowMenu, type OverflowMenuItem } from '@/components/OverflowMenu.tsx';
@@ -93,10 +93,10 @@ export function RecordingRow({
    */
   const running = !isTerminalStatus(capture.status);
   const artifacts = useQuery({
-    // Keyed on the capture's write version as well as its id: transcribing
-    // again replaces the segments behind the same id, and the landed row
-    // must fetch afresh where a five-minute-fresh entry would be shown as is.
-    queryKey: ['capture-artifacts', capture.id, capture.version],
+    // Keyed on the capture's write version as well as its id (`queryKeys`):
+    // the landed row must fetch afresh where a five-minute-fresh entry would
+    // be shown as is.
+    queryKey: queryKeys.captureArtifacts(capture.id, capture.version),
     queryFn: () =>
       loadCaptureArtifacts(api, capture.id, {
         // Words sent through the inbox never had audio; asking is a 404 by
@@ -199,6 +199,9 @@ export function RecordingRow({
          * player is closed, so a tap anywhere on the row toggles it.
          */
         <div className="recording__head">
+          {/* The click is the checkbox's own, relayed by its label; the
+              keyboard path is the checkbox itself, so no key handler here. */}
+          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */}
           <label
             className="recording__select"
             htmlFor={checkId}
@@ -206,7 +209,7 @@ export function RecordingRow({
               // The click that follows the long press which started this mode
               // lands on this label; letting it through would toggle the
               // checkbox straight back off. See `NoteRow`.
-              if (longPress.consumeClick()) event.preventDefault();
+              if (longPress.consumeClick(event)) event.preventDefault();
             }}
           >
             <span className="recording__check">
@@ -268,8 +271,8 @@ export function RecordingRow({
             className="recording__summary"
             aria-expanded={expanded}
             aria-controls={bodyId}
-            onClick={() => {
-              if (longPress.consumeClick()) return;
+            onClick={(event) => {
+              if (longPress.consumeClick(event)) return;
               onToggle();
             }}
             {...longPress.handlers}
@@ -379,17 +382,17 @@ export function RecordingRow({
           {capture.status === 'needs_target' && <TargetPrompt capture={capture} />}
 
           {running ? (
-            <p className="screen__count" role="status">
+            <p className="screen__count">
               Being filed. The recording and its transcript will be here once it has been
               saved into the note.
             </p>
           ) : unreachable ? (
-            <p className="screen__count" role="status">
+            <p className="screen__count">
               The recording and its transcript need a connection. The note&rsquo;s text is on
               this device.
             </p>
           ) : artifacts.isLoading ? (
-            <p className="screen__count" role="status">
+            <p className="screen__count">
               Loading the recording…
             </p>
           ) : textOnly ? (
@@ -435,6 +438,9 @@ export function RecordingRow({
                 requests to a bucket whose rule already allows this origin;
                 `runDownload` also asks for `no-store`.
               */}
+              {/* The recording's transcript is the panel under this player,
+                  as text and by segment; a caption track would repeat it. */}
+              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
               <audio ref={audioRef} src={audioUrl} preload="metadata" crossOrigin="anonymous" />
 
               <div className="player__controls">

@@ -21,8 +21,13 @@ import { cacheNoteDetail, cacheNoteList, forgetNote } from '@/offline/notesCache
 import { useApi } from '../ApiProvider.tsx';
 import type { NoteCreateWire, NoteDetailWire, NoteListQuery, NoteWire, Page } from '../schema.ts';
 
-import { newlyAppendedNoteIds } from './captures.ts';
-import { SEARCH_CORPUS_KEY, invalidateNoteLists, queryKeys } from './keys.ts';
+import {
+  OFFLINE_NOTES_KEY,
+  SEARCH_CORPUS_KEY,
+  invalidateNoteLists,
+  isNoteListKey,
+  queryKeys,
+} from './keys.ts';
 
 /**
  * Writes a note or a page of notes to the device, and never lets that failure
@@ -59,7 +64,7 @@ function tellDeviceReaders(queryClient: QueryClient): void {
   deviceReadersPending.add(queryClient);
   setTimeout(() => {
     deviceReadersPending.delete(queryClient);
-    void queryClient.invalidateQueries({ queryKey: ['notes', 'offline'] });
+    void queryClient.invalidateQueries({ queryKey: OFFLINE_NOTES_KEY });
   }, 0);
 }
 
@@ -182,42 +187,26 @@ export function useSearchCorpus(enabled = true) {
   });
 }
 
-/** The detail query's key and fetch, shared by every observer of one note. */
-function useNoteQueryOptions(noteId: string | undefined) {
+/**
+ * One note, body and captures. While any capture is still filing the note
+ * screen asks after those captures on its own (`useInFlightCaptures`), reads
+ * this query again when one settles, and refreshes the lists and the corpus
+ * when one has crossed into `appended` — that comparison lives there, with
+ * the screen, rather than in this fetch, which the tab bar observes too.
+ */
+export function useNote(noteId: string | undefined) {
   const api = useApi();
   const queryClient = useQueryClient();
-  return {
+  return useQuery({
     queryKey: queryKeys.note(noteId ?? ''),
     queryFn: async () => {
-      const previous = queryClient.getQueryData<NoteDetailWire>(queryKeys.note(noteId ?? ''));
       const note = await api.getNote(noteId as string);
       // The only place a full note — body and captures — enters the device.
       remember(() => cacheNoteDetail(note), queryClient);
-      /*
-       * A capture of this note crossed into `appended` since the last read:
-       * the body on screen just grew, and so did the list's snippet and the
-       * corpus. The same reconciliation the library's poll does, because the
-       * library's poll is not running while this screen is.
-       */
-      if (
-        previous &&
-        newlyAppendedNoteIds(previous.captures ?? [], note.captures ?? []).length > 0
-      ) {
-        void queryClient.invalidateQueries({ queryKey: ['notes'] });
-        void queryClient.invalidateQueries({ queryKey: SEARCH_CORPUS_KEY });
-      }
       return note;
     },
-  };
-}
-
-/**
- * One note, body and captures. While any capture is still filing the note
- * screen asks after those captures on its own (`useInFlightCaptures`) and
- * this query is read again when one settles.
- */
-export function useNote(noteId: string | undefined) {
-  return useQuery({ ...useNoteQueryOptions(noteId), enabled: Boolean(noteId) });
+    enabled: Boolean(noteId),
+  });
 }
 
 /**
@@ -303,11 +292,6 @@ export function recordSavedNote(queryClient: QueryClient, saved: NoteDetailWire)
   });
   // A tag added or removed changes the chips as well as the row.
   void queryClient.invalidateQueries({ queryKey: queryKeys.tags() });
-}
-
-/** `['notes', { …NoteListQuery }]` — the server lists, not the device's `['notes', 'offline', …]`. */
-function isNoteListKey(key: QueryKey): boolean {
-  return key[0] === 'notes' && typeof key[1] === 'object' && key[1] !== null;
 }
 
 type NoteLists = [QueryKey, InfiniteData<Page<NoteWire>> | undefined][];

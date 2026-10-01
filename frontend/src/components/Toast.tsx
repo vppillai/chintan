@@ -52,11 +52,12 @@ function emit(): void {
   for (const listener of listeners) listener();
 }
 
-/** Shows this notice, replacing whatever was showing — unless it is weak (see `weak`). */
-export function showToast(notice: ToastNotice): void {
-  if (notice.weak && current?.action && !current.weak) return;
+/** Shows this notice, replacing whatever was showing — unless it is weak (see `weak`); false when it was kept away. */
+export function showToast(notice: ToastNotice): boolean {
+  if (notice.weak && current?.action && !current.weak) return false;
   current = notice;
   emit();
+  return true;
 }
 
 export function dismissToast(): void {

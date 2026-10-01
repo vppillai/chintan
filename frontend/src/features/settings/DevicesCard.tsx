@@ -407,6 +407,7 @@ export function DevicesCard() {
               placeholder="Watch, Shortcut on the phone…"
               autoComplete="off"
               // The row that was just tapped became this field; the caret should be in it.
+              // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus
               onChange={(event) => {
                 setName(event.target.value);

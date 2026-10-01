@@ -1,10 +1,6 @@
-import {
-  CANCEL_DX_PX,
-  HOLD_ARM_MS,
-  LOCK_DY_PX,
-  MIN_TALK_MS,
-  TAP_SLOP_PX,
-} from './holdTiming.ts';
+import { GESTURE_SLOP_PX } from '@/hooks/gesture.ts';
+
+import { CANCEL_DX_PX, HOLD_ARM_MS, LOCK_DY_PX, MIN_TALK_MS } from './holdTiming.ts';
 import { hasBufferedAudio, isCaptureBusy, type CaptureModel } from './machine.ts';
 
 /**
@@ -255,7 +251,7 @@ function move(gesture: Gesture, x: number, y: number): GestureStep {
   const dy = y - gesture.originY;
   if (gesture.phase === 'armed') {
     // A fast slide is a hold from the first frame, not a tap that moved.
-    if (Math.hypot(dx, dy) < TAP_SLOP_PX) return step(gesture);
+    if (Math.hypot(dx, dy) < GESTURE_SLOP_PX) return step(gesture);
     const armed = arm(gesture);
     if (armed.gesture.phase !== 'holding') return armed;
     const next = move(armed.gesture, x, y);

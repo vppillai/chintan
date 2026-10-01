@@ -441,46 +441,6 @@
 }
 
 /* --------------------------------------------------------------------------
-   Record button — "Into this note" while a note is open
-   -------------------------------------------------------------------------- */
-
-/*
- * The caption is a small pill riding the bar's top edge above the disc, so
- * the bar keeps its height and the mic stays the one record control on the
- * screen. A child of the bar itself, centred on it, which centres it on the
- * disc: the bar's middle column is the disc's. Not inside the disc or its
- * cell, because the layout sweep reads an overflowing child as a container
- * that scrolls, and the hold's clock, its notices and the first-run coach
- * are wider than the cell. The cell keeps its width on every screen so the
- * bar's geometry does not change with the route, and anchors the lock pill.
- */
-.tab-bar__record {
-  position: relative;
-  min-inline-size: 7.5rem;
-}
-
-.tab-bar__into {
-  position: absolute;
-  inset-block-start: -0.75rem;
-  inset-inline-start: 50%;
-  padding: var(--space-1) var(--space-2);
-  background-color: var(--color-ink);
-  border-radius: var(--radius-full);
-  box-shadow: var(--shadow-sm);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  line-height: var(--line-height-normal);
-  color: var(--color-ground);
-  white-space: nowrap;
-  pointer-events: none;
-  translate: -50% 0;
-  /* The hold's clock wears a dot or a padlock before it. */
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-/* --------------------------------------------------------------------------
    Drawer — Details or Share, at the foot of the scroll region
    -------------------------------------------------------------------------- */
 

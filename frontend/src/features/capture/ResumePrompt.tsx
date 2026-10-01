@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useState } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
+import { queryKeys } from '@/api/queries.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import type { StoredCapture } from '@/offline/db.ts';
 
@@ -9,8 +10,6 @@ import { discardCapture, unconfirmedCaptures } from './buffer.ts';
 import { isCaptureBusy } from './machine.ts';
 import { useCaptureStore } from './store.ts';
 import { uploadCapture } from './uploader.ts';
-
-export const UNSENT_CAPTURES_KEY = ['captures', 'unsent'] as const;
 
 /**
  * Offers back a recording that never reached the server.
@@ -32,7 +31,7 @@ export function ResumePrompt() {
   const [error, setError] = useState<string | null>(null);
 
   const { data } = useQuery({
-    queryKey: UNSENT_CAPTURES_KEY,
+    queryKey: queryKeys.unsentCaptures(),
     queryFn: () => unconfirmedCaptures(),
     // Read once on boot. Nothing else creates entries behind the app's back:
     // a live capture drives this state itself.
@@ -41,7 +40,7 @@ export function ResumePrompt() {
   });
 
   const refresh = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: UNSENT_CAPTURES_KEY });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.unsentCaptures() });
     void queryClient.invalidateQueries({ queryKey: ['captures'] });
   }, [queryClient]);
 

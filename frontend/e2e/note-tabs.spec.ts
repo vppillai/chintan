@@ -653,7 +653,7 @@ test('with the keyboard up, the banner mic records into the note being typed in'
   const body = page.getByRole('textbox', { name: 'Note body' });
   await expect(body).toBeVisible();
   const banner = page.locator('.app__banner');
-  const mic = banner.getByRole('button', { name: 'Record into this note (while typing)' });
+  const mic = banner.getByRole('button', { name: 'Record into this note' });
   const bannerBox = await banner.boundingBox();
   await expect(mic).toBeHidden();
 
@@ -677,6 +677,13 @@ test('with the keyboard up, the banner mic records into the note being typed in'
 
   await body.blur();
   await expect(mic).toBeHidden();
+
+  // Find's box is typed into too, but it is not the note: no mic for it.
+  await page.getByRole('button', { name: 'Find in note' }).click();
+  await expect(page.getByRole('searchbox', { name: 'Find in note' })).toBeFocused();
+  await expect(mic).toBeHidden();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('searchbox', { name: 'Find in note' })).toHaveCount(0);
 
   // Typed words are saved before the recording starts: the editor's
   // debounced save flushes as the note screen unmounts.
@@ -720,7 +727,7 @@ test('offline on a 360 px phone, the banner mic leaves the offline pill on one l
     document.documentElement.setAttribute('data-keyboard', '');
   });
   await body.focus();
-  const mic = banner.getByRole('button', { name: 'Record into this note (while typing)' });
+  const mic = banner.getByRole('button', { name: 'Record into this note' });
   await expect(mic).toBeVisible();
   // The mic squeezed the pill onto two lines at 360–393 px, and the banner grew.
   expect((await pill.boundingBox())!.height).toBe(pillBefore);

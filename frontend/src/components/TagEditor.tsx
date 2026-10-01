@@ -48,10 +48,12 @@ export function TagEditor({
   };
 
   return (
-    <section className="tag-editor">
-      <h2 className="tag-editor__label" id={listId}>
+    <section className="tag-editor" aria-labelledby={listId}>
+      {/* A caption that names the section and the list, not a heading: the
+          sheet has one heading, its own (PR 218 review). */}
+      <p className="tag-editor__label" id={listId}>
         {label}
-      </h2>
+      </p>
 
       <ul className="tag-list" role="list" aria-labelledby={listId}>
         {values.map((value) => (

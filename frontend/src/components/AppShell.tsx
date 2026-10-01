@@ -20,7 +20,7 @@ import { usePushWakeup } from '@/pwa/usePushWakeup.ts';
 
 import { BannerRecord } from './BannerRecord.tsx';
 import { RecordingIndicator } from './RecordingIndicator.tsx';
-import { StatusRegion } from './StatusRegion.tsx';
+import { StatusRegion, announce } from './StatusRegion.tsx';
 import { TabBar } from './TabBar.tsx';
 import { Toast } from './Toast.tsx';
 import { Wordmark } from './Wordmark.tsx';
@@ -87,6 +87,16 @@ export function AppShell() {
   usePushWakeup();
 
   const screen = screenForPath(location.pathname);
+  /*
+   * The screen is said as it lands. A hold locked on the tab bar arrives at
+   * the capture screen mid-take: the news is that it carries on without the
+   * finger, not which screen this is.
+   */
+  const handsFree =
+    screen === 'capture' && (location.state as { handsFree?: boolean } | null)?.handsFree === true;
+  useEffect(() => {
+    announce(handsFree ? 'Recording, hands-free' : `${SCREEN_TITLES[screen]} screen`);
+  }, [screen, handsFree]);
 
   /*
    * The settings, read once for the session (round-3 T48). The note screen
@@ -185,14 +195,7 @@ export function AppShell() {
           A hold locked on the tab bar arrives here mid-take: the news is that
           it carries on without the finger, not which screen this is.
         */}
-        <StatusRegion
-          message={
-            screen === 'capture' &&
-            (location.state as { handsFree?: boolean } | null)?.handsFree === true
-              ? 'Recording, hands-free'
-              : `${SCREEN_TITLES[screen]} screen`
-          }
-        />
+        <StatusRegion />
       </div>
     </>
   );

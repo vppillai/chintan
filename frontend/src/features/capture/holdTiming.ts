@@ -12,8 +12,6 @@
 
 /** A press longer than this is a hold; a shorter one is a tap. */
 export const HOLD_ARM_MS = 250;
-/** Movement beyond this arms the hold at once: a fast slide is not a tap. */
-export const TAP_SLOP_PX = 10;
 /** Fewer milliseconds of audio than this is a slip, not a message. */
 export const MIN_TALK_MS = 600;
 /** Leftward from the press point; crossing it cancels. */

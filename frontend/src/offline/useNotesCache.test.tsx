@@ -7,7 +7,9 @@ import { TestProviders, testApiContext, testQueryClient } from '@/test/providers
 
 import { resetDatabaseHandle } from './db.ts';
 import { cacheNoteDetail, cacheNoteList, cachedNote } from './notesCache.ts';
-import { cacheKeys, PREFETCH_BODIES, useCachedNotes } from './useNotesCache.ts';
+import { OFFLINE_NOTES_KEY, queryKeys } from '@/api/queries/keys.ts';
+
+import { PREFETCH_BODIES, useCachedNotes } from './useNotesCache.ts';
 
 /**
  * The idle prefetch of note bodies.
@@ -167,9 +169,9 @@ describe('the first page\'s bodies reach the device on their own', () => {
       }),
     );
     await cacheNoteList(rest);
-    await queryClient.invalidateQueries({ queryKey: ['notes', 'offline'] });
+    await queryClient.invalidateQueries({ queryKey: OFFLINE_NOTES_KEY });
     await vi.waitFor(() => {
-      expect(queryClient.getQueryData(cacheKeys.notes('active'))).toHaveLength(PREFETCH_BODIES);
+      expect(queryClient.getQueryData(queryKeys.offlineNotes('active'))).toHaveLength(PREFETCH_BODIES);
     });
     // Let the re-render commit and the (immediate) idle callback run.
     await new Promise((resolve) => setTimeout(resolve, 10));

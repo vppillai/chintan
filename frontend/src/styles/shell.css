@@ -86,7 +86,7 @@
  *
  * With the keyboard up the tab bar and its disc are under it, so the note
  * screen shows a mic at the banner's right end while one of the note's fields
- * has focus. The banner is its own grid row, so the mic cannot cover a
+ * has focus (`data-editing` on `<html>`, set by `useKeyboardInset`). The banner is its own grid row, so the mic cannot cover a
  * character of the note. It takes the 44 px target out of the banner's
  * vertical padding (the negative block margin), so the row keeps its height
  * and nothing below it moves. Shown by CSS alone: `display: none` otherwise
@@ -124,16 +124,8 @@
   background: var(--color-surface);
 }
 
-:root[data-keyboard]
-  .app[data-screen='note']:has(
-    :is(
-        .note-title-input,
-        .note-body-input,
-        .checklist-editor input,
-        .checklist-editor textarea
-      ):focus
-  )
-  .banner-record,
+/* Typing into the note (`data-editing`, `useKeyboardInset`) with the keyboard up. */
+:root[data-keyboard][data-editing] .app[data-screen='note'] .banner-record,
 :root[data-keyboard] .app[data-screen='note'] .banner-record:focus {
   display: grid;
   /* `--motion-duration-fast` is 1 ms under reduced motion: it simply appears. */
@@ -310,151 +302,6 @@
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   letter-spacing: var(--letter-spacing-wide);
-}
-
-/* --------------------------------------------------------------------------
-   Push-to-talk on the bar (R8, F5)
-
-   Held, the Home slot is "Slide to cancel" and the You slot the live level;
-   a lock hands the take to the capture screen. Each sits in its tab's grid cell over
-   the hidden tab, so the bar keeps its height and nothing above it moves.
-   Only the disc wears the accent; the pills are ink and ground.
-   -------------------------------------------------------------------------- */
-
-.tab-bar__slot--start {
-  grid-area: 1 / 1;
-}
-
-.tab-bar__slot--end {
-  grid-area: 1 / 3;
-}
-
-.tab-bar[data-hold] > a.tab-bar__tab {
-  visibility: hidden;
-}
-
-/* The disc follows the finger, a size up, ringed as a held control is. */
-.tab-bar[data-hold='holding'] .record-button {
-  transform: translate(var(--hold-dx), var(--hold-dy)) scale(1.2);
-  box-shadow:
-    0 0 0 var(--space-3) var(--color-accent-soft),
-    var(--shadow-lg);
-  transition: box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-/*
- * "‹ Slide to cancel": drifts with half the finger's travel and fades toward
- * the line, but never closer than the gutter to the screen's left edge.
- * `--cancel-rest-left` is its resting left edge, set by TabBar; unset, the
- * floor is far enough away to change nothing.
- */
-.tab-bar__cancel {
-  display: flex;
-  align-items: center;
-  justify-self: center;
-  gap: var(--space-1);
-  max-inline-size: 100%;
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-tight);
-  color: var(--color-muted);
-  opacity: calc(1 - 0.6 * var(--hold-cancel));
-  translate: max(calc(var(--hold-dx) * 0.5), calc(var(--space-4) - var(--cancel-rest-left, 100vw))) 0;
-}
-
-/* Close to the line it turns destructive and shows the bin. */
-.tab-bar__cancel[data-near] {
-  color: var(--color-destructive);
-}
-
-.tab-bar__cancel-glyph {
-  flex: none;
-  display: none;
-}
-
-.tab-bar__cancel[data-near] .tab-bar__cancel-glyph {
-  display: block;
-}
-
-.tab-bar__level {
-  display: grid;
-  justify-self: center;
-  inline-size: 4rem;
-  block-size: 1.75rem;
-}
-
-.tab-bar__level .waveform {
-  color: var(--color-muted);
-}
-
-/* The lock pill above the disc: an open padlock over a chevron that bobs. */
-.tab-bar__lock {
-  position: absolute;
-  inset-block-end: calc(100% + 2 * var(--space-2) + 0.75rem);
-  inset-inline-start: 50%;
-  display: grid;
-  justify-items: center;
-  align-content: space-between;
-  inline-size: var(--layout-touch-target-min);
-  block-size: calc(var(--layout-touch-target-min) * 2.25);
-  padding-block: var(--space-3);
-  background-color: var(--color-raised);
-  border: 1px solid var(--color-line-strong);
-  border-radius: var(--radius-full);
-  box-shadow: var(--shadow-md);
-  color: var(--color-ink);
-  pointer-events: none;
-  translate: -50% 0;
-  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.tab-bar__lock[data-leaning='cancel'] {
-  opacity: 0.4;
-}
-
-/* The padlock comes down to meet the finger as it nears the line. */
-.tab-bar__padlock {
-  translate: 0 calc(var(--hold-lock) * 2.5rem);
-}
-
-.tab-bar__chevrons {
-  animation: tab-bar-bob 1.2s var(--motion-ease-standard) infinite;
-}
-
-@keyframes tab-bar-bob {
-  50% {
-    translate: 0 calc(-1 * var(--space-1));
-  }
-}
-
-.tab-bar__dot {
-  inline-size: 0.25rem;
-  block-size: 0.25rem;
-  border-radius: var(--radius-full);
-  background-color: var(--color-ground);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .tab-bar[data-hold='holding'] .record-button {
-    transform: none;
-  }
-
-  .tab-bar__cancel,
-  .tab-bar__padlock {
-    translate: none;
-  }
-
-  /* No continuous fade: one step, with the colour, at 60 % of the way. */
-  .tab-bar__cancel {
-    opacity: 1;
-  }
-
-  .tab-bar__cancel[data-near] {
-    opacity: 0.7;
-  }
-
-  .tab-bar__chevrons {
-    animation: none;
-  }
 }
 
 /* --------------------------------------------------------------------------

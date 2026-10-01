@@ -39,7 +39,61 @@ export const KEYBOARD_INSET_PROPERTY = '--keyboard-inset';
 export const KEYBOARD_ATTRIBUTE = 'data-keyboard';
 const KEYBOARD_MIN_PX = 80;
 
+/**
+ * Set on `<html>` while one of the note's own fields — the title, the body,
+ * a checklist row — has focus, so with `data-keyboard` the two together mean
+ * "typing into the note": the keyboard is up for this field. Read from focus
+ * events here, once, rather than by a `:has(…:focus)` chain in the sheet
+ * (review 2026-10-01, FE-13). The scope is the note's fields on purpose:
+ * Find's box, a tag field or the drawer's are typed into too, but the mic
+ * records *into the note being written*, and was never offered from them.
+ */
+export const EDITING_ATTRIBUTE = 'data-editing';
+const NOTE_FIELDS = '.note-title-input, .note-body-input, .checklist-editor';
+
+/** Whether focus on `target` is typing into the note (see `EDITING_ATTRIBUTE`). */
+function isEditingNote(target: EventTarget | null): boolean {
+  return (
+    (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) &&
+    target.closest(NOTE_FIELDS) !== null
+  );
+}
+
+/** The focusable `<input>` types that take no typed text, so no keyboard rises for them. */
+const UNTYPED_INPUTS = new Set(['button', 'checkbox', 'color', 'file', 'image', 'radio', 'range', 'reset', 'submit']);
+
+/**
+ * Whether `target` is a field text is typed into: a textarea, an `<input>`
+ * of a typed kind, or contenteditable. A checkbox, a radio or a button is
+ * not, so a key pressed on one belongs to the app (`keyTaken`).
+ */
+export function isEditing(target: EventTarget | null): boolean {
+  if (target instanceof HTMLTextAreaElement) return true;
+  if (target instanceof HTMLInputElement) return !UNTYPED_INPUTS.has(target.type);
+  // Strictly a boolean: `toggleAttribute` with an undefined `force` toggles.
+  return target instanceof HTMLElement && target.isContentEditable === true;
+}
+
 export function useKeyboardInset(): void {
+  useEffect(() => {
+    const root = document.documentElement;
+    // `focusout` fires before the next field has focus, so the field it is
+    // going to is read from the event rather than from `activeElement`.
+    const onFocusIn = (event: FocusEvent): void => {
+      root.toggleAttribute(EDITING_ATTRIBUTE, isEditingNote(event.target));
+    };
+    const onFocusOut = (event: FocusEvent): void => {
+      root.toggleAttribute(EDITING_ATTRIBUTE, isEditingNote(event.relatedTarget));
+    };
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
+    return () => {
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', onFocusOut);
+      root.removeAttribute(EDITING_ATTRIBUTE);
+    };
+  }, []);
+
   useEffect(() => {
     const viewport = window.visualViewport;
     if (!viewport) return;

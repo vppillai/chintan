@@ -10,10 +10,12 @@ import { failureText, type Notice } from './labels.ts';
 /**
  * Asks the server to transcribe one recording again. The 202 carries the
  * capture back at `transcribing`, which is written straight onto the cached
- * note so the row wears the stage strip before the refetch; the note query
- * then follows the pipeline as it does for a new recording. A 404 is a
- * backend older than the route, and is said as "not yet" rather than as a
- * missing recording.
+ * note so the row wears the stage strip at once; from there the screen's
+ * capture poll (`useInFlightCaptures`) follows the run as it does for a new
+ * recording and reads the note when it lands. The note is not refetched
+ * here: the body has not changed, and a refetch only replaced the patch with
+ * the same capture a round trip later. A 404 is a backend older than the
+ * route, and is said as "not yet" rather than as a missing recording.
  */
 export function useRetranscribeCapture(noteId: string, onNotice: (notice: Notice) => void) {
   const api = useApi();
@@ -29,7 +31,6 @@ export function useRetranscribeCapture(noteId: string, onNotice: (notice: Notice
             }
           : current,
       );
-      void queryClient.invalidateQueries({ queryKey: queryKeys.note(noteId) });
       void queryClient.invalidateQueries({ queryKey: ['captures'] });
     },
     onError: (error) => {

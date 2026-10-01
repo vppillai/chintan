@@ -7,7 +7,7 @@ import { TestProviders, testApiContext, testQueryClient } from '@/test/providers
 
 import type { NoteDetailWire, NoteWire } from '../schema.ts';
 
-import { queryKeys } from './keys.ts';
+import { OFFLINE_NOTES_KEY, invalidateNoteLists, queryKeys } from './keys.ts';
 import { recordSavedNote, refreshNoteLists, remember, useNotes } from './notes.ts';
 
 /**
@@ -150,6 +150,28 @@ describe('the cost of keeping the lists current', () => {
   });
 });
 
+describe('invalidateNoteLists', () => {
+  it('marks the server lists and the tag chips stale, and leaves the device’s copies alone', () => {
+    // Every invalidation of an offline key re-reads the whole store from
+    // IndexedDB; `remember` tells those readers once the refetched list has
+    // been written there, so a mutation has no reason to wake them first.
+    const queryClient = testQueryClient();
+    queryClient.setQueryData(queryKeys.notes(), { pages: [], pageParams: [] });
+    queryClient.setQueryData(queryKeys.notes({ state: 'archived' }), { pages: [], pageParams: [] });
+    queryClient.setQueryData(queryKeys.tags(), []);
+    queryClient.setQueryData(queryKeys.offlineNotes('active'), []);
+    queryClient.setQueryData(queryKeys.offlineNote('note-1'), null);
+
+    invalidateNoteLists(queryClient);
+
+    expect(queryClient.getQueryState(queryKeys.notes())?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(queryKeys.notes({ state: 'archived' }))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(queryKeys.tags())?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(queryKeys.offlineNotes('active'))?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(queryKeys.offlineNote('note-1'))?.isInvalidated).toBe(false);
+  });
+});
+
 describe('remember', () => {
   it('tells the device’s readers once per tick, however many writes landed', async () => {
     const queryClient = testQueryClient();
@@ -163,6 +185,6 @@ describe('remember', () => {
     });
 
     expect(invalidate).toHaveBeenCalledTimes(1);
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['notes', 'offline'] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: OFFLINE_NOTES_KEY });
   });
 });

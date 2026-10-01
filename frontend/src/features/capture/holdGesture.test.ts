@@ -10,13 +10,9 @@ import {
   type HoldSource,
   type MicPermission,
 } from './holdGesture.ts';
-import {
-  CANCEL_DX_PX,
-  HOLD_ARM_MS,
-  LOCK_DY_PX,
-  MIN_TALK_MS,
-  TAP_SLOP_PX,
-} from './holdTiming.ts';
+import { GESTURE_SLOP_PX } from '@/hooks/gesture.ts';
+
+import { CANCEL_DX_PX, HOLD_ARM_MS, LOCK_DY_PX, MIN_TALK_MS } from './holdTiming.ts';
 import { INITIAL_CAPTURE, type CaptureModel } from './machine.ts';
 
 /** A recording running since `since`, as the store's model has it. */
@@ -86,8 +82,8 @@ describe('the hold gesture', () => {
   });
 
   it('arms at once on a slide past the slop, as a fast slide is no tap', () => {
-    expect(play([down(), move(-(TAP_SLOP_PX - 1), 0)]).gesture.phase).toBe('armed');
-    const { gesture, types } = play([down(), move(-TAP_SLOP_PX, 0)]);
+    expect(play([down(), move(-(GESTURE_SLOP_PX - 1), 0)]).gesture.phase).toBe('armed');
+    const { gesture, types } = play([down(), move(-GESTURE_SLOP_PX, 0)]);
     expect(gesture.phase).toBe('holding');
     expect(types).toEqual(['start']);
   });

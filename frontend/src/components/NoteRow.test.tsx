@@ -64,8 +64,8 @@ function swipeOpen(): HTMLElement {
   fireEvent.pointerMove(row, { ...touch, clientX: 280, clientY: 10 });
   fireEvent.pointerMove(row, { ...touch, clientX: 160, clientY: 10 });
   fireEvent.pointerUp(row, { ...touch, clientX: 160, clientY: 10 });
-  // The browser's click for the lifted finger, which the row swallows.
-  fireEvent.click(screen.getByRole('button', { name: /roof repair/i }));
+  // The browser's click for the lifted finger (`detail` 1, as a pointer's), which the row swallows.
+  fireEvent.click(screen.getByRole('button', { name: /roof repair/i }), { detail: 1 });
   return screen.getByRole('group', { name: 'Actions for Roof repair' });
 }
 

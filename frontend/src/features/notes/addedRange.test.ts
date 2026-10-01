@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { addedItems, addedRange } from './NoteDetailScreen.tsx';
+import { addedItems, addedRange } from './TextPanel.tsx';
 
 describe('what a recording added, for Show (R7-6b)', () => {
   it('finds the paragraph appended to the body', () => {

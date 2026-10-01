@@ -7,6 +7,8 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 
+import { GESTURE_SLOP_PX } from './gesture.ts';
+import { useSwallowNextClick } from './swallowNextClick.ts';
 import { LONG_PRESS_MS } from './useLongPress.ts';
 
 /**
@@ -14,7 +16,7 @@ import { LONG_PRESS_MS } from './useLongPress.ts';
  * phone list teaches for "get rid of this".
  *
  * Pointer events, one implementation for a finger and a stylus. The gesture
- * has three phases. Until the pointer has travelled `SWIPE_SLOP_PX` nothing
+ * has three phases. Until the pointer has travelled `GESTURE_SLOP_PX` nothing
  * happens, so a tap is still a tap and the row's own click fires. At the slop
  * the gesture commits to an axis: more sideways than down, and it is a swipe
  * from here on; otherwise it is the scroll it looks like, and this hook stays
@@ -40,10 +42,9 @@ import { LONG_PRESS_MS } from './useLongPress.ts';
  *
  * The click the browser fires when the finger lifts after a drag is not a tap
  * and must not open the note; `onContentClickCapture` swallows exactly that
- * one click.
+ * one click (`useSwallowNextClick`).
  */
 
-const SWIPE_SLOP_PX = 10;
 /** How far past the tray's width the row can be pulled. */
 export const SWIPE_RUBBER_PX = 24;
 const RUBBER_FACTOR = 0.35;
@@ -103,8 +104,7 @@ export function useSwipeActions({
   const [open, setOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const gesture = useRef<Gesture | null>(null);
-  /** A drag just ended: the click the browser fires next is the finger lifting. */
-  const swallowClick = useRef(false);
+  const swallow = useSwallowNextClick();
 
   const close = useCallback(() => {
     if (openRow?.key === containerRef) openRow = null;
@@ -167,7 +167,7 @@ export function useSwipeActions({
 
   const onPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
-      swallowClick.current = false;
+      swallow.reset();
       // Only the primary button; a right-click or a second finger is not a drag.
       if (!enabled || event.button !== 0 || gesture.current) return;
       // Measured now rather than when the drag commits, so an open row knows
@@ -185,7 +185,7 @@ export function useSwipeActions({
         width,
       };
     },
-    [enabled, open, measureWidth],
+    [enabled, open, measureWidth, swallow],
   );
 
   const onPointerMove = useCallback(
@@ -196,7 +196,7 @@ export function useSwipeActions({
       const dy = event.clientY - g.startY;
 
       if (g.axis === 'undecided') {
-        if (Math.hypot(dx, dy) <= SWIPE_SLOP_PX) return;
+        if (Math.hypot(dx, dy) <= GESTURE_SLOP_PX) return;
         // Held still long enough to be a long press: whatever this drift is,
         // it is not a swipe. Nor is a movement that is more down than across.
         if (Date.now() - g.startedAt >= LONG_PRESS_MS || Math.abs(dy) >= Math.abs(dx)) {
@@ -239,10 +239,10 @@ export function useSwipeActions({
         settle(g.startOffset !== 0, g.width);
         return;
       }
-      swallowClick.current = true;
+      swallow.arm();
       settle(g.current < -g.width / 2, g.width);
     },
-    [settle],
+    [settle, swallow],
   );
 
   const onPointerUp = useCallback(
@@ -288,8 +288,7 @@ export function useSwipeActions({
 
   const onContentClickCapture = useCallback(
     (event: ReactMouseEvent<HTMLElement>) => {
-      if (swallowClick.current) {
-        swallowClick.current = false;
+      if (swallow.take(event)) {
         event.preventDefault();
         event.stopPropagation();
         return;
@@ -301,7 +300,7 @@ export function useSwipeActions({
         close();
       }
     },
-    [open, close],
+    [open, close, swallow],
   );
 
   return {

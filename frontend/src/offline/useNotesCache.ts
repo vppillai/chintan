@@ -9,9 +9,9 @@
  * server state: IndexedDB is on this device and always available, which is why
  * these declare `networkMode: 'always'`.
  *
- * The keys sit under the `notes` prefix on purpose, so
- * `invalidateQueries({ queryKey: ['notes'] })` after a mutation refreshes what
- * the device has stored along with what the server has.
+ * The keys (`queryKeys.offlineNotes`, `offlineNote`) sit under the `notes`
+ * prefix on purpose, so pull-to-refresh and the offline banner's lookup see
+ * the device's copies along with the server lists.
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -20,15 +20,11 @@ import { useEffect } from 'react';
 import { useApi, useSession } from '@/api/ApiProvider.tsx';
 import type { ChintanApi } from '@/api/endpoints.ts';
 import { ApiError } from '@/api/problem.ts';
+import { queryKeys } from '@/api/queries/keys.ts';
 import type { NoteDetailWire, NoteState, NoteWire } from '@/api/schema.ts';
 import type { Session } from '@/api/session.ts';
 
 import { cacheNoteDetail, cachedNote, cachedNotes, notesWithoutBody } from './notesCache.ts';
-
-export const cacheKeys = {
-  notes: (state: NoteState) => ['notes', 'offline', state] as const,
-  note: (noteId: string) => ['notes', 'offline', 'note', noteId] as const,
-};
 
 export interface CachedNotesOptions {
   /**
@@ -45,7 +41,7 @@ export function useCachedNotes(
   { prefetchBodies: wantBodies = false }: CachedNotesOptions = {},
 ) {
   const query = useQuery({
-    queryKey: cacheKeys.notes(state),
+    queryKey: queryKeys.offlineNotes(state),
     queryFn: () => cachedNotes(state),
     networkMode: 'always',
     /*
@@ -187,7 +183,7 @@ async function prefetchPass(api: ChintanApi, session: Session): Promise<boolean>
  */
 export function useCachedNote(noteId: string | undefined) {
   return useQuery({
-    queryKey: cacheKeys.note(noteId ?? ''),
+    queryKey: queryKeys.offlineNote(noteId ?? ''),
     queryFn: async (): Promise<NoteDetailWire | null> =>
       ((await cachedNote(noteId as string, { requireDetail: true })) as
         | NoteDetailWire

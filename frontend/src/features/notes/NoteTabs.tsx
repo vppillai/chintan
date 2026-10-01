@@ -186,6 +186,9 @@ export function NoteTabList({
 
   return (
     <div className="note-tabs">
+      {/* The tabs are the focusable parts (roving tabindex); the list only
+          relays the arrow keys they bubble up, so it needs no focus of its own. */}
+      {/* eslint-disable-next-line jsx-a11y/interactive-supports-focus */}
       <div
         className="note-tabs__list"
         role="tablist"

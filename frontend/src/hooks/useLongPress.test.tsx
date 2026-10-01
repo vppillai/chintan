@@ -9,8 +9,8 @@ function Row({ onLongPress, onTap }: { onLongPress: () => void; onTap: () => voi
     <button
       type="button"
       {...press.handlers}
-      onClick={() => {
-        if (press.consumeClick()) return;
+      onClick={(event) => {
+        if (press.consumeClick(event)) return;
         onTap();
       }}
     >
@@ -43,7 +43,8 @@ describe('useLongPress', () => {
     fireEvent.pointerDown(row, { pointerType: 'touch', clientX: 0, clientY: 0 });
     await wait(80);
     fireEvent.pointerUp(row, { pointerType: 'touch' });
-    fireEvent.click(row);
+    // The lift's click carries `detail` 1; jsdom's default 0 is a keyboard's.
+    fireEvent.click(row, { detail: 1 });
 
     expect(onLongPress).toHaveBeenCalledTimes(1);
     expect(onTap).not.toHaveBeenCalled();
@@ -86,7 +87,7 @@ describe('useLongPress', () => {
     fireEvent.pointerDown(row, { pointerType: 'mouse', button: 0, clientX: 0, clientY: 0 });
     await wait(80);
     fireEvent.pointerUp(row, { pointerType: 'mouse', button: 0 });
-    fireEvent.click(row);
+    fireEvent.click(row, { detail: 1 });
 
     expect(onLongPress).toHaveBeenCalledTimes(1);
     expect(onTap).not.toHaveBeenCalled();
@@ -111,7 +112,7 @@ describe('useLongPress', () => {
     row.dispatchEvent(fired);
     expect(fired.defaultPrevented).toBe(true);
     fireEvent.pointerUp(row, { pointerType: 'touch' });
-    fireEvent.click(row);
+    fireEvent.click(row, { detail: 1 });
 
     // With no press armed the browser's menu is the browser's business.
     const idle = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });

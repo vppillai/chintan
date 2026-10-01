@@ -47,8 +47,7 @@ describe('the record button', () => {
     const record = screen.getByRole('button', { name: 'Record' });
     expect(record.querySelector('svg path')).toHaveAttribute('d', PATHS.mic);
     expect(record).toHaveTextContent('Record');
-    expect(record).toHaveAttribute(
-      'aria-description',
+    expect(record).toHaveAccessibleDescription(
       'Hold to talk and release to send. While holding, slide up to lock or left to cancel.',
     );
     expect(record).toHaveAttribute('aria-keyshortcuts', 'R');
@@ -64,7 +63,8 @@ describe('the record button', () => {
     mountBar();
     const button = await holdAndSpeak();
     fireEvent.pointerUp(button, touch);
-    fireEvent.click(button);
+    // The browser's click after a long press carries `detail` 1.
+    fireEvent.click(button, { detail: 1 });
     expect(where()).toBe('/');
     await waitFor(() => {
       expect(captureState()).toBe('uploaded');
@@ -132,7 +132,7 @@ describe('the record button', () => {
     expect(captureState()).toBe('uploading');
     expect(document.querySelector('.tab-bar__into')).toHaveTextContent('Still sending the last one…');
     fireEvent.pointerUp(button, touch);
-    fireEvent.click(button);
+    fireEvent.click(button, { detail: 1 });
     expect(where()).toBe('/');
   });
 

@@ -12,6 +12,7 @@ import {
   type QueryClient,
   type UseMutationResult,
 } from '@tanstack/react-query';
+import { useEffect, useMemo, useRef } from 'react';
 
 import { useApi } from '../ApiProvider.tsx';
 import { ApiError } from '../problem.ts';
@@ -146,21 +147,11 @@ export function isFilingRelevant(capture: CaptureWire, now: number = Date.now())
 export function usePendingCaptures(enabled = true) {
   const api = useApi();
   const queryClient = useQueryClient();
-  return useQuery({
+  const query = useQuery({
     queryKey: queryKeys.pendingCaptures(),
     queryFn: async () => {
       const page = await api.listCaptures({ status: 'all', limit: CAPTURE_LIST_LIMIT });
-      const items = page.items.filter((capture) => isFilingRelevant(capture));
-      // Read from the cache rather than closed over: the library remounts on
-      // every visit and the comparison has to be with the last poll, not the
-      // last render.
-      const previous = queryClient.getQueryData<{ items: CaptureWire[] }>(
-        queryKeys.pendingCaptures(),
-      );
-      for (const noteId of newlyAppendedNoteIds(previous?.items, items)) {
-        refreshAppendedNote(queryClient, noteId);
-      }
-      return { items };
+      return { items: page.items.filter((capture) => isFilingRelevant(capture)) };
     },
     enabled,
     refetchInterval: (query) => capturePollInterval(query.state.data?.items ?? []),
@@ -179,6 +170,26 @@ export function usePendingCaptures(enabled = true) {
     refetchOnWindowFocus: 'always',
     staleTime: 0,
   });
+  /*
+   * What each poll does to the rest of the cache, done when its answer has
+   * landed rather than from inside the fetch: a queryFn that writes other
+   * queries runs before its own data is in the cache, which is the shape
+   * that needed R7-17d's once-only guard. The ref holds the last answer this
+   * mount saw; the library remounts on every visit, so on a remount it starts
+   * from the cached answer and the first fresh poll is compared with the last
+   * poll, not with nothing — and a cold start, with no answer before it,
+   * invalidates nothing.
+   */
+  const previous = useRef<readonly CaptureWire[] | undefined>(undefined);
+  useEffect(() => {
+    const items = query.data?.items;
+    if (!items) return;
+    for (const noteId of newlyAppendedNoteIds(previous.current, items)) {
+      refreshAppendedNote(queryClient, noteId);
+    }
+    previous.current = items;
+  }, [query.data, queryClient]);
+  return query;
 }
 
 /**
@@ -217,6 +228,11 @@ export function newlyAppendedNoteIds(
  */
 export function refreshAppendedNote(queryClient: QueryClient, noteId: string): void {
   void queryClient.invalidateQueries({ queryKey: queryKeys.note(noteId) });
+  refreshListsAfterAppend(queryClient);
+}
+
+/** The lists and the corpus alone, for a caller that has just read the note itself. */
+function refreshListsAfterAppend(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: ['notes'] });
   // The body just grew by a transcript; the corpus on the device should know
   // the words in it before the user goes looking for them.
@@ -256,43 +272,18 @@ export function useInFlightCaptures(
 ): void {
   const api = useApi();
   const queryClient = useQueryClient();
-  const moving =
-    noteId === undefined ? [] : (captures ?? []).filter((capture) => !isTerminalStatus(capture.status));
-  useQueries({
+  // Memoised so the effects below re-run when the note's captures change, not on every render.
+  const moving = useMemo(
+    () =>
+      noteId === undefined
+        ? []
+        : (captures ?? []).filter((capture) => !isTerminalStatus(capture.status)),
+    [noteId, captures],
+  );
+  const results = useQueries({
     queries: moving.map((capture) => ({
       queryKey: queryKeys.capture(capture.id),
-      queryFn: async () => {
-        const noteKey = queryKeys.note(noteId as string);
-        let fresh: CaptureWire;
-        try {
-          fresh = await api.getCapture(capture.id);
-        } catch (error) {
-          if (error instanceof ApiError && error.status === 404) {
-            void queryClient.invalidateQueries({ queryKey: noteKey });
-          }
-          throw error;
-        }
-        if (!isTerminalStatus(fresh.status)) {
-          queryClient.setQueryData<NoteDetailWire>(noteKey, (current) =>
-            current?.captures
-              ? {
-                  ...current,
-                  captures: current.captures.map((held) =>
-                    held.id === fresh.id ? { ...held, ...fresh } : held,
-                  ),
-                }
-              : current,
-          );
-          return fresh;
-        }
-        const appendedTo = newlyAppendedNoteIds([capture], [fresh]);
-        for (const id of appendedTo) refreshAppendedNote(queryClient, id);
-        // Once: a second invalidation would cancel the first read and start another.
-        if (!appendedTo.includes(noteId as string)) {
-          void queryClient.invalidateQueries({ queryKey: noteKey });
-        }
-        return fresh;
-      },
+      queryFn: () => api.getCapture(capture.id),
       // The note that listed it was just read, so the first ask waits a tick.
       initialData: capture,
       initialDataUpdatedAt: noteReadAt,
@@ -304,6 +295,74 @@ export function useInFlightCaptures(
       },
     })),
   });
+
+  /*
+   * What each answer does to the note, applied once per answer after it has
+   * landed rather than from inside the fetch (see `usePendingCaptures`). An
+   * answer is anything newer than the note's own copy — `initialData` is
+   * not one — and the map remembers which was applied, since the effect
+   * runs on every render of a screen that re-renders on each stage.
+   */
+  const applied = useRef(new Map<string, number>());
+  useEffect(() => {
+    if (noteId === undefined) return;
+    const noteKey = queryKeys.note(noteId);
+    results.forEach((result, index) => {
+      const capture = moving[index];
+      if (!capture) return;
+      const at = Math.max(result.dataUpdatedAt, result.errorUpdatedAt);
+      if (applied.current.get(capture.id) === at || at <= noteReadAt) return;
+      applied.current.set(capture.id, at);
+      if (result.errorUpdatedAt > result.dataUpdatedAt) {
+        if (result.error instanceof ApiError && result.error.status === 404) {
+          void queryClient.invalidateQueries({ queryKey: noteKey });
+        }
+        return;
+      }
+      const fresh = result.data;
+      if (!isTerminalStatus(fresh.status)) {
+        queryClient.setQueryData<NoteDetailWire>(noteKey, (current) =>
+          current?.captures
+            ? {
+                ...current,
+                captures: current.captures.map((held) =>
+                  held.id === fresh.id ? { ...held, ...fresh } : held,
+                ),
+              }
+            : current,
+        );
+        return;
+      }
+      // Appended into some other note (a re-target): that note is stale too.
+      for (const id of newlyAppendedNoteIds([capture], [fresh])) {
+        if (id !== noteId) refreshAppendedNote(queryClient, id);
+      }
+      // Once: the lists and the corpus follow when the reread lands (below).
+      void queryClient.invalidateQueries({ queryKey: noteKey });
+    });
+  }, [results, moving, noteId, noteReadAt, queryClient]);
+
+  /*
+   * A capture of this note crossed into `appended` since the last copy: the
+   * body on screen just grew, and so did the list's snippet and the corpus.
+   * The same reconciliation the library's poll does, because the library's
+   * poll is not running while this screen is — and it also catches a
+   * recording filed by another device that a focus refetch brought in,
+   * which no poll here was watching. Compared per note: a switch to another
+   * note starts from that note's own copy.
+   */
+  const seen = useRef<{ noteId: string | undefined; captures: readonly CaptureWire[] | undefined }>({
+    noteId: undefined,
+    captures: undefined,
+  });
+  useEffect(() => {
+    const previous = seen.current;
+    seen.current = { noteId, captures };
+    if (noteId === undefined || previous.noteId !== noteId || !captures) return;
+    if (newlyAppendedNoteIds(previous.captures, captures).length > 0) {
+      refreshListsAfterAppend(queryClient);
+    }
+  }, [noteId, captures, queryClient]);
 }
 
 /* ---------------------------------------------------------------------------

@@ -3,6 +3,14 @@ import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures.ts';
 
 /**
+ * The autosave indicator's own line. Its word is also said through the
+ * shell's status region (PR9-12), so a page-wide text lookup finds two.
+ */
+function saveIndicator(page: Page, text: RegExp) {
+  return page.locator('.save-indicator').filter({ hasText: text });
+}
+
+/**
  * Recording with no connection, then reconnecting.
  *
  * The product cannot absorb losing a recording. This asserts the ordering that
@@ -375,7 +383,7 @@ test('an edit made offline is queued on the device and flushed on reconnect', as
   // Not "Couldn't save": nothing has gone wrong, and the edit is somewhere
   // durable. This is the sentence the client used to assert on every offline
   // failure while writing nothing anywhere.
-  await expect(page.getByText(/saved on this device — will sync/i)).toBeVisible();
+  await expect(saveIndicator(page, /saved on this device — will sync/i)).toBeVisible();
 
   // Durable in fact, not in copy.
   const queued = await page.evaluate(async () => {
@@ -417,7 +425,7 @@ test('three offline edits to one note are one queued write, not three', async ({
   const body = page.getByRole('textbox', { name: 'Note body' });
   for (const text of ['One.', 'One. Two.', 'One. Two. Three.']) {
     await body.fill(text);
-    await expect(page.getByText(/saved on this device — will sync/i)).toBeVisible();
+    await expect(saveIndicator(page, /saved on this device — will sync/i)).toBeVisible();
   }
 
   const queued = await page.evaluate(async () => {
@@ -465,7 +473,7 @@ test('an edit made offline is still shown when the note is reopened offline, and
 
   const body = page.getByRole('textbox', { name: 'Note body' });
   await body.fill('Ridge tiles slipped. Ellis quoted nine hundred.');
-  await expect(page.getByText(/saved on this device — will sync/i)).toBeVisible();
+  await expect(saveIndicator(page, /saved on this device — will sync/i)).toBeVisible();
 
   // Leave by the Home tab and come back from the library: in-app moves, so
   // the document is kept and `navigator.onLine` stays false.
@@ -473,7 +481,7 @@ test('an edit made offline is still shown when the note is reopened offline, and
   await page.getByRole('button', { name: /roof repair/i }).click();
 
   await expect(body).toHaveValue('Ridge tiles slipped. Ellis quoted nine hundred.');
-  await expect(page.getByText(/saved on this device — will sync/i)).toBeVisible();
+  await expect(saveIndicator(page, /saved on this device — will sync/i)).toBeVisible();
 
   // The device's copy carries it too, for a reopen after the tab is gone.
   const cachedBody = await page.evaluate(async () => {
@@ -493,7 +501,7 @@ test('an edit made offline is still shown when the note is reopened offline, and
   await body.focus();
   await body.press('End');
   await body.pressSequentially(' Confirmed.');
-  await expect(page.getByText(/saved on this device — will sync/i)).toBeVisible();
+  await expect(saveIndicator(page, /saved on this device — will sync/i)).toBeVisible();
 
   api.offline = false;
   await context.setOffline(false);
@@ -542,7 +550,7 @@ test('the queued banner clears once the edit reaches the server', async ({
   await context.setOffline(true);
 
   await page.getByRole('textbox', { name: 'Note body' }).fill('Ellis quoted nine hundred.');
-  await expect(page.getByText(/saved on this device — will sync/i)).toBeVisible();
+  await expect(saveIndicator(page, /saved on this device — will sync/i)).toBeVisible();
 
   api.offline = false;
   await context.setOffline(false);
@@ -552,8 +560,8 @@ test('the queued banner clears once the edit reaches the server', async ({
     .toContain('Ellis quoted nine hundred.');
 
   // The claim is now false, so it must stop being made.
-  await expect(page.getByText(/saved on this device — will sync/i)).toHaveCount(0);
-  await expect(page.getByText('Saved')).toBeVisible();
+  await expect(saveIndicator(page, /saved on this device — will sync/i)).toHaveCount(0);
+  await expect(saveIndicator(page, /^Saved$/)).toBeVisible();
   // And nothing is left waiting.
   await expect(page.getByText(/waiting to sync/i)).toHaveCount(0);
 });
@@ -571,7 +579,7 @@ test('a queued edit the server refuses says so, instead of promising a sync', as
   await context.setOffline(true);
 
   await page.getByRole('textbox', { name: 'Note body' }).fill('Ellis quoted nine hundred.');
-  await expect(page.getByText(/saved on this device — will sync/i)).toBeVisible();
+  await expect(saveIndicator(page, /saved on this device — will sync/i)).toBeVisible();
 
   // The server rejects it on its merits when it finally sees it. Replaying will
   // never help, and neither will telling the user it is about to sync.
@@ -579,10 +587,10 @@ test('a queued edit the server refuses says so, instead of promising a sync', as
   api.offline = false;
   await context.setOffline(false);
 
-  await expect(page.getByText(/saved on this device — will sync/i)).toHaveCount(0, {
+  await expect(saveIndicator(page, /saved on this device — will sync/i)).toHaveCount(0, {
     timeout: 20_000,
   });
-  await expect(page.getByText(/too long to store/i)).toBeVisible();
+  await expect(saveIndicator(page, /too long to store/i)).toBeVisible();
 });
 
 /**
@@ -603,7 +611,7 @@ test('a queued edit refused as a conflict is offered back: Keep my edits sends i
   api.offline = true;
   await context.setOffline(true);
   await page.getByRole('textbox', { name: 'Note body' }).fill('Ellis quoted nine hundred.');
-  await expect(page.getByText(/saved on this device — will sync/i)).toBeVisible();
+  await expect(saveIndicator(page, /saved on this device — will sync/i)).toBeVisible();
 
   // Another device wrote first; the flush's replay is refused.
   api.conflictOnce = true;
@@ -620,7 +628,7 @@ test('a queued edit refused as a conflict is offered back: Keep my edits sends i
   await expect
     .poll(() => api.notes['roof-repair']?.body, { timeout: 20_000 })
     .toBe('Ellis quoted nine hundred.');
-  await expect(page.getByText('Saved')).toBeVisible();
+  await expect(saveIndicator(page, /^Saved$/)).toBeVisible();
   await expect(page.getByText(/waiting to sync/i)).toHaveCount(0);
 });
 
@@ -636,7 +644,7 @@ test('a queued edit refused as a conflict can be dropped for the newer version, 
   api.offline = true;
   await context.setOffline(true);
   await page.getByRole('textbox', { name: 'Note body' }).fill('Ellis quoted nine hundred.');
-  await expect(page.getByText(/saved on this device — will sync/i)).toBeVisible();
+  await expect(saveIndicator(page, /saved on this device — will sync/i)).toBeVisible();
 
   api.conflictOnce = true;
   api.offline = false;
@@ -649,7 +657,7 @@ test('a queued edit refused as a conflict can be dropped for the newer version, 
     'Ridge tiles slipped. Ellis quoted nine hundred.',
   );
   // The retired entry goes with the choice: no "did not save", nothing counted.
-  await expect(page.getByText(/did not save/i)).toHaveCount(0);
+  await expect(saveIndicator(page, /did not save/i)).toHaveCount(0);
   await expect(page.getByText(/waiting to sync/i)).toHaveCount(0);
   const queued = await page.evaluate(async () => {
     const open = indexedDB.open('chintan');

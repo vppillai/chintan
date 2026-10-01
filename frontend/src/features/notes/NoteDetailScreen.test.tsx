@@ -256,7 +256,7 @@ describe('what was just saved is what the app shows next', () => {
     });
     await user.type(body, ' more words here.');
     await user.tab();
-    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(await screen.findByText('Saved', { selector: '.save-indicator' })).toBeInTheDocument();
     expect(api.patches).toEqual([
       expect.objectContaining({ version: 1, status: 200 }),
     ]);
@@ -304,7 +304,7 @@ describe('what was just saved is what the app shows next', () => {
     await user.clear(title);
     await user.type(title, 'Renamed');
     await user.tab();
-    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(await screen.findByText('Saved', { selector: '.save-indicator' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /back to\s*notes/i }));
     expect(await screen.findByRole('button', { name: /^renamed/i })).toBeInTheDocument();
@@ -339,12 +339,14 @@ describe('a note whose recording is still filing keeps asking', () => {
       duration_ms: 5_000,
     };
     const api = server([{ ...ROOF, body: 'Only paragraph.', captures: [moving] }]);
-    mount(api.fetchImpl, '/notes/roof-repair');
+    const { queryClient } = mount(api.fetchImpl, '/notes/roof-repair');
+    const invalidated = vi.spyOn(queryClient, 'invalidateQueries');
 
     const body = await screen.findByRole('textbox', { name: 'Note body' });
     await waitFor(() => {
       expect(body).toHaveValue('Only paragraph.');
     });
+    expect(invalidated).not.toHaveBeenCalledWith({ queryKey: ['notes'] });
 
     // The worker finishes between two polls.
     act(() => {
@@ -365,6 +367,9 @@ describe('a note whose recording is still filing keeps asking', () => {
     // The capture was asked after; the note itself once more, for the body.
     expect(api.captureGets).toBeGreaterThan(0);
     expect(api.gets).toBe(2);
+    // And the library's lists, whose snippet just grew: the same reconciliation
+    // the library's poll does, from the note's own copy crossing into appended.
+    expect(invalidated).toHaveBeenCalledWith({ queryKey: ['notes'] });
     // Settled: nothing left to ask about, so the polling stops.
     await vi.advanceTimersByTimeAsync(CAPTURE_POLL_FAST_MS + 200);
     const after = api.gets + api.captureGets;
@@ -775,7 +780,8 @@ describe('the note is panels under one strip', () => {
       await loaded();
       await openPanel(user, 'Details');
 
-      const section = screen.getByRole('heading', { name: 'Note id' }).closest('section')!;
+      // A caption, not a heading: the section is named by it (FE-22).
+      const section = screen.getByRole('region', { name: 'Note id' });
       expect(within(section).getByText('roof-repair')).toHaveClass('note-id');
       expect(section).toHaveTextContent('X-Chintan-Note-Id');
       await user.click(within(section).getByRole('button', { name: 'Copy note id' }));
@@ -1296,7 +1302,7 @@ describe('a recording filed while the user was typing', () => {
       expect(screen.queryByText(/changed elsewhere/i)).toBeNull();
     });
     expect(body).toHaveValue('v1 body mine\n\nFrom the recording.');
-    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(await screen.findByText('Saved', { selector: '.save-indicator' })).toBeInTheDocument();
     expect(api.notes.get('roof-repair')?.body).toBe('v1 body mine\n\nFrom the recording.');
     expect(api.patches.at(-1)).toEqual(expect.objectContaining({ version: 2, status: 200 }));
   });
@@ -1334,7 +1340,7 @@ describe('a recording filed while the user was typing', () => {
     await waitFor(() => {
       expect(screen.queryByText(/changed elsewhere/i)).toBeNull();
     });
-    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(await screen.findByText('Saved', { selector: '.save-indicator' })).toBeInTheDocument();
     expect(api.notes.get('roof-repair')?.body).toBe('v1 body mine');
   });
 });

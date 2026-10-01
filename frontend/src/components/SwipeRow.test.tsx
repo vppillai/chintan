@@ -87,8 +87,8 @@ describe('SwipeRow', () => {
     const row = swipe('row');
 
     drag(row, -40);
-    // The finger lifting fires the browser's click on the button underneath.
-    fireEvent.click(screen.getByRole('button', { name: 'row' }));
+    // The finger lifting fires the browser's click (`detail` 1) on the button underneath.
+    fireEvent.click(screen.getByRole('button', { name: 'row' }), { detail: 1 });
 
     expect(row).not.toHaveAttribute('data-open');
     expect(row.style.getPropertyValue('--swipe-x')).toBe('0px');
@@ -96,6 +96,18 @@ describe('SwipeRow', () => {
 
     // The next tap is a tap again.
     fireEvent.click(screen.getByRole('button', { name: 'row' }));
+    expect(onTap).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a keyboard activation through after a swipe no click followed', () => {
+    // Chromium fires no click after a touch that moved, so the swallow armed
+    // at the lift waits for the next click. Enter on the row's button carries
+    // `detail` 0 and is the person's own; before the shared helper the row ate
+    // it (review 2026-10-01, FE-15).
+    const onTap = vi.fn();
+    render(<Row onTap={onTap} />);
+    drag(swipe('row'), -40);
+    fireEvent.click(screen.getByRole('button', { name: 'row' }), { detail: 0 });
     expect(onTap).toHaveBeenCalledTimes(1);
   });
 
@@ -237,13 +249,13 @@ describe('SwipeRow', () => {
     const row = swipe('row');
 
     drag(row, -100);
-    fireEvent.click(screen.getByRole('button', { name: 'row' })); // the lift
+    fireEvent.click(screen.getByRole('button', { name: 'row' }), { detail: 1 }); // the lift
     fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
     expect(onArchive).toHaveBeenCalledTimes(1);
     expect(row).not.toHaveAttribute('data-open');
 
     drag(row, -100);
-    fireEvent.click(screen.getByRole('button', { name: 'row' })); // the lift
+    fireEvent.click(screen.getByRole('button', { name: 'row' }), { detail: 1 }); // the lift
     fireEvent.click(screen.getByRole('button', { name: 'row' })); // a tap on the open row
     expect(row).not.toHaveAttribute('data-open');
     expect(onTap).not.toHaveBeenCalled();
