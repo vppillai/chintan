@@ -398,11 +398,24 @@ func (s *CaptureService) IngestAudio(ctx context.Context, userID string, req Cap
 	if err := s.objects.PutTagged(ctx, stored.AudioKey, body, contentType, upload.CaptureAudioTags(settings.RetentionDays)); err != nil {
 		// Best effort: a row with nothing behind it would otherwise sit at
 		// uploaded until the stuck-capture sweep fails it.
-		_ = s.store.DeleteCapture(ctx, userID, stored.ID)
+		s.discardEmptyRow(ctx, userID, stored.ID)
 		return model.CaptureIndex{}, fmt.Errorf("failed to store audio: %w", err)
 	}
 	logCaptureCreated(ctx, stored, contentType)
 	return stored, nil
+}
+
+// discardEmptyRow is the compensation for an object write that failed after
+// its row landed. A delete that fails too is said aloud (R7-13's standard):
+// silently, the row sits at uploaded until the stuck-capture sweep fails it,
+// and the sweep's refusal of a retry (R7-11) then has nothing in the logs
+// to explain it.
+func (s *CaptureService) discardEmptyRow(ctx context.Context, userID, captureID string) {
+	if err := s.store.DeleteCapture(ctx, userID, captureID); err != nil {
+		obs.Log(ctx).Warn("could not remove the capture row after its object write failed; the stuck-capture sweep will fail it",
+			slog.String("capture_id", captureID),
+			slog.String("error", err.Error()))
+	}
 }
 
 // IngestText is POST /v1/inbox/text: a capture that arrives already
@@ -434,7 +447,7 @@ func (s *CaptureService) IngestText(ctx context.Context, userID string, req Capt
 		return model.CaptureIndex{}, fmt.Errorf("failed to store capture: %w", err)
 	}
 	if err := s.objects.Put(ctx, rawKey, []byte(text), "text/plain"); err != nil {
-		_ = s.store.DeleteCapture(ctx, userID, stored.ID)
+		s.discardEmptyRow(ctx, userID, stored.ID)
 		return model.CaptureIndex{}, fmt.Errorf("failed to store text: %w", err)
 	}
 	logCaptureCreated(ctx, stored, "text/plain")
