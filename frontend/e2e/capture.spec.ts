@@ -670,40 +670,45 @@ test('a hold dragged up locks: it keeps recording with the button up, and Send s
  * off it. A real touch, through Chromium's own touch pipeline, slides left
  * 110 px from where it pressed and lets go; nothing may be uploaded.
  */
-test.describe('on a 412 px phone, by touch', () => {
-  test.use({ hasTouch: true, isMobile: true, viewport: { width: 412, height: 915 } });
+for (const [width, height] of [
+  [412, 915],
+  [360, 780],
+] as const) {
+  test.describe(`on a ${String(width)} px phone, by touch`, () => {
+    test.use({ hasTouch: true, isMobile: true, viewport: { width, height } });
 
-  test('sliding left 110 px from the press point cancels the recording, and nothing is uploaded', async ({
-    page,
-    api,
-  }) => {
-    const sent = puts(page);
-    await page.goto('/');
-    const { x, y } = await discCentre(page);
-    const cdp = await page.context().newCDPSession(page);
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
-    // Held well past the arm, with audio recorded.
-    await page.waitForTimeout(1_500);
-    const steps = 10;
-    const to = x - 110;
-    for (let i = 1; i <= steps; i += 1) {
-      await cdp.send('Input.dispatchTouchEvent', {
-        type: 'touchMove',
-        touchPoints: [{ x: x + ((to - x) * i) / steps, y }],
-      });
-    }
-    // The finger is still down, and the hint says it is over.
-    await expect(page.locator('.tab-bar__into')).toHaveText('Cancelled');
-    await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('status')).toHaveText(
-      'Cancelled',
-    );
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    test('sliding left 110 px from the press point cancels the recording, and nothing is uploaded', async ({
+      page,
+      api,
+    }) => {
+      const sent = puts(page);
+      await page.goto('/');
+      const { x, y } = await discCentre(page);
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+      // Held well past the arm, with audio recorded.
+      await page.waitForTimeout(1_500);
+      const steps = 10;
+      const to = x - 110;
+      for (let i = 1; i <= steps; i += 1) {
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [{ x: x + ((to - x) * i) / steps, y }],
+        });
+      }
+      // The finger is still down, and the hint says it is over.
+      await expect(page.locator('.tab-bar__into')).toHaveText('Cancelled');
+      await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('status')).toHaveText(
+        'Cancelled',
+      );
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
 
-    await page.waitForTimeout(1_000);
-    expect(sent).toHaveLength(0);
-    expect(api.captures).toHaveLength(0);
-    // Nothing recording either: no "tap to return" row, and the bar at rest.
-    await expect(page.locator('.recording-indicator')).toHaveCount(0);
-    await expect(page).toHaveURL(/\/$/);
+      await page.waitForTimeout(1_000);
+      expect(sent).toHaveLength(0);
+      expect(api.captures).toHaveLength(0);
+      // Nothing recording either: no "tap to return" row, and the bar at rest.
+      await expect(page.locator('.recording-indicator')).toHaveCount(0);
+      await expect(page).toHaveURL(/\/$/);
+    });
   });
-});
+}

@@ -255,6 +255,16 @@ describe('the hold gesture', () => {
     expect(types).toEqual(['discard', 'cancelFeedback', 'notice']);
   });
 
+  it('swallows the click after an Escape inside the arm, so it does not open /capture', () => {
+    const { gesture, types } = play([
+      down(),
+      { type: 'escape', now: 100, model: INITIAL_CAPTURE },
+      up(150, INITIAL_CAPTURE),
+    ]);
+    expect(gesture.phase).toBe('idle');
+    expect(types).toEqual(['suppressClick']);
+  });
+
   it('ignores a second press while one is down', () => {
     const first = held();
     expect(holdReducer(first, down({ now: 500 })).gesture).toBe(first);

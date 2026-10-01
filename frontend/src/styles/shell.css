@@ -383,6 +383,15 @@
     translate: none;
   }
 
+  /* No continuous fade: one step, with the colour, at 60 % of the way. */
+  .tab-bar__cancel {
+    opacity: 1;
+  }
+
+  .tab-bar__cancel[data-near] {
+    opacity: 0.7;
+  }
+
   .tab-bar__chevrons {
     animation: none;
   }

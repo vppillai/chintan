@@ -378,7 +378,9 @@ export function holdReducer(gesture: Gesture, event: GestureEvent): GestureStep 
           notice('cancelled'),
         );
       }
-      if (gesture.phase === 'armed') return step({ ...gesture, phase: 'standdown' });
+      // Escape inside the arm: nothing started, and the click the release
+      // sends must not open /capture either.
+      if (gesture.phase === 'armed') return step({ ...gesture, phase: 'standdown', suppress: true });
       return step(gesture);
   }
 }

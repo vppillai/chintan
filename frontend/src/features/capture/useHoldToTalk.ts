@@ -112,6 +112,21 @@ function inField(target: EventTarget | null): boolean {
   return target.isContentEditable || target.closest('input, textarea, select') !== null;
 }
 
+/**
+ * Whether a key belongs to something else on the page: a field, a dialog or
+ * menu that is open, or a handler that already took it. Escape closing Find,
+ * a ⋮ menu or a dialog must not also discard a locked take, and R typed or
+ * pressed behind a modal must not start one. As `SelectionBar` does.
+ */
+function keyTaken(event: KeyboardEvent): boolean {
+  return (
+    event.defaultPrevented ||
+    event.repeat ||
+    inField(event.target) ||
+    document.querySelector('[role="dialog"], [role="menu"]') !== null
+  );
+}
+
 export function useHoldToTalk({
   noteId,
   onSent,
@@ -220,11 +235,14 @@ export function useHoldToTalk({
       const { gesture: after, effects } = holdReducer(before, event);
       current.current = after;
       if (after !== before) setGesture(after);
-      if (after.phase === 'armed' && before.phase !== 'armed') {
+      // The arm's tick, and again if a timer fired early (a throttled tab
+      // clamps them both ways), for what is left of the arm.
+      if (after.phase === 'armed' && (before.phase !== 'armed' || event.type === 'tick')) {
         clearTimeout(timers.current.arm);
+        const left = Math.max(0, HOLD_ARM_MS - (Date.now() - after.pressedAt));
         timers.current.arm = setTimeout(() => {
           dispatchRef.current({ type: 'tick', now: Date.now() });
-        }, HOLD_ARM_MS);
+        }, left);
       }
       if (after.discardArmedUntil !== null && after.discardArmedUntil !== before.discardArmedUntil) {
         clearTimeout(timers.current.confirm);
@@ -301,12 +319,12 @@ export function useHoldToTalk({
       !event.metaKey &&
       !event.shiftKey;
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (keyTaken(event)) return;
       if (event.key === 'Escape' && current.current.phase !== 'idle') {
         dispatch({ type: 'escape', now: Date.now(), model: model() });
         return;
       }
-      if (!isR(event) || event.repeat || inField(event.target)) return;
-      press('key');
+      if (isR(event)) press('key');
     };
     const onKeyUp = (event: KeyboardEvent): void => {
       if (event.key.toLowerCase() !== 'r' || current.current.source !== 'key') return;
@@ -416,6 +434,11 @@ export function useHoldToTalk({
     },
     discard: () => {
       dispatch({ type: 'discard', now: Date.now(), model: model() });
+      // The Discard button goes with the locked bar; focus goes back to the
+      // disc rather than being dropped on the page.
+      if (current.current.phase === 'idle') {
+        document.querySelector<HTMLButtonElement>('.record-button')?.focus();
+      }
     },
   };
 }

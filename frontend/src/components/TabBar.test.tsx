@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { HOLD_ARM_MS, LOCK_DY_PX, MIN_TALK_MS } from '@/features/capture/holdTiming.ts';
 import { captureState, endHold, fake, mountBar, resetHold, speak, spoken, touch, wait, where } from '@/test/hold.tsx';
+import { useCaptureStore } from '@/features/capture/store.ts';
 import { TEST_NOTES } from '@/test/providers.tsx';
 
 import { PATHS } from './Icon.tsx';
@@ -122,17 +123,67 @@ describe('holding the record button', () => {
     expect(fake.creates).toHaveLength(0);
   });
 
-  it('discards a short locked take from the Discard button', async () => {
+  it('discards a short locked take from the Discard button, and gives focus back to the disc', async () => {
     mountBar('/');
     const disc = await press();
     fireEvent.pointerMove(disc, { ...touch, clientX: 200, clientY: 800 - LOCK_DY_PX });
     fireEvent.pointerUp(disc, touch);
-    fireEvent.click(screen.getByRole('button', { name: 'Discard recording' }));
+    const discard = screen.getByRole('button', { name: 'Discard recording' });
+    discard.focus();
+    fireEvent.click(discard);
     await waitFor(() => {
       expect(captureState()).toBe('idle');
     });
     expect(nav()).not.toHaveAttribute('data-hold');
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Record' }));
     expect(fake.creates).toHaveLength(0);
+  });
+
+  it('keeps a locked take when Escape belongs to something else: a field, or an open dialog or menu', async () => {
+    mountBar('/');
+    const disc = await press();
+    fireEvent.pointerMove(disc, { ...touch, clientX: 200, clientY: 800 - LOCK_DY_PX });
+    fireEvent.pointerUp(disc, touch);
+    // Escape closing the note's Find field.
+    const find = document.createElement('input');
+    find.type = 'search';
+    document.body.append(find);
+    fireEvent.keyDown(find, { key: 'Escape' });
+    find.remove();
+    // Escape closing a dialog, and a ⋮ menu.
+    for (const role of ['dialog', 'menu']) {
+      const open = document.createElement('div');
+      open.setAttribute('role', role);
+      document.body.append(open);
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+      open.remove();
+    }
+    // Escape that a handler already took.
+    const taken = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    taken.preventDefault();
+    document.body.dispatchEvent(taken);
+    await wait(50);
+    expect(captureState()).toBe('recording');
+    expect(nav()).toHaveAttribute('data-hold', 'locked');
+    // Escape that is the page's own still discards.
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    await waitFor(() => {
+      expect(captureState()).toBe('idle');
+    });
+  });
+
+  it('labels the clock with the recording\'s own target, not the route\'s', async () => {
+    mountBar('/notes/roof-repair');
+    const disc = await press();
+    expect(pill()).toHaveTextContent('Into this note');
+    fireEvent.pointerMove(disc, { ...touch, clientX: 200, clientY: 800 - LOCK_DY_PX });
+    fireEvent.pointerUp(disc, touch);
+    // Retargeted to a new note (as from the capture screen's chooser): the
+    // route is still the note, the pill follows the recording.
+    act(() => {
+      useCaptureStore.getState().setTarget(null);
+    });
+    expect(pill()).not.toHaveTextContent('Into this note');
   });
 
   it('sends from the locked disc', async () => {
@@ -149,6 +200,18 @@ describe('holding the record button', () => {
       expect(captureState()).toBe('uploaded');
     });
     expect(fake.creates).toHaveLength(1);
+  });
+
+  it('does not record from R while a dialog or menu is open', async () => {
+    mountBar('/');
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    document.body.append(dialog);
+    fireEvent.keyDown(document.body, { key: 'r' });
+    await wait(HOLD_ARM_MS + 50);
+    expect(captureState()).toBe('idle');
+    fireEvent.keyUp(document.body, { key: 'r' });
+    dialog.remove();
   });
 
   it('holds R from the page, but not from a field or with a modifier', async () => {

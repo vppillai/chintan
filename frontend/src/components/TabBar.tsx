@@ -122,7 +122,10 @@ export function TabBar() {
   const locked = phase === 'locked';
   const active = holding || locked;
   const progress = holdProgress(hold.gesture);
-  const clock = `${formatElapsed(model.elapsedMs)}${into !== null ? ' · Into this note' : ''}`;
+  // The recording's own target, not the route's: a locked take aimed at a
+  // note keeps saying so on Home, and one aimed at a new note says nothing
+  // when you open a note.
+  const clock = `${formatElapsed(model.elapsedMs)}${model.noteId !== null ? ' · Into this note' : ''}`;
 
   let pill: ReactNode = null;
   if (notice) pill = NOTICES[notice].pill;
@@ -146,7 +149,9 @@ export function TabBar() {
   const spoken = notice
     ? NOTICES[notice].spoken
     : locked
-      ? 'Locked. Recording hands-free.'
+      ? model.state === 'requesting'
+        ? 'Allow the microphone…'
+        : 'Locked. Recording hands-free.'
       : holding
         ? 'Recording'
         : '';

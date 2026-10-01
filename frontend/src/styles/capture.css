@@ -58,7 +58,7 @@
   padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
 }
 
-/* A row drawn on its own — this device's upload on /talk or a note's Recordings tab — is its own tray. */
+/* A row drawn on its own — this device's upload on a note's Recordings tab — is its own tray. */
 .filing-row:not(.filing__tray .filing-row) {
   background-color: var(--color-notice);
   border-radius: var(--radius-lg);
