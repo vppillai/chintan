@@ -28,11 +28,13 @@ Text the person edited inside that paragraph is overwritten, and the confirm
 says so. For a checklist each recording's items are extracted again with the
 current items prompt (`Pipeline.extractItems`) and swapped for the items it
 produced last time; ticks are kept (`keepTick`, below); items the person typed
-have no recording and stay. The whole-note cleaned view is regenerated
-afterwards when the note has one (`cleanNoteAfter`), once, after the last
-recording, rather than after each — with `auto_clean` every append would
+have no recording and stay. A plain note's whole-note cleaned view is
+regenerated afterwards when the note has one (`cleanNoteAfter`), once, after
+the last recording, rather than after each — with `auto_clean` every append would
 have queued a run and every run but the last would have been superseded
-after its model call was billed.
+after its model call was billed. A checklist has no such view since #195:
+`cleanNoteAfter` returns at once for one (R8-F8), and the list is tidied
+only when asked (`checklists.md`, "Tidy up").
 
 Not re-run: transcription (that is the per-recording "Transcribe again",
 `POST /v1/captures/{id}/retranscribe`, which costs a speech call and may
@@ -75,7 +77,7 @@ is invoked once with the note and the ids (`TaskRegenerateNote`,
 and nothing is queued, when nothing qualifies. The spend gate answers first,
 as it does for `/clean`: the run is `N` cleanup calls, each reserved and
 priced like any other (`meter.OpCleanup`; measured p50 143 µ$ a call,
-`prompts.md`), so a capped instance is told before anything is reset. A note
+`prompts.md`), so a capped instance is told before anything is reset. A plain note
 that keeps a cleaned view adds one whole-note call (`meter.OpCleanNote`) over
 its entire body after the last recording lands — larger than any one
 recording's call, since it reads the body whole — and only when a recording
@@ -184,12 +186,13 @@ wrote the block and died from one that never wrote; and it means a typed
 line with the same words as a new item folds into the block rather than
 staying as a duplicate. The deletion rule holds: a pass that finds none of
 the OLD words leaves the list alone, even when a typed line carries one of
-the new words. Sub-items (`checklists.md`, one level since #130): the match
-ignores indent and the block is written at the top level, so a recording's
-item the person had nested comes back at the top, and a typed sub-item that
-followed a removed parent now nests under whatever stands above it;
-`parseChecklist` clamps an orphan, so nothing breaks, but the depth is the
-person's to put back.
+the new words. Sub-items (`checklists.md`, three levels since #191; `cleanup.MaxDepth = 2`, 0-based):
+the match ignores indent, and the block is written with the recording's own
+indent (`checklistItems` in `append.go`), so a recording's item the person
+had moved to another level comes back at the depth the recording gives it,
+and a typed sub-item that followed a removed parent now nests under whatever
+stands above it; `parseChecklist` clamps an orphan, so nothing breaks, but a
+depth the person chose is theirs to put back.
 
 `keepTick` carries a tick to the new line with the same words, wherever the
 new prompt put it; when no words match at all and the counts agree it falls

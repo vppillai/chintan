@@ -155,9 +155,10 @@ export interface NoteWire {
 }
 
 /**
- * `tasks` is the one mode a checklist is cleaned in — the list rewritten as
- * granular, actionable items — and the server refuses it for a plain note and
- * the other two for a checklist.
+ * `polished` and `structured` are a plain note's cleaned view. `tasks` is the
+ * checklist's: not a view kept beside the list since round 8, but what Tidy up
+ * list asks for and writes into the body (`useTidyList.ts`). The server
+ * refuses `tasks` for a plain note and the other two for a checklist.
  */
 export type NoteCleanMode = 'polished' | 'structured' | 'tasks';
 

@@ -62,8 +62,9 @@ Text · Cleaned · Recordings (N); on a checklist note, Items · Recordings (N)
 the body (R8-F8, `checklists.md` "Tidy up"), and a `?tab=cleaned` there
 lands on Items. The count includes an upload still on its way. `useNoteTab`
 decides which is open: the URL's `?tab=` first — a deep link is an explicit
-request, and the capture screen's "Record into this" lands on
-`?tab=recordings` — then the tab this session last used for the note
+request; the capture screen sets none, since `captureReturnPath` brings a
+recording back to the note on whichever tab it was left (`capture-ux.md`,
+"Recording into a note, and coming back") — then the tab this session last used for the note
 (`sessionStorage`, `chintan.note-tab.<id>`), then Text: the note is the
 document, the other two are a reading of it and its sources. Choosing a tab
 writes both the memory and the URL, replacing the history entry rather than
@@ -288,6 +289,41 @@ bar, or tapping the mirror, brings the textarea back with the caret on the
 match that was current. On a checklist the mirror shows the raw lines,
 marked. The Recordings tab is not searchable; the bar stays, greyed, and says
 so. Enter is next, Shift+Enter previous, Escape closes.
+
+## The Recordings tab
+
+The sources a note was written from, as dated rows (`features/notes/
+Recordings.tsx`, one row `recordings/RecordingRow.tsx`): newest first, the
+newest *finished* recording open on arrival, one row open at a time — a
+closed row has no `<audio>`, which is what makes "one plays at a time" hold
+without a registry. A recording still uploading or filing is the first row
+and wears the library's upload bar or stage strip (`recordings/labels.ts`
+names the stages and the sources: "From Watch", `heardAs`). A row that
+arrived as text has no player. An open row holds the player (`usePlayer.ts`)
+with the waveform drawn from `peaks.json` as a real slider
+(`WaveformScrubber.tsx`, `role="slider"`, arrow keys seek) and the transcript
+(`TranscriptPanel.tsx`): Raw is timestamped and seeks on tap, Cleaned is the
+text that became the note and never seeks, because cleanup reorders clauses
+and a proportional alignment would land on a plausible wrong place.
+
+The row's More menu: Move to…, Delete recording, Download audio, "Transcribe
+again in <language>" on a settled row (`recordings/useRetranscribeCapture.ts`:
+`POST /v1/captures/{id}/retranscribe` answers 202 with the row back at
+`transcribing`, written onto the cached note so the strip shows before the
+refetch), Copy this transcript / cleaned text while open, and Select. A long
+press (`useLongPress`) or Select enters a selection mode: the drawer hides
+(`NoteDetailScreen`, `selectingRecordings`) and a `SelectionBar`
+(`components/SelectionBar.tsx`, "Recording actions", two fixed lines, Escape
+cancels) offers move, delete and download for several rows. On a phone the
+row swipes aside for Delete and Move (N8), the same dialog and sheet. Move
+opens `MoveSheet.tsx`: the active notes most recently touched first, a
+filter, "New note…" with a title (`new_note_title`), never the archive or
+the note itself; the dictated paragraph goes with the recording, as a delete
+takes it. Several downloads are one zip built on the device
+(`zipRecordings.ts`: the manifest from `GET /v1/notes/{id}/recordings/urls`,
+fetched one at a time with progress, stored not deflated via `fflate`).
+What an action did is said on the notice line under the rows. Tests:
+`Recordings.test.tsx`, `e2e/recordings.spec.ts`, `e2e/playback.spec.ts`.
 
 ## What holds it
 
