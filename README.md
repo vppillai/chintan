@@ -8,7 +8,7 @@ In the app, each with its design note under [`docs/design/`](docs/design/README.
 
 - **Hold to talk** on the record disc: hold, slide left to cancel, slide up to lock into the full recording screen; Space, R and Esc on a keyboard (`capture-ux.md`).
 - **The Filing tray** on Home: every recording on its way, its receipt when it lands, one Clear all (`capture-ux.md`, "Receipts on Home").
-- **An app-like Back stack**: Back closes the sheet, the menu or the selection before it leaves the screen, and the library keeps its scroll (`home.md`, "Back").
+- **An app-like Back stack**: Home is always the first history entry, You and the archive sit at the second, and the library comes back at its scroll (`home.md`, "Back").
 - **Tidy up list** in a checklist's ⋮ menu: the list as it stands rewritten as the list it was meant to be, with Undo (`checklists.md`, "Tidy up").
 - **Swipe between a note's tabs** — Text, Cleaned, Recordings — with a drag that yields to scrolling and to the recordings' own swipes (`note-screen.md`, "The swipe").
 - **Pinned notes**, up to fifty, dragged into order at the top of Home (`pins.md`).
@@ -235,7 +235,7 @@ The table name is derived from the instance; the bucket is read from the stack's
 | Workflow | Commands |
 |---|---|
 | Bootstrap an account | `scripts/bootstrap-agent.sh` once as an administrator, then `scripts/setup.sh`; `scripts/doctor.sh` says what is left. |
-| Deploy an instance | `gh workflow run deploy-backend.yaml` (the frontend follows), or `scripts/bootstrap.sh` from your own machine; `scripts/list-instances.sh --format text` shows what would deploy. Both build the two arm64 Lambda packages with `scripts/build-lambda.sh`; `scripts/lib/common.sh` is what every script sources. |
+| Deploy an instance | `gh workflow run deploy-backend.yaml` (the frontend follows), or `scripts/bootstrap.sh` from your own machine; `scripts/list-instances.sh --format text` shows what would deploy. Both build the two arm64 Lambda packages with `scripts/build-lambda.sh`; `scripts/lib/common.sh` is what every other script sources. |
 | Invite, reset, disable or offboard a user | `scripts/invite-user.sh` (`--disable`, `--delete`); `chintanctl erase` before a delete |
 | Recover failed processing | The app's Retry for one capture; `chintanctl reconcile` for what the table and the bucket disagree about. |
 | Back up, restore, export | `chintanctl backup` and `chintanctl restore`; `chintanctl export` for a vault Obsidian opens. |

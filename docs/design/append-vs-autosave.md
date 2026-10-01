@@ -112,10 +112,11 @@ is a fixed string the frontend matches, like `type` for the spend cap. Fixture:
 
 ## The version the editor saves on (#201)
 
-The editor's PATCH carries the note's `version`, and three things bump it
-without touching the words: a clean request the moment it is accepted, the
-worker's answer to it, and the poll that brings either. `useNoteEditor.ts`
-therefore has one rule in three places: **the version moves only when the
+The editor's PATCH carries the note's `version`, and two things bump it
+without touching the words: a clean request the moment it is accepted, and
+the worker's answer to it; the poll only delivers the new version to the
+editor, it makes none. `useNoteEditor.ts` therefore has one rule in three
+places: **the version moves only when the
 words did not.** The sync effect, on a newer `note`, resets a settled editor
 to it, and otherwise rebases the draft onto the new version when the
 server's text is what this editor last saved (`sameText`); the 409 path

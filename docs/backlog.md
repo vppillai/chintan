@@ -99,7 +99,7 @@ Performance (cold, Fast 3G + 4× CPU): library interactive ~2.95 s, `/capture` ~
 4. D1 cleanup modes (needs your call on the three-mode proposal), D2/D3/D4 recording actions.
 5. D5 Ask, D9 telemetry, D11 docs.
 
-Historical: this is the 4 September plan, kept as written; every item on it shipped by round 5 (PR9-22, 2026-10-01).
+Historical: this is the 4 September plan, kept as written; every item on it but D9 (telemetry, still at design) shipped by round 5 (PR9-22, 2026-10-01).
 
 ## Added 2026-09-05
 

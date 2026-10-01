@@ -14,10 +14,11 @@ the app sends one on every mutating request (the uploader keys a capture on
 the recording's `localId`, so every attempt at the same recording shares a
 key). Without the header the request passes straight through — refusing an
 unkeyed POST would break every caller that has no idea what it is for.
-Every POST and PATCH that creates, moves or re-runs something is wrapped:
-notes, pins, settings, clean, regenerate, Ask, captures and their target,
-retry, retranscribe and move, the three inbox routes, export (the list is
-`routes.go`). A ring's webhook cannot set the header and files twice on a
+Every route that writes a note, a capture, a job or the settings is wrapped
+— the PUT, POSTs and PATCH below; device keys and push subscriptions are
+not (`routes.go`): `PUT /settings`; notes, pins, clean, regenerate, Ask;
+captures and their target, retry, retranscribe and move; the three inbox
+routes; export. A ring's webhook cannot set the header and files twice on a
 retry (`inbox.md`).
 
 ## The mechanics
