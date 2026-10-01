@@ -52,7 +52,9 @@ receipt is one line, plus an excerpt line when there is one, "✓ Filed into
 made; two or more receipts are one summary row, "3 filed into 2 notes ›",
 that opens in place beside "Clear all". The × is always drawn, on every
 pointer, which supersedes R7-7a's hidden × (F9); the swipe tray is a second
-way to put a receipt away.
+way to put a receipt away. The "which note?" row deliberately has no ×: a
+recording that is in no note yet must not be hidden, so answering is the
+only way it leaves the screen.
 
 ## Order and groups
 

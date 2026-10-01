@@ -206,7 +206,7 @@ supersedes R7-7a's hidden × (F9 asked for notices "clearly identifiable as
 dismissible"); the width is paid back by the chevron's column and the gaps
 between rows, both gone. It is named "Dismiss" on every row. A failed or
 stuck row has Retry and the ×, which replaced its text "Dismiss" button; a
-`no_content` row has the × alone; a row asking "which note?" has no ×, since
+`no_content` row has the × alone; a row asking "which note?" deliberately has no ×, since
 putting it away would hide a recording that is in no note yet — answering is
 its way off the screen. This device's failed upload keeps "Discard" as a
 word, never an ×: it deletes the audio, and an × here means "put away". The
