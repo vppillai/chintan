@@ -355,3 +355,18 @@ The docs lens (`docs/reviews/2026-10-01/lenses/report-docs-process.md`, DOC-10) 
 - **Item 9** (About's privacy wording): shipped as T28; it was a read-once ask, nothing pending.
 - **Item 12** (the app icon): folded into the logo-mark decision R5-BR-L1, which is still open and listed in `docs/backlog-open.md`.
 - **Item 13** (CloudTrail cost): leave it, as recommended; no change was made and none is planned (T61 in the round-3 report).
+
+## 1 Oct, afternoon — the rest of the review ledger
+
+You said "go ahead", so the remaining fix-now items from the platform review went through in five streams, each with an adversarial review before merge.
+
+**Shipped**
+- **Backlog view** (#216): `docs/backlog-open.md` is now generated from the ledger and checked in CI; it lists what needs you (with age), what is open and unowned, what is done but still owes a gate, and what was reverted. Twenty settled decisions are closed in the queue. No existing row was rewritten, because that choice (D10) is still yours.
+- **Backend** (#217): pure extractions from the stage functions with a size-ceiling test at 195 lines; one routing bounds table with a pin test, so a new rescue rule has to register its number; a shared Lambda bootstrap for both mains; the shared OpenAPI responses on every route with a reverse conformance check. The "flaky" append test closed on evidence: 0 failures in 1,500 race runs, and the three re-runs predated #163.
+- **Frontend code** (#218): the note screen's text panel, the checklist planner, the push-to-talk chrome and the filing tiers each moved to their own module (NoteDetailScreen 1,095 → 831 lines, TabBar 287 → 148); one shell status region, so a tick, a save and a Tidy each announce once (live regions on a note 6–7 → 5); navigation helpers unified with a 10 s TTL on the pending tab switch; one gesture slop constant and one click-swallow helper; query hygiene; the accessibility lint turned on and its 28 findings fixed or configured with a written reason.
+- **Scripts and infra** (#219): the invite script no longer passes the temporary password on a command line and `--delete` asks for a typed word; dry-run and confirm flags aligned across the nine scripts; the 4xx-flood alarm threshold lowered to a reachable 300; the dead SSM grant removed from the deploy role.
+- **Frontend tests** (#220): the unit suite has no real sleeps left (18 sites in 11 files; 17 s → 15 s), nineteen screen states now get an axe scan in both themes with zero violations and nothing configured away, the WebKit viewport is marked in the spec rather than hidden by a config regex, and drag-reorder handles pen input and a cancelled pointer. One finding for later: Vitest's vm-threads pool would halve the wall time but breaks twelve tests across the vm realm, so it stays off.
+
+**Bundle budget (D2), default taken on your behalf.** The frontend refactor's review fixes put the main chunk 190 bytes over the 530 kB budget, so rather than block the round I applied the recommended default: 540 kB, with the check printing size and headroom on every run so a reviewer lowers the number when a PR lands well under it (one constant in `scripts/check-bundle.mjs`, backlog row PR9-9a). Say a different number if you want one; the hard 530 line is one edit away.
+
+**Also for you:** two dead repository secrets, `AWS_ROLE_ARN` and `AWS_REGION`, are yours to delete (`gh secret delete`); the next `scripts/setup.sh --apply` applies both the pending prune grant and the removed SSM grant together.
