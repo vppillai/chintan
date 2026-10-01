@@ -1,7 +1,9 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
 
-import { expect, seedChecklist, test } from './fixtures.ts';
+import { HOLD_ARM_MS, LOCK_DY_PX } from '../src/features/capture/holdTiming.ts';
+
+import { expect, noteAction, seedChecklist, startSignedOut, test, type ApiState } from './fixtures.ts';
 
 /**
  * Accessibility, in both themes.
@@ -296,3 +298,236 @@ test('the You screen names the build it is running, legibly', async ({ page }) =
   // It exists to be copied into a bug report, so it must be selectable text.
   await expect(footnote.locator('code')).toHaveText('e2e-abc1234');
 });
+
+/*
+ * The surfaces rounds 7–8 added, which the route sweep above never reaches:
+ * each is opened the way a person opens it and scanned as it stands, in both
+ * themes (review 2026-10-01, FE-12). The capture and hold surfaces record
+ * through the fake microphone, which only Chromium has.
+ */
+interface Surface {
+  name: string;
+  open: (page: Page, api: ApiState) => Promise<void>;
+  needsMicrophone?: true;
+  /** Still there after the scan: the state scanned was the state named. */
+  after?: (page: Page) => Promise<void>;
+}
+
+async function holdTheDisc(page: Page): Promise<{ x: number; y: number }> {
+  await page.goto('/');
+  const box = (await page.locator('.record-button').boundingBox())!;
+  const at = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.down();
+  await expect(page.getByRole('navigation', { name: 'Main' })).toHaveAttribute('data-hold', 'holding');
+  return at;
+}
+
+const SURFACES: readonly Surface[] = [
+  {
+    name: '/capture recording',
+    needsMicrophone: true,
+    open: async (page) => {
+      await page.goto('/capture');
+      await expect(page.locator('.capture__state')).toHaveText('Recording');
+    },
+  },
+  {
+    name: '/capture paused',
+    needsMicrophone: true,
+    open: async (page) => {
+      await page.goto('/capture');
+      await page.getByRole('button', { name: 'Pause' }).click();
+      await expect(page.locator('.capture__state')).toHaveText('Paused');
+    },
+  },
+  {
+    name: '/capture review',
+    needsMicrophone: true,
+    open: async (page) => {
+      await page.goto('/capture');
+      await page.getByRole('button', { name: 'Stop' }).click();
+      await expect(page.locator('.capture__state')).toHaveText('Ready to send');
+    },
+  },
+  {
+    // The screen's resting state: it asks for the microphone on arrival, so
+    // the one way to see it with nothing running is to be refused.
+    name: '/capture with the microphone refused',
+    open: async (page) => {
+      await page.addInitScript(() => {
+        navigator.mediaDevices.getUserMedia = () =>
+          Promise.reject(new DOMException('Permission denied', 'NotAllowedError'));
+      });
+      await page.goto('/capture');
+      await expect(page.locator('.capture__state')).toHaveText('Something went wrong');
+    },
+  },
+  {
+    name: 'the tab bar while the disc is held',
+    needsMicrophone: true,
+    open: async (page) => {
+      await holdTheDisc(page);
+    },
+  },
+  {
+    name: 'the tab bar with the held finger at the lock line',
+    needsMicrophone: true,
+    open: async (page) => {
+      const { x, y } = await holdTheDisc(page);
+      await page.mouse.move(x, y - LOCK_DY_PX + 8, { steps: 8 });
+      // The bar's lock progress, which HoldChrome draws from (TabBar `--hold-lock`).
+      await expect
+        .poll(() =>
+          page
+            .getByRole('navigation', { name: 'Main' })
+            .evaluate((bar) => Number(bar.style.getPropertyValue('--hold-lock'))),
+        )
+        .toBeGreaterThan(0.5);
+    },
+  },
+  {
+    name: 'a locked take on the recording screen',
+    needsMicrophone: true,
+    open: async (page) => {
+      const { x, y } = await holdTheDisc(page);
+      await page.waitForTimeout(HOLD_ARM_MS + 100);
+      await page.mouse.move(x, y - LOCK_DY_PX - 8, { steps: 8 });
+      await page.mouse.up();
+      await expect(page).toHaveURL(/\/capture$/);
+      await expect(page.locator('.capture__state')).toHaveText('Recording');
+    },
+  },
+  {
+    name: 'a tick’s Undo toast',
+    open: async (page, api) => {
+      seedChecklist(api);
+      await page.goto('/notes/shopping');
+      await page.getByRole('checkbox', { name: 'Milk' }).click();
+      await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
+    },
+    after: async (page) => {
+      await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
+    },
+  },
+  {
+    name: 'Delete done’s Undo toast',
+    open: async (page, api) => {
+      seedChecklist(api);
+      await page.goto('/notes/shopping');
+      await page.getByRole('button', { name: 'Delete done' }).click();
+      await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
+    },
+    after: async (page) => {
+      await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
+    },
+  },
+  {
+    name: 'Tidy up list’s Undo toast',
+    open: async (page, api) => {
+      seedChecklist(api);
+      await page.goto('/notes/shopping');
+      await noteAction(page, 'Tidy up list');
+      await expect(page.getByText(/^List tidied/)).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
+    },
+    after: async (page) => {
+      await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
+    },
+  },
+  {
+    name: 'the confirm dialog',
+    open: async (page) => {
+      await page.goto('/notes/old-fence');
+      await noteAction(page, 'Delete forever');
+      await expect(page.getByRole('dialog').getByRole('button', { name: 'Cancel' })).toBeFocused();
+    },
+  },
+  {
+    name: 'the Move sheet',
+    open: async (page) => {
+      await page.goto('/notes/roof-repair?tab=recordings');
+      await page.getByRole('button', { name: /more for recording from/i }).click();
+      await page.getByRole('menuitem', { name: 'Move to…' }).click();
+      await expect(page.getByRole('dialog', { name: /move this recording to/i })).toBeVisible();
+    },
+  },
+  {
+    name: 'the Details sheet',
+    open: async (page) => {
+      await page.goto('/notes/roof-repair');
+      await noteAction(page, 'Details');
+      await expect(page.getByRole('button', { name: 'Close details' })).toBeVisible();
+    },
+  },
+  {
+    name: 'the Share sheet',
+    open: async (page) => {
+      await page.goto('/notes/roof-repair');
+      await noteAction(page, 'Share');
+      await expect(page.getByRole('button', { name: 'Copy note' })).toBeVisible();
+    },
+  },
+  {
+    name: 'the find bar with a match',
+    open: async (page) => {
+      await page.goto('/notes/roof-repair');
+      await page.getByRole('button', { name: 'Find in note' }).click();
+      await page.getByRole('searchbox', { name: 'Find in note' }).fill('tiles');
+      await expect(page.locator('.find-match').first()).toBeVisible();
+    },
+  },
+  {
+    name: 'the banner mic while typing under a keyboard',
+    open: async (page) => {
+      await page.goto('/notes/roof-repair');
+      await page.evaluate(() => {
+        document.documentElement.style.setProperty('--keyboard-inset', '400px');
+        document.documentElement.setAttribute('data-keyboard', '');
+      });
+      await page.getByRole('textbox', { name: 'Note body' }).focus();
+      await expect(page.locator('.app__banner').getByRole('button', { name: 'Record into this note' })).toBeVisible();
+    },
+  },
+  {
+    name: 'the recordings selection bar',
+    open: async (page) => {
+      await page.goto('/notes/roof-repair?tab=recordings');
+      await page.getByRole('button', { name: /more for recording from/i }).click();
+      await page.getByRole('menuitem', { name: 'Select' }).click();
+      await expect(page.getByRole('toolbar', { name: 'Recording actions' })).toBeVisible();
+    },
+  },
+  {
+    name: 'the signed-out screen',
+    open: async (page) => {
+      await startSignedOut(page);
+      await page.goto('/');
+      await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
+    },
+  },
+  {
+    // A screen whose code never arrives is the one render fault a stub can
+    // make: the About chunk is refused, and the route's boundary draws instead.
+    name: 'the route error screen',
+    open: async (page) => {
+      await page.route(/AboutScreen[^/]*\.js$/, (route) => route.abort());
+      await page.goto('/about');
+      await expect(page.getByRole('heading', { name: 'This screen could not be drawn' })).toBeVisible();
+    },
+  },
+];
+
+for (const theme of THEMES) {
+  for (const surface of SURFACES) {
+    test(`${surface.name} has no critical axe violations in ${theme}`, async ({ page, api, browserName }) => {
+      test.skip(Boolean(surface.needsMicrophone) && browserName !== 'chromium', 'needs the fake microphone');
+      await page.addInitScript((value) => {
+        localStorage.setItem('chintan.theme', value);
+      }, theme);
+      await surface.open(page, api);
+      await expectNoSeriousViolations(page);
+      await surface.after?.(page);
+    });
+  }
+}

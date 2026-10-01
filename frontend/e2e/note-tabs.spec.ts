@@ -298,6 +298,37 @@ test.describe('on a phone', () => {
     const selected = (page: Page) =>
       page.getByRole('tablist', { name: 'Note views' }).locator('[aria-selected="true"]').textContent();
 
+    /**
+     * The region at rest after a drag: no finger down, no step mid-enter and
+     * the panel's settle over, then two frames more, which is as late as a
+     * step the hook wrongly took would commit (the router's setParams lands a
+     * frame after pointerup; the enter pose clears two frames after that). In
+     * place of a 300 ms sleep (review 2026-10-01, FE-10).
+     */
+    const settled = (page: Page) =>
+      page.locator('.note-views').evaluate(
+        (region) =>
+          new Promise<void>((resolve) => {
+            const panel = region.querySelector<HTMLElement>('[data-swipe-panel]');
+            const atRest = (): boolean =>
+              !region.hasAttribute('data-swiping') &&
+              !region.hasAttribute('data-tab-enter') &&
+              (!panel || getComputedStyle(panel).translate === 'none');
+            const check = (): void => {
+              if (!atRest()) {
+                requestAnimationFrame(check);
+                return;
+              }
+              requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                  resolve();
+                });
+              });
+            };
+            check();
+          }),
+      );
+
     test('left opens Cleaned and names it in the URL; right comes back; right on Text and a short drag stay', async ({
       page,
       api,
@@ -318,11 +349,11 @@ test.describe('on a phone', () => {
       await expect.poll(() => selected(page)).toBe('Text');
       // Nothing to the right of Text: the panel rubber-bands and stays.
       await drag(cdp, 100, box.y + 100, 180, 4);
-      await page.waitForTimeout(300);
+      await settled(page);
       expect(await selected(page)).toBe('Text');
       // Short of 30 % of the width, and the finger at rest before it lifts: a snap back.
       await drag(cdp, 300, box.y + 200, -60, 0, { rest: true });
-      await page.waitForTimeout(300);
+      await settled(page);
       expect(await selected(page)).toBe('Text');
     });
 
@@ -503,7 +534,7 @@ test.describe('on a phone', () => {
       // x = 200 is on the row however far its tray has shifted it.
       await drag(cdp, 200, y, 200, 0);
       await expect(head).not.toHaveAttribute('data-open');
-      await page.waitForTimeout(300);
+      await settled(page);
       expect(await selected(page)).toContain('Recordings');
       // Closed again, and trays open leftwards only: a right drag on the head
       // is the swipe's.
@@ -517,7 +548,7 @@ test.describe('on a phone', () => {
       await page.goto('/notes/roof-repair');
       const cdp = await page.context().newCDPSession(page);
       await drag(cdp, 10, 500, 220, 0);
-      await page.waitForTimeout(300);
+      await settled(page);
       expect(await selected(page)).toBe('Text');
     });
 
@@ -528,7 +559,7 @@ test.describe('on a phone', () => {
       const cdp = await page.context().newCDPSession(page);
       const grip = (await page.getByRole('button', { name: 'Move Milk' }).boundingBox())!;
       await drag(cdp, grip.x + grip.width / 2, grip.y + grip.height / 2, -180, 0);
-      await page.waitForTimeout(300);
+      await settled(page);
       expect(await selected(page)).toBe('Items');
     });
   });

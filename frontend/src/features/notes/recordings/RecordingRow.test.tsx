@@ -19,6 +19,7 @@ import {
   recordingRows,
   withSegments,
 } from '@/test/recordings.tsx';
+import { flushTasks } from '@/test/clock.ts';
 
 /*
  * One row: its player, its More menu, its swipe tray, the chip for what
@@ -198,9 +199,7 @@ describe('transcribing a recording again', () => {
     expect(screen.getByText('Filing…')).toBeInTheDocument();
     // And the note is not read again for it: the body has not changed, and a
     // refetch only replaced the patch with the same capture a round trip later.
-    await new Promise((resolve) => {
-      setTimeout(resolve, 20);
-    });
+    await flushTasks();
     expect(api.calls.filter((call) => call.method === 'GET' && call.path === `/v1/notes/${NOTE.id}`)).toHaveLength(1);
   });
 

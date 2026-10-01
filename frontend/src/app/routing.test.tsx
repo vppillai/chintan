@@ -6,13 +6,30 @@ import {
   createMemoryRouter,
   type RouteObject,
 } from 'react-router';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { screenForPath } from '@/components/AppShell.tsx';
 import { TestProviders } from '@/test/providers.tsx';
 
 import { routes } from './router.tsx';
 import { historyIndex } from './useTabNavigation.ts';
+
+beforeEach(() => {
+  // jsdom has no requestIdleCallback, and the hooks' stand-in is a delay the
+  // archive's count used to make this file wait out. The browser's runs once
+  // the launch is idle, which here is at once (as useNotesCache.test.tsx).
+  vi.stubGlobal('requestIdleCallback', (work: IdleRequestCallback) => {
+    queueMicrotask(() => {
+      work({ didTimeout: false, timeRemaining: () => 50 });
+    });
+    return 1;
+  });
+  vi.stubGlobal('cancelIdleCallback', () => undefined);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 type Router = ReturnType<typeof createMemoryRouter>;
 
@@ -450,9 +467,7 @@ describe('every in-app URL stays inside the deploy scope', () => {
     const router = mountScoped();
     await screen.findByRole('button', { name: /roof repair/i });
 
-    // The archive's count is asked for once the launch is idle, which jsdom
-    // (no requestIdleCallback) stands in for with a two-second delay.
-    await user.click(await screen.findByRole('button', { name: /^Archived/ }, { timeout: 4_000 }));
+    await user.click(await screen.findByRole('button', { name: /^Archived/ }));
     expect(address(router)).toBe('/chintan/dev/?view=archived');
 
     await user.click(screen.getByRole('button', { name: 'All' }));

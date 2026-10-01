@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { flushTasks } from '@/test/clock.ts';
+
 import type { ChintanApi } from '@/api/endpoints.ts';
 import { ApiError } from '@/api/problem.ts';
 import type { CaptureCreatedWire, CaptureWire } from '@/api/schema.ts';
@@ -143,7 +145,7 @@ describe('a successful upload', () => {
       put: async () => {
         inFlight += 1;
         mostInFlight = Math.max(mostInFlight, inFlight);
-        await new Promise((resolve) => setTimeout(resolve, 5));
+        await flushTasks();
         inFlight -= 1;
       },
     });

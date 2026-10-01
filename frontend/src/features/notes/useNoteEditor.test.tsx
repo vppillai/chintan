@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { queryKeys } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { queuedEditBody } from '@/offline/queuedEdits.ts';
-import { onAFakeClock } from '@/test/clock.ts';
+import { flushTasks, onAFakeClock } from '@/test/clock.ts';
 import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
 import { APPEND_WAIT_LIMIT, AUTOSAVE_DELAY_MS } from './autosave.ts';
@@ -221,7 +221,7 @@ describe('one PATCH at a time', () => {
     act(() => {
       secondSave = view.result.current.saveNow();
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await act(() => flushTasks());
     expect(patches, 'a second PATCH left while the first was in flight').toHaveLength(1);
 
     // The first lands. The re-save follows on its own, carrying what the
@@ -287,9 +287,7 @@ describe('a note appended to on the server reaches the screen', () => {
     });
     view.rerender({ ...NOTE, version: NOTE.version + 1, body: 'Appended by a recording.' });
 
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    });
+    await act(() => flushTasks());
     expect(view.result.current.model.draft.body).toBe('My own words.');
     // The version it will PATCH with is still the one it loaded, so the
     // server's 409 — not a silent overwrite in either direction — decides.

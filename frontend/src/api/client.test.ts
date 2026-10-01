@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { flushTasks } from '@/test/clock.ts';
+
 import { ApiClient, NO_RETRY, type RetryPolicy } from './client.ts';
 import { ApiError } from './problem.ts';
 import { Session, type TokenRefresher } from './session.ts';
@@ -246,7 +248,7 @@ describe('a 401 refreshes before anything reaches the user', () => {
       return served <= 5 ? problemResponse(401) : jsonResponse({ ok: true });
     });
     const refresher = stubRefresher(async (current) => {
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      await flushTasks();
       return { ...current, idToken: 'id-2' };
     });
     const { client } = build(fetchImpl, refresher);

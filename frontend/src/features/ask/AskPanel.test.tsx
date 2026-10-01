@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { askAnswered, askFailed, askNotInNotes, askPending } from '@/api/__fixtures__/responses.ts';
 import { noteCreated } from '@/api/__fixtures__/responses.ts';
-import { ASK_POLL_TIMEOUT_MS } from '@/api/queries.ts';
+import { ASK_POLL_FAST_MS, ASK_POLL_FAST_WINDOW_MS, ASK_POLL_SLOW_MS, ASK_POLL_TIMEOUT_MS } from '@/api/queries.ts';
 import type { AskWire, NoteCreateWire } from '@/api/schema.ts';
 import { formatRowTime } from '@/features/notes/groups.ts';
 import { NotesScreen } from '@/screens/NotesScreen.tsx';
@@ -156,7 +156,7 @@ async function askAndAnswer(
     expect(screen.queryByText('Reading your notes…')).toBeInTheDocument();
   });
   act(() => {
-    vi.advanceTimersByTime(1_000);
+    vi.advanceTimersByTime(ASK_POLL_FAST_MS);
   });
   await screen.findByText(/The tiler can start on the fourteenth/);
 }
@@ -259,7 +259,7 @@ describe('a question is sent on Enter and its answer polled for', () => {
       expect(api.polls()).toBe(1);
     });
     act(() => {
-      vi.advanceTimersByTime(1_000);
+      vi.advanceTimersByTime(ASK_POLL_FAST_MS);
     });
     await waitFor(() => {
       expect(api.polls()).toBe(2);
@@ -273,7 +273,7 @@ describe('a question is sent on Enter and its answer polled for', () => {
 
     // A settled row is not polled again.
     act(() => {
-      vi.advanceTimersByTime(5_000);
+      vi.advanceTimersByTime(2 * ASK_POLL_SLOW_MS);
     });
     expect(api.polls()).toBe(2);
 
@@ -304,7 +304,7 @@ describe('a question is sent on Enter and its answer polled for', () => {
     await user.type(field, 'what did I decide about the roof?{Enter}');
     await screen.findByText('Reading your notes…');
     act(() => {
-      vi.advanceTimersByTime(1_000);
+      vi.advanceTimersByTime(ASK_POLL_FAST_MS);
     });
 
     const sources = await screen.findByRole('list', { name: 'Sources' });
@@ -328,7 +328,7 @@ describe('a question is sent on Enter and its answer polled for', () => {
     await user.type(field, 'what colour is my car?{Enter}');
     await screen.findByText('Reading your notes…');
     act(() => {
-      vi.advanceTimersByTime(1_000);
+      vi.advanceTimersByTime(ASK_POLL_FAST_MS);
     });
 
     expect(await screen.findByText('Not in your notes')).toBeInTheDocument();
@@ -345,7 +345,7 @@ describe('a question is sent on Enter and its answer polled for', () => {
     await user.type(field, 'what did I decide about the roof?{Enter}');
     await screen.findByText('Reading your notes…');
     act(() => {
-      vi.advanceTimersByTime(1_000);
+      vi.advanceTimersByTime(ASK_POLL_FAST_MS);
     });
 
     expect(await screen.findByText('the answer could not be produced; try again')).toBeInTheDocument();
@@ -372,7 +372,7 @@ describe('a question is sent on Enter and its answer polled for', () => {
     // because a poll in flight is not doubled up: the next tick waits on it.
     for (let second = 1; second <= 10; second += 1) {
       act(() => {
-        vi.advanceTimersByTime(1_000);
+        vi.advanceTimersByTime(ASK_POLL_FAST_MS);
       });
       await waitFor(() => {
         expect(api.polls()).toBe(1 + second);
@@ -380,11 +380,11 @@ describe('a question is sent on Enter and its answer polled for', () => {
     }
     // Then every two: a second passes with no poll, the next brings one.
     act(() => {
-      vi.advanceTimersByTime(1_000);
+      vi.advanceTimersByTime(ASK_POLL_SLOW_MS / 2);
     });
     expect(api.polls()).toBe(11);
     act(() => {
-      vi.advanceTimersByTime(1_000);
+      vi.advanceTimersByTime(ASK_POLL_SLOW_MS / 2);
     });
     await waitFor(() => {
       expect(api.polls()).toBe(12);
@@ -392,14 +392,14 @@ describe('a question is sent on Enter and its answer polled for', () => {
 
     // And at the minute, the panel gives up and the polling stops with it.
     act(() => {
-      vi.advanceTimersByTime(ASK_POLL_TIMEOUT_MS - 12_000);
+      vi.advanceTimersByTime(ASK_POLL_TIMEOUT_MS - ASK_POLL_FAST_WINDOW_MS - ASK_POLL_SLOW_MS);
     });
     expect(await screen.findByText('This is taking too long.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
     expect(screen.queryByText('Reading your notes…')).toBeNull();
     const settled = api.polls();
     act(() => {
-      vi.advanceTimersByTime(10_000);
+      vi.advanceTimersByTime(5 * ASK_POLL_SLOW_MS);
     });
     expect(api.polls()).toBe(settled);
   });
@@ -413,7 +413,7 @@ describe('a question is sent on Enter and its answer polled for', () => {
     await user.type(field, 'what did I decide about the roof?{Enter}');
     await screen.findByText('Reading your notes…');
     act(() => {
-      vi.advanceTimersByTime(ASK_POLL_TIMEOUT_MS + 1_000);
+      vi.advanceTimersByTime(ASK_POLL_TIMEOUT_MS + ASK_POLL_FAST_MS);
     });
     expect(await screen.findByText('This is taking too long.')).toBeInTheDocument();
     const gaveUpAfter = api.polls();
@@ -463,7 +463,7 @@ describe('the thread', () => {
     expect(field).toHaveAttribute('aria-busy', 'true');
 
     act(() => {
-      vi.advanceTimersByTime(1_000);
+      vi.advanceTimersByTime(ASK_POLL_FAST_MS);
     });
     await waitFor(() => {
       expect(screen.getAllByText(/The tiler can start on the fourteenth/)).toHaveLength(2);
@@ -489,7 +489,7 @@ describe('the thread', () => {
     await user.type(field, 'what did I decide about the roof?{Enter}');
     await screen.findByText('Reading your notes…');
     act(() => {
-      vi.advanceTimersByTime(1_000);
+      vi.advanceTimersByTime(ASK_POLL_FAST_MS);
     });
 
     const sources = await screen.findByRole('list', { name: 'Sources' });
@@ -517,7 +517,7 @@ describe('the thread', () => {
     await user.type(field, 'what did I decide about the roof?{Enter}');
     await screen.findByText('Reading your notes…');
     act(() => {
-      vi.advanceTimersByTime(1_000);
+      vi.advanceTimersByTime(ASK_POLL_FAST_MS);
     });
 
     const sources = await screen.findByRole('list', { name: 'Sources' });

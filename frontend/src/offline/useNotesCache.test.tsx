@@ -1,15 +1,35 @@
+import type { QueryClient } from '@tanstack/react-query';
 import { render } from '@testing-library/react';
 import { IDBFactory } from 'fake-indexeddb';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { NoteWire } from '@/api/schema.ts';
+import { flushTasks } from '@/test/clock.ts';
 import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
 import { resetDatabaseHandle } from './db.ts';
-import { cacheNoteDetail, cacheNoteList, cachedNote } from './notesCache.ts';
+import { cacheNoteDetail, cacheNoteList, cachedNote, notesWithoutBody } from './notesCache.ts';
 import { OFFLINE_NOTES_KEY, queryKeys } from '@/api/queries/keys.ts';
 
 import { PREFETCH_BODIES, useCachedNotes } from './useNotesCache.ts';
+
+/**
+ * Past the point where the prefetch would have fetched. Its chain is two
+ * reads of the device apart from the mount: the rows land (the hook's own
+ * query), the effect's idle callback (a microtask here) issues the prefetch's
+ * read, and only then would it fetch — a plain `flushTasks` is back long before,
+ * so a "nothing was fetched" read then proves nothing (review of #220, MF-1).
+ * The rows are waited for, the idle callback is let run, a read of the same
+ * store is queued behind the prefetch's, and its continuation is given a turn.
+ */
+async function afterThePrefetchRead(queryClient: QueryClient): Promise<void> {
+  await vi.waitFor(() => {
+    expect(queryClient.getQueryData(queryKeys.offlineNotes('active'))).toHaveLength(1);
+  });
+  await flushTasks();
+  await notesWithoutBody(1);
+  await flushTasks();
+}
 
 /**
  * The idle prefetch of note bodies.
@@ -174,7 +194,7 @@ describe('the first page\'s bodies reach the device on their own', () => {
       expect(queryClient.getQueryData(queryKeys.offlineNotes('active'))).toHaveLength(PREFETCH_BODIES);
     });
     // Let the re-render commit and the (immediate) idle callback run.
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await flushTasks();
     release();
 
     await vi.waitFor(() => {
@@ -189,9 +209,10 @@ describe('the first page\'s bodies reach the device on their own', () => {
     await cacheNoteList([row('p6-a')]);
     const fetchImpl = detailFetch();
 
-    mount(fetchImpl, Reader);
+    const queryClient = testQueryClient();
+    mount(fetchImpl, Reader, queryClient);
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await afterThePrefetchRead(queryClient);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -218,7 +239,7 @@ describe('the first page\'s bodies reach the device on their own', () => {
     api.session.clear();
     release();
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await flushTasks();
     expect(await cachedNote('p5-a', { requireDetail: true })).toBeNull();
   });
 
@@ -227,10 +248,10 @@ describe('the first page\'s bodies reach the device on their own', () => {
     const fetchImpl = detailFetch();
     const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
 
-    mount(fetchImpl);
+    const queryClient = testQueryClient();
+    mount(fetchImpl, Library, queryClient);
 
-    // Long enough for the (immediate) idle callback and any fetch to have run.
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await afterThePrefetchRead(queryClient);
     expect(fetchImpl).not.toHaveBeenCalled();
     onLine.mockRestore();
   });

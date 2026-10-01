@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
@@ -311,7 +311,7 @@ describe('the account header', () => {
     const account = await screen.findByRole('region', { name: 'Account' });
     expect(account).toHaveTextContent('vpillai@example.com');
     expect(account).toHaveTextContent(/signed in 3 days ago/i);
-    expect(account.querySelector('.account__roundel')).toHaveTextContent('V');
+    expect(within(account).getByText('V')).toBeInTheDocument();
   });
 
   it('still says it is signed in when the token carries no claims it can read', async () => {
@@ -361,7 +361,6 @@ describe('the cards', () => {
     // Empty, so `:empty` collapses it; the live region itself stays for the
     // next Saved to be announced.
     const status = screen.getByRole('status', { name: '' });
-    expect(status).toHaveClass('settings-status');
     expect(status).toBeEmptyDOMElement();
   });
 
@@ -400,47 +399,40 @@ describe('the cards', () => {
     mountSettings();
     await screen.findByRole('heading', { name: 'Recording & transcription' });
     expect(screen.queryByRole('link', { name: /PTT/ })).toBeNull();
-    expect(document.querySelector('a[href="/talk"]')).toBeNull();
+    expect(screen.queryAllByRole('link').map((link) => link.getAttribute('href'))).not.toContain('/talk');
   });
 
   it('keeps one sentence of each footnote in view and the rest behind a native More', async () => {
     mountSettings();
-    const card = (await screen.findByRole('heading', { name: 'Recording & transcription' })).closest(
-      '.you-card',
-    );
-    const foot = card?.querySelector('.you-card__foot');
-    expect(foot?.querySelector(':scope > p')).toHaveTextContent(/transcribed as English/);
-    const more = foot?.querySelector('details');
-    expect(more).not.toBeNull();
-    expect(more?.open).toBe(false);
-    expect(more?.querySelector('summary')).toHaveTextContent('More');
+    const card = within(await screen.findByRole('region', { name: 'Recording & transcription' }));
+    expect(card.getByText(/transcribed as English/)).toBeInTheDocument();
+    // The fold is a native details behind its one summary line.
+    const more = card.getByText('More').closest('details');
+    expect(more).toHaveProperty('open', false);
     // Open, the same line offers to fold it again.
-    const summary = more?.querySelector('summary');
-    expect(summary?.querySelector('.you-card__more-closed')).toHaveTextContent('More');
-    expect(summary?.querySelector('.you-card__more-opened')).toHaveTextContent('Less');
+    expect(within(more!).getByText('Less')).toBeInTheDocument();
     expect(more).toHaveTextContent(/a note can choose its own under Details/);
     expect(more).toHaveTextContent(/kept indefinitely/);
   });
 
   it('puts the build in the About & support card, as selectable text, with the links beside it', async () => {
     mountSettings();
-    const card = (await screen.findByRole('heading', { name: 'About & support' })).closest('.you-card');
-    expect(card).not.toBeNull();
+    const card = await screen.findByRole('region', { name: 'About & support' });
     expect(card).toHaveTextContent('Version');
-    expect(card?.querySelector('.version-footnote code')).toHaveTextContent(config.version);
+    expect(within(card).getByText(config.version, { selector: 'code' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /about chintan/i })).toHaveAttribute('href', '/about');
     expect(screen.getByRole('link', { name: /source on github/i })).toHaveAttribute(
       'href',
       'https://github.com/vppillai/chintan',
     );
     // Nothing under the last card: the footnote it used to be is gone.
-    expect(document.querySelector('.screen > .version-footnote')).toBeNull();
+    expect(screen.getAllByText(config.version)).toHaveLength(1);
   });
 
   it('shows the theme as one three-way control with a swatch each', async () => {
     mountSettings();
     const theme = await screen.findByRole('group', { name: 'Theme' });
-    const options = Array.from(theme.querySelectorAll('button'), (button) => button.textContent);
+    const options = within(theme).getAllByRole('button').map((button) => button.textContent);
     expect(options).toEqual(['Ink & Paper', 'Nocturne', 'System']);
     expect(theme.querySelectorAll('.theme-swatch')).toHaveLength(3);
     expect(screen.getByRole('button', { name: 'Ink & Paper' })).toHaveAttribute('aria-pressed', 'true');
