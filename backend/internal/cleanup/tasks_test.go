@@ -21,7 +21,8 @@ func TestTasksPromptComposesTheItemRulesAndNamesTheList(t *testing.T) {
 	}
 	lower := strings.ToLower(system)
 	for _, want := range []string{
-		"the list it was meant to be", "a sub-item indented two spaces",
+		"the list it was meant to be", "a sub-item indented two spaces", "two more for each level, at most three levels",
+		"keep every item at the level it has, up to three levels", "under an existing group or sub-group", "never add a level the list does not have",
 		"group as the person grouped", "never invent a group", `never "add milk"`,
 		"every line's meaning is kept", "a sentence spoken to the app", "keep the groups the list has", "under an existing group",
 		"two lines that name the same thing are one item", "done stays done", `"done": true`, "an open line is never marked done",
@@ -173,6 +174,71 @@ func TestSplitOutputCapsTheListAndRefusesNothing(t *testing.T) {
 		if _, _, err := cleanup.SplitOutput(raw, body); !errors.Is(err, cleanup.ErrEmptyNoteOutput) {
 			t.Errorf("SplitOutput(%q) = %v, want ErrEmptyNoteOutput", raw, err)
 		}
+	}
+}
+
+// Three levels: the extraction keeps one (owner decision 2), the Split up
+// keeps the list's, so "one level only" is the items prompt's rule and not
+// the tasks prompt's.
+func TestOnlyTheItemsPromptIsOneLevel(t *testing.T) {
+	items, _, _ := cleanup.ItemsPrompt("milk", "Shopping list", "")
+	tasks, _, _ := cleanup.TasksPrompt("- [ ] milk", "Shopping list", "")
+	if !strings.Contains(items, "One level only: a child has no children.") {
+		t.Error("the items prompt lost its one-level rule")
+	}
+	if strings.Contains(tasks, "One level only") {
+		t.Error("the tasks prompt still says one level only")
+	}
+}
+
+// A three-level list tidied unchanged is stored as it was; a reply four
+// levels deep keeps three, the fourth flattened into the third after its
+// parent; a dropped parent at the second level lifts its children to the
+// second level.
+func TestSplitOutputKeepsThreeLevels(t *testing.T) {
+	const body = "- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n    - [x] Cups\n  - [ ] Candles\n- [ ] Milk"
+	got, dropped, err := cleanup.SplitOutput(`{"items":[{"text":"Party","children":[{"text":"Costco","children":[{"text":"Plates"},{"text":"Cups","done":true}]},{"text":"Candles"}]},{"text":"Milk"}]}`, body)
+	if err != nil || dropped != 0 || got != body {
+		t.Errorf("an unchanged three-level list = %q, %d, %v", got, dropped, err)
+	}
+	got, _, err = cleanup.SplitOutput(`{"items":[{"text":"Party","children":[{"text":"Costco","children":[{"text":"Plates","children":[{"text":"Cups","done":true}]}]},{"text":"Candles"}]},{"text":"Milk"}]}`, body)
+	if want := "- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n    - [x] Cups\n  - [ ] Candles\n- [ ] Milk"; err != nil || got != want {
+		t.Errorf("a four-level reply = %q, %v; want %q", got, err, want)
+	}
+	got, dropped, err = cleanup.SplitOutput(`{"items":[{"text":"Party","children":[{"text":"Walmart","children":[{"text":"Plates"},{"text":"Cups","done":true}]},{"text":"Candles"}]},{"text":"Milk"}]}`, body)
+	if want := "- [ ] Party\n  - [ ] Plates\n  - [x] Cups\n  - [ ] Candles\n- [ ] Milk"; err != nil || dropped != 1 || got != want {
+		t.Errorf("a dropped second-level parent = %q, %d, %v; want %q", got, dropped, err, want)
+	}
+	// Tick safety reaches the third level.
+	if got, _, err := cleanup.SplitOutput(`{"items":[{"text":"Party","children":[{"text":"Costco","children":[{"text":"Plates"},{"text":"Cups"}]},{"text":"Candles"}]},{"text":"Milk"}]}`, body); !errors.Is(err, cleanup.ErrNotATaskList) {
+		t.Errorf("a lost tick on a third-level line = %q, %v; want ErrNotATaskList", got, err)
+	}
+}
+
+// DB6-11, settled as "the parent reopens": a done group that gains an open
+// item is open, because a done item has no open descendant. Both of the
+// item's bodies: the model reopening the group itself is accepted, and the
+// model leaving it done over an open child is stored open.
+func TestSplitOutputReopensADoneParentThatGainsAnOpenChild(t *testing.T) {
+	const body = "- [x] Costco\n  - [x] Meat\n- [ ] chicken from costco"
+	const want = "- [ ] Costco\n  - [x] Meat\n  - [ ] Chicken"
+	for name, reply := range map[string]string{
+		"the answer reopens it":    `{"items":[{"text":"Costco","children":[{"text":"Meat","done":true},{"text":"Chicken"}]}]}`,
+		"the answer keeps it done": `{"items":[{"text":"Costco","done":true,"children":[{"text":"Meat","done":true},{"text":"Chicken"}]}]}`,
+	} {
+		if got, _, err := cleanup.SplitOutput(reply, body); err != nil || got != want {
+			t.Errorf("%s: SplitOutput = %q, %v; want %q", name, got, err, want)
+		}
+	}
+	// At any depth: a done second-level group under a done top reopens both.
+	if got, _, err := cleanup.SplitOutput(`{"items":[{"text":"Party","done":true,"children":[{"text":"Costco","done":true,"children":[{"text":"Plates","done":true},{"text":"Cups"}]}]}]}`,
+		"- [x] Party\n  - [x] Costco\n    - [x] Plates\n- [ ] cups from costco"); err != nil || got != "- [ ] Party\n  - [ ] Costco\n    - [x] Plates\n    - [ ] Cups" {
+		t.Errorf("a two-level reopen = %q, %v", got, err)
+	}
+	// The exemption is exactly that: a done group reopened with no open item
+	// under it is still a reopened tick.
+	if got, _, err := cleanup.SplitOutput(`{"items":[{"text":"Costco","children":[{"text":"Meat","done":true}]},"Chicken from costco"]}`, body); !errors.Is(err, cleanup.ErrNotATaskList) {
+		t.Errorf("a done group reopened with nothing open under it = %q, %v; want ErrNotATaskList", got, err)
 	}
 }
 

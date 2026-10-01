@@ -80,15 +80,16 @@ and vocabulary where it already reads well.
 // noteTasksSystemPrompt is the checklist's mode (Split up): the list as it
 // stands → the list it was meant to be. It composes checklistItemRules, so
 // what an item is and how the person's groups are read are worded once for
-// this prompt and the per-recording extraction; its own three rules are what
+// this prompt and the per-recording extraction; its own four rules are what
 // a whole list needs on top — every line's meaning kept, existing groups kept
-// and joined, done stays done. The worked example is the owner's live case
+// and joined, every level kept and none added, done stays done. The worked example is the owner's live case
 // of 2026-09-29 beside an existing Costco.
-const noteTasksSystemPrompt = `You tidy a checklist into the list it was meant to be. The text between the marker lines is the list as it stands: one item per line, "- [ ] " open, "- [x] " done, a sub-item indented two spaces under its parent.
+const noteTasksSystemPrompt = `You tidy a checklist into the list it was meant to be. The text between the marker lines is the list as it stands: one item per line, "- [ ] " open, "- [x] " done, a sub-item indented two spaces under its parent, two more for each level, at most three levels.
 
 ` + checklistItemRules + `
 - Every line's meaning is kept: nothing dropped, nothing added. A line that is already one thing stays word for word. A line that holds several things becomes one item each; a line that is a sentence spoken to the app ("Add milk to the shopping list") becomes the things it named.
 - Keep the groups the list has, and put an item under an existing group when its own words say it belongs there ("chicken from Costco" under Costco). Two lines that name the same thing are one item.
+- Keep every item at the level it has, up to three levels; put an item under an existing group or sub-group when its own words say so; never add a level the list does not have.
 - Done stays done: a line marked "- [x]" is an item with "done": true, its words kept; an open line is never marked done. Two lines naming the same thing merge into an open item if either was open.
 
 Reply with ONLY {"items":[{"text":"…","done":false,"children":[{"text":"…","done":false}]},…]}, in the list's order, "done" and "children" left out when false or empty. No fence, no commentary.
@@ -182,7 +183,8 @@ var ErrNotATaskList = fmt.Errorf("cleanup: the model did not return a task list"
 
 // SplitOutput checks a completion for TasksPrompt against the body it
 // tidied and returns the checklist body to store — `- [ ] ` / `- [x] `
-// lines, a sub-item indented two spaces — and how many items were dropped.
+// lines, two spaces of indent per level, at most MaxDepth — and how many
+// items were dropped.
 // Adoption writes this answer over the body (CleanedPanel "Use this list",
 // the first act in Split up), so the prompt's promises are checked rather
 // than trusted:
@@ -190,7 +192,7 @@ var ErrNotATaskList = fmt.Errorf("cleanup: the model did not return a task list"
 //   - an item whose words are not the body's words, in order
 //     (llm.VerifySubsequence; group names like "Walmart" or "Party" are
 //     body words), is the model's, not the person's: it is dropped and
-//     counted, and a dropped parent's children are lifted to the top level.
+//     counted, and a dropped parent's children are lifted to its level.
 //     "- [x] Make a list." was the model inventing an antecedent for "it"
 //     (owner feedback 2026-09-26). Dropping rather than refusing keeps the
 //     split the model got right;
@@ -210,7 +212,14 @@ var ErrNotATaskList = fmt.Errorf("cleanup: the model did not return a task list"
 //     a sub-sequence of the line) is refused: the tick is the person's, and
 //     a model that adds one hides an open item under Done. So is a done
 //     answer item with an open body line's words when no open answer item
-//     has them: the model closed the open one of a pair, and open wins.
+//     has them: the model closed the open one of a pair, and open wins;
+//   - a done answer item with an open item under it is stored open, at any
+//     depth: a done item has no open descendant (the editor's toggleItem
+//     and the append's merge keep the same rule), so "- [x] Costco" that
+//     gains "chicken from costco" as a child is wanted again (DB6-11,
+//     settled as "the parent reopens"). The lost-tick and reopened checks
+//     exempt exactly that: a done line whose words are an open answer item
+//     with an open item under it.
 //
 // The pre-2026-09-29 rule that done lines come back verbatim and in order is
 // gone: it is what forced "Add milk to the shopping list" to survive a
@@ -220,32 +229,27 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 	if err != nil {
 		return "", 0, err
 	}
-	items, err := parseItems(out, MaxChecklistItems)
+	items, err := parseItems(out, MaxChecklistItems, MaxDepth)
 	if err != nil {
 		return "", 0, fmt.Errorf("%w: %v", ErrNotATaskList, err)
 	}
 
-	var kept []Item
-	keep := func(it Item) bool {
-		if llm.VerifySubsequence(it.Text, body) {
-			return true
-		}
-		dropped++
-		return false
-	}
-	for _, it := range items {
-		var children []Item
-		for _, c := range it.Children {
-			if keep(c) {
-				children = append(children, Item{Text: c.Text, Done: c.Done})
+	var keep func([]Item) []Item
+	keep = func(items []Item) []Item {
+		var kept []Item
+		for _, it := range items {
+			children := keep(it.Children)
+			if llm.VerifySubsequence(it.Text, body) {
+				kept = append(kept, Item{Text: it.Text, Done: it.Done, Children: children})
+				continue
 			}
+			dropped++
+			kept = append(kept, children...)
 		}
-		if keep(it) {
-			kept = append(kept, Item{Text: it.Text, Done: it.Done, Children: children})
-			continue
-		}
-		kept = append(kept, children...)
+		return kept
 	}
+	kept := keep(items)
+	reopenParents(kept)
 
 	// Tick safety, over the body's lines and the kept answer.
 	bodyDone, bodyOpen := map[string]bool{}, map[string]bool{}
@@ -263,10 +267,25 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 			answerOpen[llm.FoldWords(it.Text)] = true
 		}
 	}
+	// The open answer items with an open item under them: a done line with
+	// one's words was reopened by the item it gained (DB6-11), not by the
+	// model.
+	gained := map[string]bool{}
+	var walk func([]Item)
+	walk = func(items []Item) {
+		for _, it := range items {
+			if !it.Done && anyOpen(it.Children) {
+				gained[llm.FoldWords(it.Text)] = true
+			}
+			walk(it.Children)
+		}
+	}
+	walk(kept)
 	for line := range bodyDone {
-		if bodyOpen[line] {
+		if bodyOpen[line] || gained[line] {
 			// Two lines naming one thing, one of them open: they merge and
-			// open wins, so the done one need not come back done.
+			// open wins, so the done one need not come back done. Or a done
+			// group that gained an open item, which reopens it.
 			continue
 		}
 		accounted := false
@@ -283,7 +302,7 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 	check := func(it Item, parent bool) error {
 		w := llm.FoldWords(it.Text)
 		switch {
-		case !it.Done && bodyDone[w] && !bodyOpen[w],
+		case !it.Done && bodyDone[w] && !bodyOpen[w] && !anyOpen(it.Children),
 			!it.Done && !parent && subsequenceOfAny(it.Text, bodyDone) && !subsequenceOfAny(it.Text, bodyOpen):
 			return fmt.Errorf("%w: a done item was reopened", ErrNotATaskList)
 		case it.Done && bodyOpen[w] && !answerOpen[w]:
@@ -293,20 +312,49 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 		}
 		return nil
 	}
-	for _, it := range kept {
-		if err := check(it, len(it.Children) > 0); err != nil {
-			return "", dropped, err
-		}
-		for _, c := range it.Children {
-			if err := check(c, false); err != nil {
-				return "", dropped, err
+	var checkAll func([]Item) error
+	checkAll = func(items []Item) error {
+		for _, it := range items {
+			if err := check(it, len(it.Children) > 0); err != nil {
+				return err
+			}
+			if err := checkAll(it.Children); err != nil {
+				return err
 			}
 		}
+		return nil
+	}
+	if err := checkAll(kept); err != nil {
+		return "", dropped, err
 	}
 	if len(kept) == 0 {
 		return "", dropped, ErrEmptyNoteOutput
 	}
 	return RenderTaskList(kept), dropped, nil
+}
+
+// reopenParents opens every done item with an open item under it, deepest
+// first, so a done item has no open descendant, and reports whether items
+// hold an open one.
+func reopenParents(items []Item) bool {
+	open := false
+	for i := range items {
+		if reopenParents(items[i].Children) {
+			items[i].Done = false
+		}
+		open = open || !items[i].Done
+	}
+	return open
+}
+
+// anyOpen reports whether one of items is open.
+func anyOpen(items []Item) bool {
+	for _, it := range items {
+		if !it.Done {
+			return true
+		}
+	}
+	return false
 }
 
 // subsequenceOfAny reports whether text's words are, in order, among one of
