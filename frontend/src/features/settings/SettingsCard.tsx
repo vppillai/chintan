@@ -61,7 +61,11 @@ export function SettingsCard({
           {foot}
           {more && (
             <details className="you-card__more">
-              <summary className="you-card__more-summary">More</summary>
+              <summary className="you-card__more-summary">
+                {/* "Less" once open, so the same line reads as the way to fold it again. */}
+                <span className="you-card__more-closed">More</span>
+                <span className="you-card__more-opened">Less</span>
+              </summary>
               <div className="you-card__more-body">{more}</div>
             </details>
           )}
