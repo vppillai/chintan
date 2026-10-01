@@ -3,6 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { flushTasks } from '@/test/clock.ts';
 import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
 import type { NoteDetailWire, NoteWire } from '../schema.ts';
@@ -74,13 +75,7 @@ async function threePages() {
   return { lists, queryClient, result };
 }
 
-const aMoment = () =>
-  act(
-    () =>
-      new Promise((resolve) => {
-        setTimeout(resolve, 20);
-      }),
-  );
+const aMoment = () => act(() => flushTasks());
 
 function returnToTheApp(): void {
   act(() => {
@@ -177,12 +172,16 @@ describe('remember', () => {
     const queryClient = testQueryClient();
     const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
 
-    remember(() => Promise.resolve(), queryClient);
-    remember(() => Promise.resolve(), queryClient);
-    remember(() => Promise.resolve(), queryClient);
-    await new Promise((resolve) => {
-      setTimeout(resolve, 10);
-    });
+    // The tick is a timer the writes' continuations set: run every one they leave.
+    vi.useFakeTimers();
+    try {
+      remember(() => Promise.resolve(), queryClient);
+      remember(() => Promise.resolve(), queryClient);
+      remember(() => Promise.resolve(), queryClient);
+      await vi.runAllTimersAsync();
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(invalidate).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: OFFLINE_NOTES_KEY });

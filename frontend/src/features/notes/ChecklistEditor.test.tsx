@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useEffect, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -1048,10 +1048,10 @@ describe('the Done section', () => {
     await user.click(screen.getByRole('button', { name: 'Undo' }));
     expect(body()).toBe('- [ ] Milk\n- [ ] Eggs\n- [ ] Bread');
     expect(log.saves).toBe(2);
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 300));
+    // Back in the open list once the hold (the motion token's length) is over.
+    await waitFor(() => {
+      expect(openValues()).toEqual(['Milk', 'Eggs', 'Bread', '']);
     });
-    expect(openValues()).toEqual(['Milk', 'Eggs', 'Bread', '']);
   });
 
   it('a tick\'s Undo refuses when the list changed under it meanwhile', async () => {

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { flushTasks } from '@/test/clock.ts';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
 import type { ApiContextValue } from '@/api/ApiProvider.tsx';
 
@@ -686,9 +687,7 @@ describe('the capture route does not wait on the library', () => {
     await waitFor(() => {
       expect(useCaptureStore.getState().model.state).toBe('requesting');
     });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    });
+    await act(() => flushTasks());
     expect(requested.filter((path) => path.endsWith('/v1/notes'))).toEqual([]);
     expect(requested.filter((path) => path.endsWith('/v1/settings'))).toEqual([]);
 

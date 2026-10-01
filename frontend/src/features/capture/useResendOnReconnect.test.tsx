@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { flushTasks } from '@/test/clock.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { INITIAL_CAPTURE, type CaptureModel } from './machine.ts';
@@ -135,7 +136,7 @@ describe('a sent recording goes out on its own when the connection returns', () 
     act(() => {
       setOnline(true);
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await act(() => flushTasks());
 
     expect(sends).toBe(0);
     expect(useCaptureStore.getState().model.state).toBe('review');
@@ -145,7 +146,7 @@ describe('a sent recording goes out on its own when the connection returns', () 
     setOnline(true);
     useCaptureStore.setState({ model: UNSENT });
     renderHook(() => useResendOnReconnect(), { wrapper });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await act(() => flushTasks());
 
     expect(sends).toBe(0);
   });

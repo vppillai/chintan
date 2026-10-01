@@ -249,8 +249,10 @@ describe('the previous recording is gone before the next one is requested', () =
     });
 
     await useCaptureStore.getState().start();
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    expect(useCaptureStore.getState().amplitudes(8).length).toBeGreaterThan(0);
+    // The analyser samples on its own interval; the first sample is what is waited for.
+    await vi.waitFor(() => {
+      expect(useCaptureStore.getState().amplitudes(8).length).toBeGreaterThan(0);
+    });
     recorder.emitChunk(10);
     await useCaptureStore.getState().stop();
     expect(useCaptureStore.getState().model.state).toBe('review');
