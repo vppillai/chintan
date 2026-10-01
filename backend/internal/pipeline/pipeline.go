@@ -371,7 +371,7 @@ func (p *Pipeline) runCapture(ctx context.Context, ref CaptureRef) (model.Captur
 		return final, nil
 	}
 	if err != nil {
-		obs.Count(ctx, "CaptureStageFailures", map[string]string{"Stage": string(capture.Status)})
+		obs.CountWithRollup(ctx, "CaptureStageFailures", map[string]string{"Stage": string(capture.Status)})
 		log.Error("capture pipeline could not complete", slog.String("error", err.Error()))
 		return final, err
 	}

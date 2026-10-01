@@ -870,6 +870,16 @@ Resources:
                   - lambda:InvokeFunction
                 Resource:
                   - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-worker-*:live'
+              # scripts/deploy.sh prunes old versions once the smoke has
+              # passed. Qualified ARNs only: an unqualified function ARN has no
+              # colon after its name, so this can delete a version of a
+              # function and never the function. Lambda itself refuses the
+              # version an alias points at.
+              - Effect: Allow
+                Action:
+                  - lambda:DeleteFunction
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-*:*'
 
               # Event source mappings are named by service-generated UUID, so the
               # scope has to come from the function they attach to.

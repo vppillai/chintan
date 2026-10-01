@@ -134,10 +134,11 @@ Parameters:
     Default: 'true'
     AllowedValues: ['true', 'false']
     Description: >
-      Create the CloudWatch alarms for this stack. The template declares six
-      (five, plus the spend-cap alarm when a cap is set): API function errors,
-      a gateway 4xx flood, refused inbox keys, the capture dead-letter queue, a
-      rejected provider key, and the spend cap. CloudWatch's always-free
+      Create the CloudWatch alarms for this stack. The template declares eight
+      (seven, plus the spend-cap alarm when a cap is set): API function errors,
+      a gateway 4xx flood, a gateway 5xx count, refused inbox keys, the capture
+      dead-letter queue, a rejected provider key, failed captures, and the
+      spend cap. CloudWatch's always-free
       allowance is ten alarm-months for the whole
       account, and the account's other project holds alarms too, so a second
       environment's copies are billed. Set false on an environment whose
@@ -2316,7 +2317,7 @@ Resources:
   # alarm says the same thing; and a 5xx-rate alarm, an average over a quiet
   # five minutes, trips on a single 500 in ten requests. The 4xx and 5xx
   # alarms above are counts with thresholds one stray request does not reach,
-  # which is why they earn their alarm-months and a rate does not. Seven
+  # which is why they earn their alarm-months and a rate does not. Eight
   # alarms exist, and none notifies on OK: an OK transition is not something
   # anyone needs an e-mail about. InboxKeyRefusedAlarm above earns its slot as
   # the only signal between one mistyped header and the thousand-in-five-
@@ -2383,6 +2384,44 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       # The metric does not exist until the first rejection, which is the
+      # healthy state.
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # A provider that is down, not rejecting the key: Groq or MiniMax answering
+  # 5xx, resetting the connection or returning something that will not decode.
+  # The pipeline ends each such capture as `failed` with a Retry button and
+  # returns nil to Lambda — a verdict, not a fault — so there is no retry, no
+  # dead-letter record and, until this alarm, no e-mail: an hour-long provider
+  # outage was visible only to the person pressing Retry. CaptureStageFailures
+  # is emitted through obs.CountWithRollup at every site (the obs rollup test
+  # pins that), so this reads the dimensionless sum across stages; the
+  # {Stage} copy says where once it has fired. Three in fifteen minutes, not
+  # one: a single provider blip is the Retry button's problem, and three
+  # captures failing inside one window at this instance's volume is every
+  # capture failing. A stalled provider takes the other path — the stage's
+  # deadline returns an error, Lambda retries, and the third attempt lands in
+  # the DLQ under its own alarm — but each attempt also passes through this
+  # counter, so a stall and an outage both reach the same address.
+  CaptureFailuresAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-capture-failures'
+      AlarmDescription: >-
+        Three or more captures failed in fifteen minutes. The transcription or
+        cleanup provider is failing or stalling; the worker log names the
+        stage and the cause, and the app's Retry re-runs each capture once the
+        provider is back.
+      Namespace: Chintan
+      MetricName: CaptureStageFailures
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 2
+      ComparisonOperator: GreaterThanThreshold
+      # The metric does not exist until the first failure, which is the
       # healthy state.
       TreatMissingData: notBreaching
       AlarmActions:
