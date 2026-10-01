@@ -6,9 +6,7 @@ import { ApiError } from '@/api/problem.ts';
 import { usePollNote } from '@/api/queries.ts';
 import type { CleanedMode, CleanedWire, NoteDetailWire } from '@/api/schema.ts';
 import { CheckMark } from '@/components/CheckMark.tsx';
-import { showToast } from '@/components/Toast.tsx';
 
-import { ChecklistEditor, UNDO_STALE } from './ChecklistEditor.tsx';
 import {
   CLEAN_POLL_TIMEOUT_MS,
   CLEANED_MODE_HINTS,
@@ -45,33 +43,10 @@ import type { NoteEditor } from './useNoteEditor.ts';
  * run is lit in place. With no view there is nothing to find, and the bar is
  * told so.
  *
- * For a checklist the tab is Split up: the one mode is `tasks` — the list
- * rewritten as one task per action — so there is no mode to pick, and the
- * result is shown in the Items editor itself, over the proposal (2026-09-29,
- * R6-CL-2, decision R6-CL-D1 a): rows, grips, boxes, the add row, Done. The
- * first act there — a tick, a drag, a Tab, a keystroke — makes the split
- * list the body and applies that act in the same save, as Use this list
- * makes it the body outright; the shell's toast offers Undo for six seconds
- * (OF-DEL: no question first for what can be undone), and from then on the
- * tab shows the body itself (`adoptedSplits`). A proposal older than the
- * note, or one a regeneration is about to replace, is shown `inert` until
- * Regenerate or Use this list. The server applies the mode itself, so the
- * request names none.
+ * A checklist has no Cleaned tab (R8-F8): its one mode, `tasks`, is written
+ * into the body by Tidy up list in the ⋮ menu (`useTidyList.ts`), so this
+ * panel is a plain note's only.
  */
-
-/**
- * Which split list each note has taken as its body, by the view's
- * `generated_at`. Before that the tab shows the proposal and a tick there
- * replaces the body with it; after it the tab shows the body — the split
- * list with the ticks made since — and a tick is an ordinary edit. Module
- * state rather than the panel's because the panel unmounts with every tab
- * switch, and the person who ticked Milk here, looked at Items and came back
- * must find Milk ticked, not the un-ticked proposal ready to overwrite the
- * body again. A reload starts over; the stale notice then says the proposal
- * is older than the note, and the rows are held until it is regenerated or
- * taken outright with Use this list.
- */
-const adoptedSplits = new Map<string, string>();
 
 export function CleanedPanel({
   note,
@@ -90,7 +65,6 @@ export function CleanedPanel({
   const cleaned = note.cleaned ?? null;
   const { regenerate, pending, notice } = useRegenerateCleaned(note);
   const { draft } = editor.model;
-  const checklist = (draft.kind ?? note.kind ?? 'note') === 'checklist';
 
   const bodyRef = useRef<HTMLDivElement>(null);
   const cleanedBody = cleaned?.body ?? '';
@@ -100,75 +74,13 @@ export function CleanedPanel({
     () => markTree(renderMarkdown(cleanedBody), query, active),
     [cleanedBody, query, active],
   );
-  // The editor draws rows, not the marked tree, so it has no marks to count.
-  useReportTotal(find, checklist ? 0 : rendered.total);
+  useReportTotal(find, rendered.total);
   useScrollToActiveMatch(bodyRef, find ? active : null, rendered.total);
 
   // The mode the switch shows: the user's choice this session, else the mode
   // of the view on screen, else the rewrite that is the point of the feature.
-  // A checklist has one mode and no switch.
-  const mode: CleanedMode = checklist ? 'tasks' : plainMode(draft.cleaned_mode ?? cleaned?.mode);
+  const mode: CleanedMode = plainMode(draft.cleaned_mode ?? cleaned?.mode);
   const autoClean = draft.auto_clean ?? false;
-
-  const adopted =
-    checklist && cleaned !== null && adoptedSplits.get(note.id) === cleaned.generated_at;
-  // The split list as it stands: the proposal, or the body once it became it.
-  const splitBody = adopted ? draft.body : (cleaned?.body ?? '');
-  // Said once, when the body is replaced: the caption's leaving is the only
-  // other sign, and a screen reader never hears a line vanish.
-  const [announcement, setAnnouncement] = useState('');
-  /*
-   * The editor's every write, and the split list as the body with the act
-   * applied: the same edit a change in the Items tab is, so it rides the
-   * autosave and its conflict prompt like any other change to the items.
-   * The first is the replacement, so it is saved at once whatever it was —
-   * a keystroke included — and can be taken back: Undo puts the body as it
-   * stood back, saves, and the tab shows the proposal again. The acts after
-   * it are ordinary edits, saved as the editor asks (`onSave`).
-   *
-   * Undo only while the body is still what this panel last wrote: the note
-   * polls while a recording is being filed, and one landing by refetch
-   * inside the six seconds resets the settled draft to the server's body —
-   * an Undo that wrote the captured body over it would carry the dictated
-   * item away, silently (`UNDO_STALE`, DB6-3). The body as it stands is
-   * read from the note editor's own mirror (`editor.current()`), never from
-   * this panel: the toast is the shell's and outlives a tab switch, which
-   * unmounts the panel and would leave a ref here frozen at the body it
-   * last saw — equal to `lastWritten` for good. The person's own acts since
-   * all arrive here, so they never block it: Undo takes back the adoption
-   * and the ticks since.
-   */
-  const lastWritten = useRef<string | null>(null);
-  const adopt = (body: string): void => {
-    const previous = draft.body;
-    const first = !adopted;
-    if (cleaned) adoptedSplits.set(note.id, cleaned.generated_at);
-    lastWritten.current = body;
-    editor.edit({ body });
-    if (!first) return;
-    // For a discrete act the editor's own `onSave` calls `saveNow` again
-    // right after this one; `useNoteEditor` (`inFlight`, `dirtyAgain`) folds
-    // the two into one PATCH. This one is for the keystroke, which the editor
-    // saves only on blur.
-    void editor.saveNow();
-    const message = 'Your list is now the split version.';
-    setAnnouncement(message);
-    showToast({
-      message,
-      action: {
-        label: 'Undo',
-        onSelect: () => {
-          if (editor.current().body !== lastWritten.current) {
-            showToast({ message: UNDO_STALE });
-            return;
-          }
-          adoptedSplits.delete(note.id);
-          editor.edit({ body: previous });
-          void editor.saveNow();
-        },
-      },
-    });
-  };
 
   const chooseMode = (next: CleanedMode): void => {
     // Recorded on the note, so an automatic regeneration uses it too, and
@@ -180,37 +92,33 @@ export function CleanedPanel({
     regenerate(next);
   };
 
-  // The server refuses any mode but `tasks` for a checklist and picks it
-  // unasked, so the request names none and cannot disagree with it.
   const regenerateNow = (): void => {
-    regenerate(checklist ? undefined : mode);
+    regenerate(mode);
   };
 
   return (
     <section className="cleaned" aria-labelledby={headingId}>
       <h2 id={headingId} className="visually-hidden">
-        {checklist ? 'Split up' : 'Cleaned view'}
+        Cleaned view
       </h2>
 
       <div className="cleaned__controls">
-        {!checklist && (
-          <div className="cleaned__modes" role="group" aria-label="Cleaned view mode">
-            {PLAIN_CLEANED_MODES.map((option) => (
-              <button
-                key={option}
-                type="button"
-                className="cleaned__mode"
-                aria-pressed={option === mode}
-                disabled={pending}
-                onClick={() => {
-                  chooseMode(option);
-                }}
-              >
-                {CLEANED_MODE_LABELS[option]}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="cleaned__modes" role="group" aria-label="Cleaned view mode">
+          {PLAIN_CLEANED_MODES.map((option) => (
+            <button
+              key={option}
+              type="button"
+              className="cleaned__mode"
+              aria-pressed={option === mode}
+              disabled={pending}
+              onClick={() => {
+                chooseMode(option);
+              }}
+            >
+              {CLEANED_MODE_LABELS[option]}
+            </button>
+          ))}
+        </div>
 
         {/*
           The checklist's own drawn box: the native control is stretched
@@ -237,27 +145,10 @@ export function CleanedPanel({
       {cleaned ? (
         <>
           <div className="cleaned__header">
-            {/* Once adopted the rows below are the body, not a generated view. */}
             <p className="cleaned__meta">
-              {adopted
-                ? `Your list · split up ${describeAgo(cleaned.generated_at)}`
-                : `Generated ${describeAgo(cleaned.generated_at)} · ${CLEANED_MODE_LABELS[cleaned.mode]}`}
+              {`Generated ${describeAgo(cleaned.generated_at)} · ${CLEANED_MODE_LABELS[cleaned.mode]}`}
             </p>
             <div className="cleaned__actions">
-              {/* Gone once adopted: the body already is this list, and
-                  pressing it again would throw away the ticks made since. */}
-              {checklist && !adopted && (
-                <button
-                  type="button"
-                  className="cleaned__action cleaned__action--primary"
-                  disabled={pending}
-                  onClick={() => {
-                    adopt(cleaned.body);
-                  }}
-                >
-                  Use this list
-                </button>
-              )}
               <button
                 type="button"
                 className="cleaned__action"
@@ -269,18 +160,7 @@ export function CleanedPanel({
             </div>
           </div>
 
-          {/* Not while the proposal is stale: the rows are inert then, and a
-              sentence about ticking above rows that cannot be ticked
-              contradicts itself. The stale notice below says what to do. */}
-          {checklist && !adopted && !cleaned.stale && (
-            <p className="cleaned__meta">
-              Ticking, moving or editing here replaces your list with the split version.
-            </p>
-          )}
-
-          {/* Once adopted the body is the split version, and "changed since"
-              would only say so. */}
-          {cleaned.stale && !pending && !adopted && (
+          {cleaned.stale && !pending && (
             <div className="cleaned__stale" role="status">
               <p>The note changed since this was generated.</p>
               <button
@@ -295,47 +175,18 @@ export function CleanedPanel({
 
           <Progress pending={pending} notice={notice} />
 
-          {checklist ? (
-            /*
-              Inert while a regeneration is pending, and while the proposal is
-              older than the note: an act then would write a list that
-              predates the note's later changes over the body in one save,
-              and an item a recording appended since would leave the body
-              silently. Use this list stays the explicit way to take a stale
-              proposal anyway. One attribute on the wrapper, not a prop the
-              editor would have to thread through every control.
-            */
-            <div
-              ref={bodyRef}
-              className="cleaned__body"
-              lang={lang}
-              data-stale={(cleaned.stale && !adopted) || undefined}
-              inert={pending || (cleaned.stale && !adopted) || undefined}
-            >
-              <ChecklistEditor
-                noteId={note.id}
-                body={splitBody}
-                currentBody={() => editor.current().body}
-                onChange={adopt}
-                onSave={() => void editor.saveNow()}
-              />
-            </div>
-          ) : (
-            <div
-              ref={bodyRef}
-              className="cleaned__body prose"
-              lang={lang}
-              data-stale={cleaned.stale || undefined}
-            >
-              {rendered.nodes}
-            </div>
-          )}
+          <div
+            ref={bodyRef}
+            className="cleaned__body prose"
+            lang={lang}
+            data-stale={cleaned.stale || undefined}
+          >
+            {rendered.nodes}
+          </div>
         </>
       ) : (
         <div className="cleaned__empty">
-          <p className="cleaned__empty-title">
-            {checklist ? 'Not split up yet' : 'No cleaned view yet'}
-          </p>
+          <p className="cleaned__empty-title">No cleaned view yet</p>
           <p className="cleaned__hint">{CLEANED_MODE_HINTS[mode]}</p>
           <Progress pending={pending} notice={notice} />
           <button
@@ -347,12 +198,6 @@ export function CleanedPanel({
             {pending ? 'Generating…' : 'Generate'}
           </button>
         </div>
-      )}
-
-      {checklist && (
-        <p className="visually-hidden" role="status" aria-live="polite">
-          {announcement}
-        </p>
       )}
     </section>
   );

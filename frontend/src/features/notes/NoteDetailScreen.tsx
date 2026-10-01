@@ -103,7 +103,7 @@ export function NoteDetailScreen() {
   const offlineCopy = !served && Boolean(cached.data);
   const editor = useNoteEditor(note);
   // The draft's, not the server's: the Details switch changes what this
-  // screen is — Items for Text, Split up for Cleaned — the moment it is
+  // screen is — Items for Text, and no Cleaned tab — the moment it is
   // flipped, not after the save lands.
   const checklist = (editor.model.draft.kind ?? note?.kind ?? 'note') === 'checklist';
   const [selectingRecordings, setSelectingRecordings] = useState(false);
@@ -398,15 +398,22 @@ function NoteViews({
   findBarId: string;
   findInputRef: RefObject<HTMLInputElement | null>;
 }) {
-  const [tab, selectTab] = useNoteTab(note.id);
+  const [chosenTab, selectTab] = useNoteTab(note.id);
+  // A checklist has no Cleaned tab (R8-F8: Tidy up list in the ⋮ writes the
+  // body instead), so a remembered or linked `cleaned` lands on its Items.
+  const tab: NoteTab = checklist && chosenTab === 'cleaned' ? 'text' : chosenTab;
   // The upload on its way counts: it is a row on the tab already.
   const count = (note.captures?.length ?? 0) + (localUpload ? 1 : 0);
-  // A checklist's text is its items, and its cleaned view splits them up.
-  const tabs: NoteTabDescriptor[] = [
-    { id: 'text', label: checklist ? 'Items' : 'Text' },
-    { id: 'cleaned', label: checklist ? 'Split up' : 'Cleaned' },
-    { id: 'recordings', label: 'Recordings', count },
-  ];
+  const tabs: NoteTabDescriptor[] = checklist
+    ? [
+        { id: 'text', label: 'Items' },
+        { id: 'recordings', label: 'Recordings', count },
+      ]
+    : [
+        { id: 'text', label: 'Text' },
+        { id: 'cleaned', label: 'Cleaned' },
+        { id: 'recordings', label: 'Recordings', count },
+      ];
 
   // Another tab is another text: the count is the new panel's to report, and
   // the active match starts again from its first.

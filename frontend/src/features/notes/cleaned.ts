@@ -32,7 +32,9 @@ export function cleanPollInterval(elapsedMs: number): number | false {
 export const CLEANED_MODE_LABELS: Record<CleanedMode, string> = {
   structured: 'Structured',
   polished: 'Polished',
-  tasks: 'Split up',
+  // Only ever seen on a plain note converted back from a checklist that was
+  // tidied: the view it still carries is that list (R8-F8).
+  tasks: 'Tidied list',
 };
 
 /**

@@ -1,7 +1,7 @@
 /*
  * The Cleaned view — the worker's rewrite of the whole note, read-only — and
  * the tab panel it sits in. Moved whole from shell.css (round 5, CH-6);
- * checklist.css restyles it as Split up. Tokens only — no literal colour or
+ * a checklist has no such tab (R8-F8). Tokens only — no literal colour or
  * font size lives here.
  */
 
@@ -150,9 +150,7 @@
   color: var(--color-ink);
 }
 
-/* The prose view older than the note: muted until Regenerate. The Split up
-   editor's wrapper carries the attribute too, but its rows are inert then
-   and take checklist.css's `[inert]` rule over this. */
+/* The prose view older than the note: muted until Regenerate. */
 .cleaned__body[data-stale] {
   color: var(--color-muted);
 }

@@ -1,6 +1,7 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { useId } from 'react';
 
-import { useSettings } from '@/api/queries.ts';
+import { queryKeys, useSettings } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { CheckMark } from '@/components/CheckMark.tsx';
 import { CopyButton } from '@/components/CopyButton.tsx';
@@ -10,9 +11,10 @@ import { LanguageSelect } from '@/components/LanguageSelect.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
 import { languageName } from '@/features/settings/languages.ts';
 
-import { checklistToProse, proseToChecklist } from './checklist.ts';
+import { checklistToProse, parseChecklist, proseToChecklist } from './checklist.ts';
 import { cleanedDocument, cleanedMarkdown } from './cleaned.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
+import { useApplyTidy, useStartTidy } from './useTidyList.ts';
 
 /**
  * The two disclosures the header's ⋮ opens (`NoteMenu`, `NoteActions.tsx`):
@@ -61,6 +63,14 @@ export function NoteDrawer({
   const headingId = notePanelHeadingId(note.id);
   const { draft } = editor.model;
   const cleaned = note.cleaned?.body.trim() ? note.cleaned : null;
+  const queryClient = useQueryClient();
+  const startTidy = useStartTidy();
+  /*
+   * Here because the drawer is mounted for as long as the note screen is,
+   * open or not, and already holds the editor: a tidy asked for from the ⋮
+   * or by the switch below lands whichever tab is showing.
+   */
+  useApplyTidy(note, editor);
 
   if (!open) return null;
 
@@ -127,11 +137,22 @@ export function NoteDrawer({
                 // checklist whose body is still prose would show every
                 // paragraph as one open item and normalise it on the first
                 // write, which is the conversion done by surprise.
-                editor.edit({
-                  kind: checklist ? 'checklist' : 'note',
-                  body: checklist ? proseToChecklist(draft.body) : checklistToProse(draft.body),
-                });
-                void editor.saveNow();
+                const body = checklist ? proseToChecklist(draft.body) : checklistToProse(draft.body);
+                editor.edit({ kind: checklist ? 'checklist' : 'note', body });
+                const saved = editor.saveNow();
+                /*
+                 * Then a tidy, since a dictated paragraph is one long item
+                 * until it is split (R8-F8). Only once the server has the
+                 * checklist — a save that failed would have the worker clean
+                 * the prose — and only when some item is more than a word,
+                 * since a list of single words has nothing to split.
+                 */
+                if (checklist && parseChecklist(body).some((item) => /\S\s+\S/.test(item.text))) {
+                  void saved.then(() => {
+                    const stored = queryClient.getQueryData<NoteDetailWire>(queryKeys.note(note.id));
+                    if (stored?.kind === 'checklist') startTidy(note.id, true);
+                  });
+                }
               }}
             />
             {/*
@@ -298,9 +319,9 @@ function VerbatimSwitch({
 }
 
 /**
- * Prose or checklist. It changes what the rest of the screen is (Items and
- * Split up for Text and Cleaned) and what a recording into the note becomes
- * (an item, not a paragraph). Last in Details: the language stays first,
+ * Prose or checklist. It changes what the rest of the screen is (Items for
+ * Text, and no Cleaned tab) and what a recording into the note becomes (an
+ * item, not a paragraph); turned on, it tidies the new list too. Last in Details: the language stays first,
  * where the owner's trial finally found it, and a note is converted once.
  *
  * The same drawn checkbox as the Cleaned tab's auto-refresh switch: the
