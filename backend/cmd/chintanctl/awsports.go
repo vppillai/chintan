@@ -19,6 +19,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+
+	"github.com/vppillai/chintan/backend/internal/upload"
 )
 
 // dynamoPartition implements Partition against a real table.
@@ -332,7 +334,7 @@ func (b *s3Blobs) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 	return out.Body, nil
 }
 
-func (b *s3Blobs) Put(ctx context.Context, key string, body io.Reader, size int64, contentType string) error {
+func (b *s3Blobs) Put(ctx context.Context, key string, body io.Reader, size int64, contentType string, tags map[string]string) error {
 	in := &s3.PutObjectInput{
 		Bucket: aws.String(b.bucket),
 		Key:    aws.String(key),
@@ -344,10 +346,28 @@ func (b *s3Blobs) Put(ctx context.Context, key string, body io.Reader, size int6
 	if contentType != "" {
 		in.ContentType = aws.String(contentType)
 	}
+	if tagging := upload.EncodeTags(tags); tagging != "" {
+		in.Tagging = aws.String(tagging)
+	}
 	if _, err := b.client.PutObject(ctx, in); err != nil {
 		return fmt.Errorf("put s3://%s/%s: %w", b.bucket, key, err)
 	}
 	return nil
+}
+
+func (b *s3Blobs) Tags(ctx context.Context, key string) (map[string]string, error) {
+	out, err := b.client.GetObjectTagging(ctx, &s3.GetObjectTaggingInput{
+		Bucket: aws.String(b.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get tags s3://%s/%s: %w", b.bucket, key, err)
+	}
+	tags := make(map[string]string, len(out.TagSet))
+	for _, t := range out.TagSet {
+		tags[aws.ToString(t.Key)] = aws.ToString(t.Value)
+	}
+	return tags, nil
 }
 
 func (b *s3Blobs) Delete(ctx context.Context, key string) error {

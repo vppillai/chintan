@@ -179,9 +179,14 @@ type Blobs interface {
 	Prefixes(ctx context.Context, prefix string) ([]string, error)
 	// Open streams one object. The caller closes it.
 	Open(ctx context.Context, key string) (io.ReadCloser, error)
-	// Put streams body of the given size to key. Pass an io.ReadSeeker where
+	// Put streams body of the given size to key, with tags as the object's
+	// whole tag set (none for an empty map). Pass an io.ReadSeeker where
 	// possible so the transport does not have to buffer to compute a checksum.
-	Put(ctx context.Context, key string, body io.Reader, size int64, contentType string) error
+	Put(ctx context.Context, key string, body io.Reader, size int64, contentType string, tags map[string]string) error
+	// Tags returns the object's tags, empty when it has none. The lifecycle
+	// rules key on them (capture-audio and its retention tier), so a backup
+	// that lost them would restore audio that never expires.
+	Tags(ctx context.Context, key string) (map[string]string, error)
 	// Delete removes one object. Deleting an absent object is not an error.
 	Delete(ctx context.Context, key string) error
 }

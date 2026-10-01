@@ -219,7 +219,7 @@ func newFakeBlobs() *fakeBlobs {
 
 func (f *fakeBlobs) seed(t *testing.T, key, body, contentType string) {
 	t.Helper()
-	if err := f.Put(context.Background(), key, strings.NewReader(body), int64(len(body)), contentType); err != nil {
+	if err := f.Put(context.Background(), key, strings.NewReader(body), int64(len(body)), contentType, nil); err != nil {
 		t.Fatalf("seed %s: %v", key, err)
 	}
 	f.mu.Lock()
@@ -293,12 +293,12 @@ func (f *fakeBlobs) Open(ctx context.Context, key string) (io.ReadCloser, error)
 	return io.NopCloser(bytes.NewReader(body)), nil
 }
 
-func (f *fakeBlobs) Put(ctx context.Context, key string, body io.Reader, _ int64, contentType string) error {
+func (f *fakeBlobs) Put(ctx context.Context, key string, body io.Reader, _ int64, contentType string, tags map[string]string) error {
 	buf, err := io.ReadAll(body)
 	if err != nil {
 		return err
 	}
-	if err := f.store.Put(ctx, key, buf, contentType); err != nil {
+	if err := f.store.PutTagged(ctx, key, buf, contentType, tags); err != nil {
 		return err
 	}
 	f.mu.Lock()
@@ -306,6 +306,17 @@ func (f *fakeBlobs) Put(ctx context.Context, key string, body io.Reader, _ int64
 	f.keys[key] = true
 	f.puts++
 	return nil
+}
+
+func (f *fakeBlobs) Tags(ctx context.Context, key string) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	tags := map[string]string{}
+	for k, v := range f.store.Tags(key) {
+		tags[k] = v
+	}
+	return tags, nil
 }
 
 func (f *fakeBlobs) Delete(ctx context.Context, key string) error {

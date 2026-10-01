@@ -8,7 +8,7 @@
 //
 //	chintanctl export    --instance <name> --out <dir|tar.gz>
 //	chintanctl backup    --instance <name> --out <dir>
-//	chintanctl restore   --instance <name> --in <dir> [--apply]
+//	chintanctl restore   --instance <name> --in <dir> [--apply] [--yes]
 //	chintanctl reconcile --instance <name> [--apply] [--only <kind>]
 //	chintanctl erase     --instance <name> --tenant <id> [--apply]
 //	chintanctl backfill-search-text --instance <name> [--tenant <id>] [--apply]
@@ -45,7 +45,10 @@ Commands:
              capture's audio and text artifacts, in an Obsidian-friendly layout.
   backup     Full-fidelity copy: DynamoDB items verbatim alongside the S3
              objects, with a content hash per object.
-  restore    Inverse of backup. Verifies every hash before it writes anything.
+  restore    Inverse of backup. Verifies every hash before it writes anything,
+             and puts each object's tags back. A tenant with live data in the
+             target is listed; --apply writes over it after a confirmation,
+             --yes skips the prompt.
   reconcile  Report orphans in both directions: objects with no index row, and
              index rows whose objects are gone; captures filed into a note
              that has no row; and rows written before their attributes were
