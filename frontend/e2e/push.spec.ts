@@ -2,8 +2,8 @@ import { expect, test } from './fixtures.ts';
 
 /**
  * The Notifications card on You, against an instance with no VAPID key pair —
- * which is every fresh deploy until the owner runs `scripts/vapid-keys.sh`
- * (docs/design/push.md). The stub answers `GET /v1/push/key` with the
+ * which is every instance until `scripts/vapid-keys.sh --apply` has run, or
+ * one whose config turns `web_push` off (docs/design/push.md). The stub answers `GET /v1/push/key` with the
  * contract's 404, and the card must say so rather than offer a switch that
  * cannot work, whatever this browser supports.
  */

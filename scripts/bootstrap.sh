@@ -157,6 +157,22 @@ dim "  LambdaCodeKey=$S3_KEY"
 dim "  WorkerCodeKey=$WORKER_S3_KEY"
 dim "  SiteBaseUrl=$SITE_BASE_URL"
 
+# The VAPID pair goes in before the deploy, so the Lambdas' first cold start
+# already reads it and Web Push works from the first sign-in. vapid-keys.sh
+# writes only a missing pair, so a re-run over an existing instance changes
+# nothing and every browser subscription keeps working.
+WEB_PUSH=0
+web_push_enabled "$INSTANCE" && WEB_PUSH=1
+if [ "$WEB_PUSH" = 1 ]; then
+    info "Web Push key pair (web_push is on)"
+    # Not fatal: an instance without the pair still deploys and files
+    # recordings, and the warning names the command to run by hand.
+    run "$REPO_ROOT/scripts/vapid-keys.sh" --instance "$INSTANCE" --region "$REGION" --apply ||
+        warn "the VAPID pair was not installed; run scripts/vapid-keys.sh --instance $INSTANCE --region $REGION --apply"
+else
+    dim "  web_push is off for $INSTANCE: the VAPID pair is left as it is"
+fi
+
 if ! confirm_apply "$APPLY" "deploy $STACK in $REGION"; then
     exit 0
 fi

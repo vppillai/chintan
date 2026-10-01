@@ -171,8 +171,8 @@ func setup() {
 		cleanInvoker = pipeline.NewInvoker(lambdasvc.NewFromConfig(cfg), arn)
 	}
 
-	// Web Push is dormant until the owner puts the VAPID pair in SSM
-	// (scripts/vapid-keys.sh, docs/design/push.md). Both halves are optional
+	// Web Push is dormant until the VAPID pair is in SSM
+	// (scripts/vapid-keys.sh --apply, docs/design/push.md). Both halves are optional
 	// reads: an instance without them starts, files recordings and sends
 	// nothing, and says so once here rather than on every capture.
 	vapidPublic, err := ssmparam.Optional(ctx, ssmClient, "VAPID_PUBLIC_KEY_PATH")
@@ -192,7 +192,7 @@ func setup() {
 		pusher = sender
 	} else {
 		slog.Info("web push is not configured; no notification is sent when a recording files",
-			slog.String("hint", "put vapid_public_key and vapid_private_key under /chintan/<instance>/ in SSM; scripts/vapid-keys.sh prints the commands"))
+			slog.String("hint", "put vapid_public_key and vapid_private_key under /chintan/<instance>/ in SSM; scripts/vapid-keys.sh --apply installs them"))
 	}
 
 	p, err := pipeline.New(pipeline.Config{

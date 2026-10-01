@@ -36,7 +36,8 @@ Everything is CloudFormation, every stack is `chintan-<instance>-<environment>`,
 scripts/bootstrap-agent.sh --region us-west-2 --apply
 
 # 2. Once per account and fork: the bootstrap stack (artifact bucket, GitHub OIDC deploy
-#    and build roles), the repository secrets and variables, the environments, Pages.
+#    and build roles), the repository secrets and variables, the environments, Pages,
+#    and each instance's Web Push key pair (web_push, on by default).
 scripts/setup.sh --region us-west-2 --apply
 
 # 3. The provider keys, per instance. The Lambdas read them by path at run time.
@@ -56,7 +57,7 @@ Then open `https://<owner>.github.io/<repo>/<site_path>/` — `https://<owner>.g
 What each step needs and leaves behind:
 
 1. `bootstrap-agent.sh` is the only script that needs administrative credentials and the only one that touches IAM outside CloudFormation. It creates the `chintan-agent-boundary` managed policy that `infrastructure/bootstrap.yaml` names — so step 2 fails without it — plus the `chintan-agent` role and `chintan-agent-cli` user that everything else can run as, and the `chintan-trail` CloudTrail trail. `CHINTAN_KEY_OUT=~/.chintan/agent.env scripts/bootstrap-agent.sh --apply` also writes the CLI user's access key to that file instead of ever printing it. The policy documents are the JSON files in `infrastructure/agent-policies/`.
-2. `setup.sh` needs the account to have a GitHub OIDC provider for `token.actions.githubusercontent.com`; it checks, and prints the one administrator command that creates it if missing (the templates never create it, because it is shared with other projects). It deploys `chintan-bootstrap`, sets the `AWS_ACCOUNT_ID` repository secret and the `BUILD_ROLE_ARN` and `CFN_DEPLOY_ROLE_ARN` variables (the region is fixed in the workflows' `env`), makes `production` require your approval, and switches Pages to build from Actions.
+2. `setup.sh` needs the account to have a GitHub OIDC provider for `token.actions.githubusercontent.com`; it checks, and prints the one administrator command that creates it if missing (the templates never create it, because it is shared with other projects). It deploys `chintan-bootstrap`, sets the `AWS_ACCOUNT_ID` repository secret and the `BUILD_ROLE_ARN` and `CFN_DEPLOY_ROLE_ARN` variables (the region is fixed in the workflows' `env`), makes `production` require your approval, switches Pages to build from Actions, and installs the Web Push key pair of every instance whose config leaves `web_push` on, when it is missing (Configure → Notifications).
 3. The keys are `SecureString`s created outside CloudFormation because `AWS::SSM::Parameter` cannot declare that type. They are per instance, so `dev` staging and `dev` prod share them.
 4. `Deploy Backend` runs the tests, builds the two arm64 Lambda packages, deploys `chintan-dev-staging` through a printed change set and smoke-tests it (`/v1/health`, `/v1/health/ready`, which round-trips DynamoDB and S3, and one worker invoke; a failure puts the previous Lambda versions back), then deploys `chintan-dev-prod` once you approve, tags the commit `vX.Y.(Z+1)` and publishes a release. `Deploy Frontend` runs when that completes, builds one Vite bundle per instance from the deployed stacks' outputs and publishes them to Pages. Every later push to `main` does the same.
    To deploy the backend from your own machine instead — before the pipeline exists, or when it is broken — `scripts/bootstrap.sh --instance dev --region us-west-2 --origin https://<owner>.github.io --apply` targets the same `chintan-dev-prod` stack, so CI takes over from it without colliding. The frontend still needs the workflow (`gh workflow run deploy-frontend.yaml`).
@@ -97,6 +98,7 @@ The YAML owns an instance's identity and description — `display_name`, `short_
 | `api_host` | none | Custom hostname for this stack's API, e.g. `api.example.com` (staging: `api-staging.example.com`). A bare lowercase hostname. The stack requests a free, DNS-validated ACM certificate for it in its own region, fronts the HTTP API with it, and its `ApiEndpoint` output — so the bundle's API URL and the Devices card — becomes `https://<api_host>`. See Custom domain. |
 | `app_host` | none | The GitHub Pages custom domain the bundles are served from, e.g. `app.example.com`. One per Pages site: every config sets the same value or none does. Sets every stack's Cognito callback URLs and CORS origin, and moves the bundles to the site root (`/<site_path>/`). |
 | `dns_zone_id` | none | A Route 53 hosted zone holding `api_host`. Set, the stack writes the certificate's validation record and the API's alias itself. Refused without `api_host`. |
+| `web_push` | `true` | Web Push for this instance: `scripts/setup.sh` and `scripts/bootstrap.sh` install its VAPID key pair when missing, and `scripts/doctor.sh` reports a missing one. `false` leaves the pair alone, and an instance without one offers no notifications. Configs sharing a `name` must agree, since they share `/chintan/<name>/`. See Notifications. |
 
 Check what the configs resolve to before pushing:
 
@@ -129,15 +131,15 @@ Two things to know. The custom domain deploys only through the `chintan-cfn-depl
 
 ### Notifications
 
-Web Push — a note on the phone when a recording files, even with the app closed — is built and dormant until the instance has a VAPID key pair (`docs/design/push.md`). Make one and put it in SSM, per instance, beside the provider keys:
+Web Push — a note on the phone when a recording files, even with the app closed — needs a VAPID key pair per instance in SSM, beside the provider keys (`docs/design/push.md`). It is on by default and installed for you: with `web_push: true` in the instance's config (the default when the field is absent), `scripts/setup.sh --apply` and `scripts/bootstrap.sh --apply` run `scripts/vapid-keys.sh --apply`, which generates the pair and writes `/chintan/<instance>/vapid_private_key` and `vapid_public_key` only when they are missing, and `scripts/doctor.sh` reports a missing pair. To install it by hand, or to see what would happen:
 
 ```bash
-scripts/vapid-keys.sh --instance dev        # prints the two commands below with fresh keys; writes nothing itself
-aws ssm put-parameter --region us-west-2 --type SecureString --overwrite --name /chintan/dev/vapid_private_key --value=...   # the worker signs with it
-aws ssm put-parameter --region us-west-2 --type SecureString --overwrite --name /chintan/dev/vapid_public_key  --value=...   # the API hands it to the browser
+scripts/vapid-keys.sh --instance dev --region us-west-2           # dry run: says whether the pair exists; prints nothing secret
+scripts/vapid-keys.sh --instance dev --region us-west-2 --apply   # writes a missing pair; never overwrites one
+scripts/vapid-keys.sh --instance dev --region us-west-2 --rotate --apply   # replaces it: every browser must re-subscribe
 ```
 
-Both Lambdas read the parameters at cold start, so the switch on **You → Notifications** appears once they have restarted with the keys there (the next deploy does it). Without them the API answers `GET /v1/push/key` 404 and the card says notifications are not set up on this instance. On iOS the app must be installed to the Home Screen (16.4 or later); the card says so where that is the case.
+It needs your own credentials (the agent role may not write SSM), and it never prints the private key. A new pair invalidates every browser's subscription, which is why only `--rotate` replaces one; afterwards each browser turns **You → Notifications** off and on. Both Lambdas read the parameters at cold start, so the switch appears once they have restarted with the keys there (the next deploy does it). `web_push: false` makes the scripts leave the pair alone — they neither create nor delete it — and without one the API answers `GET /v1/push/key` 404 and the card says notifications are not set up on this instance; to turn push off on an instance that has a pair, delete the two parameters as well. On iOS the app must be installed to the Home Screen (16.4 or later); the card says so where that is the case.
 
 ### User preferences
 

@@ -47,3 +47,7 @@ daily_spend_cap_micros: 2000000
 # smoke test gates the prod job, so a broken Lambda or template fails the
 # pipeline here, loudly, before an alarm would have had anything to say.
 enable_alarms: false
+
+# Web Push shares prod's VAPID pair under /chintan/dev/, so this must match
+# config/instances/dev.yaml (scripts/list-instances.sh refuses a mismatch).
+web_push: true

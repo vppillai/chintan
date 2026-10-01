@@ -1368,8 +1368,8 @@ Resources:
                   - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/llm_api_key'
                   # The VAPID pair Web Push signs with (docs/design/push.md).
                   # Both are optional reads: absent, the worker starts and
-                  # sends nothing. scripts/vapid-keys.sh prints the commands
-                  # that create them.
+                  # sends nothing. scripts/vapid-keys.sh --apply creates
+                  # them, and scripts/setup.sh runs it when web_push is on.
                   - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/vapid_private_key'
                   - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/vapid_public_key'
               # No kms:Decrypt. ssm:GetParameter with WithDecryption on a

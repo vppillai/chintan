@@ -1,7 +1,8 @@
 # Web Push: how a filed recording reaches a closed app
 
-Status: built, dormant until the owner puts a VAPID key pair in SSM
-(round 5, R5-RC-D1/D2, 2026-09-27). Code: `model.PushSubscription`
+Status: built (round 5, R5-RC-D1/D2, 2026-09-27); live on an instance once
+its VAPID key pair is in SSM, which the setup scripts install by default
+since round 8 (`web_push`, R8-VAPID-1). Code: `model.PushSubscription`
 (`backend/internal/model/types.go`), `service.PushService`
 (`backend/internal/service/push.go`), the routes (`backend/internal/handler/
 push.go`), the worker's notifier (`backend/internal/pipeline/notify.go`) and
@@ -92,9 +93,18 @@ start. `template.yaml` names the paths in both functions' environments and
 grants each role exactly the parameters it reads. `VAPID_SUBJECT` is the
 app's origin, the contact RFC 8292 requires in the signature.
 
-The owner's step is `scripts/vapid-keys.sh --instance <name>`, which
-generates the pair with openssl and prints the two `aws ssm put-parameter`
-commands to run; the script itself writes nothing to AWS. A new pair
+`scripts/vapid-keys.sh --instance <name> --apply` generates the pair with
+openssl and writes both parameters, only when neither exists; without
+`--apply` it says whether they do and what it would write. It never prints
+the private key, and passes it to AWS through a mode-600 file rather than a
+command line. `scripts/setup.sh --apply` runs it for every instance whose
+config leaves `web_push` on (the default; `scripts/list-instances.sh` reads
+it, and the configs sharing a name must agree, since they share the path),
+and `scripts/bootstrap.sh --apply` for its instance before the deploy, so the
+first cold start already has the pair; `scripts/doctor.sh` reports a missing
+one. `web_push: false` makes all three leave the pair alone — neither created
+nor deleted. It runs on the owner's credentials: the agent role may not
+write SSM. Only `--rotate` replaces a pair, because a new pair
 invalidates every subscription, and the push service says so with 401 or
 403 (RFC 8292 §4.2), never 404 or 410, so the rows stay and their
 `failures` climb; the worker does not prune on 403, because a misconfigured

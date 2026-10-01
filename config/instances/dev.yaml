@@ -23,3 +23,10 @@ daily_spend_cap_micros: 5000000
 # provider key, and the spend cap above.
 # The address they e-mail comes from the ALARM_EMAIL repository secret, not from
 # this public file. The first user is created with scripts/invite-user.sh.
+
+# Web Push: a notification when a recording files, even with the app closed.
+# On (the default), scripts/setup.sh and scripts/bootstrap.sh install the VAPID
+# key pair under /chintan/dev/ when it is missing, and scripts/doctor.sh reports
+# one that is. false leaves the pair alone: the scripts neither create nor delete
+# it, and without one the app says notifications are not set up here.
+web_push: true

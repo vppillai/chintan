@@ -316,6 +316,18 @@ stack_name() {
     printf '%s%s-%s' "$CHINTAN_PREFIX" "$instance" "$env"
 }
 
+# web_push_enabled says whether config/instances/*.yaml leaves `web_push` on
+# for an instance name. On is the default, so an instance no config names (a
+# hand-run scripts/bootstrap.sh for a new one) counts as on. The configs of one
+# name agree, which scripts/list-instances.sh enforces, so the first answers.
+web_push_enabled() {
+    local v
+    v="$("$REPO_ROOT/scripts/list-instances.sh" |
+        jq -r --arg n "$1" '[.[] | select(.instance == $n) | .web_push] | if length == 0 then true else .[0] end')" ||
+        die "could not read web_push from config/instances (scripts/list-instances.sh failed)"
+    [ "$v" = "true" ]
+}
+
 # parse_stack_name is the inverse, and it refuses to guess. Given
 # chintan-dev-prod it sets STACK_INSTANCE=dev and STACK_ENV=prod; given anything
 # that is not chintan-<instance>-<known environment> it returns 1 so the caller

@@ -3,7 +3,9 @@
 # One-time account and repository setup: the bootstrap stack with the GitHub OIDC
 # deploy and build roles, the repository secrets and variables, the deployment
 # environments and Pages — including the Pages custom domain, when the instance
-# configs declare one (app_host).
+# configs declare one (app_host) — and the Web Push VAPID key pair of every
+# instance whose config leaves web_push on (scripts/vapid-keys.sh --apply, which
+# writes only a missing pair).
 #
 # Run this once per AWS account + fork, before scripts/bootstrap.sh; run it
 # again after adding app_host to config/instances/*.yaml. Every step is
@@ -74,6 +76,10 @@ TEMPLATE="$REPO_ROOT/infrastructure/bootstrap.yaml"
 # The Pages custom domain, if the configs set one. Read up front so the plan
 # below can show it, and validated by list-instances.sh, the one reader.
 APP_HOST="$("$REPO_ROOT/scripts/list-instances.sh" --app-host)"
+# "<name> <region>" for each instance name whose configs leave web_push on.
+# One line per name, not per stack: staging and prod share /chintan/<name>/.
+PUSH_INSTANCES="$("$REPO_ROOT/scripts/list-instances.sh" |
+    jq -r '[.[] | select(.web_push)] | unique_by(.instance)[] | "\(.instance) \(.region)"')"
 
 info "account:     $ACCOUNT_ID"
 info "region:      $REGION"
@@ -113,6 +119,10 @@ dim "  gh variable         BUILD_ROLE_ARN, CFN_DEPLOY_ROLE_ARN"
 dim "  gh environment      production (reviewers: ${REVIEWERS[*]}, protected branches only)"
 dim "  gh environment      staging"
 dim "  gh pages            build_type=workflow${APP_HOST:+, custom domain $APP_HOST}"
+while read -r name region; do
+    [ -n "$name" ] || continue
+    dim "  vapid key pair      /chintan/$name/ in $region, if missing (web_push)"
+done <<<"$PUSH_INSTANCES"
 
 if ! confirm_apply "$APPLY" "create the bootstrap stack and configure $REPO"; then
     exit 0
@@ -239,6 +249,23 @@ if [ -n "$APP_HOST" ]; then
         warn "set Settings -> Pages -> Custom domain to $APP_HOST by hand"
     fi
 fi
+
+# ---------------------------------------------------------------------------
+# Web Push key pairs
+# ---------------------------------------------------------------------------
+#
+# One per instance name whose configs leave web_push on (the default), so a
+# new instance's first deploy cold-starts with the pair and the Notifications
+# switch is there from the first sign-in. vapid-keys.sh writes only a missing
+# pair: a re-run never replaces one, because a new pair invalidates every
+# browser's subscription. Not fatal, like Pages above: an instance without the
+# pair still deploys and files recordings.
+while read -r name region; do
+    [ -n "$name" ] || continue
+    info "Web Push key pair for $name"
+    "$REPO_ROOT/scripts/vapid-keys.sh" --instance "$name" --region "$region" --apply ||
+        warn "the VAPID pair for $name was not installed; run scripts/vapid-keys.sh --instance $name --region $region --apply"
+done <<<"$PUSH_INSTANCES"
 
 log ""
 ok "setup complete"

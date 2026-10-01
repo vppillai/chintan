@@ -2,7 +2,7 @@
 
 Status: the poll and the focus refetch are implemented (2026-09-26, round 5,
 R5-RC-3); Web Push was approved (R5-RC-D1/D2) and built on 2026-09-27,
-dormant until the owner puts a VAPID key pair in SSM — `docs/design/push.md`
+live once the instance's VAPID key pair is in SSM — `docs/design/push.md`
 is now its design note, and the section below is the proposal as it was
 written. Code today: `usePendingCaptures` and `capturePollInterval`
 (`frontend/src/api/queries/captures.ts`), the library's receipts (`FilingRow.tsx`,
