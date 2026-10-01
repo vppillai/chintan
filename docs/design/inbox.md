@@ -42,6 +42,15 @@ against the ten, so the Devices card can say "Expires in 12 days" or
 stays perpetual, and a key handed to a one-off script gets thirty days
 (WH-A, round 5).
 
+On You the Devices card is folded behind its title (round 8, R8-DF1): the
+summary row says "2 devices", "No devices yet", "1 expiring soon" (within a
+week) or "1 expired", or "Couldn't load", and the list, the form and the
+recipes are one tap away. It opens itself when About's "Devices &
+shortcuts" link lands on `/settings#devices` (a Back carries no hash, so
+`goBackTo` hands it to `usePendingTab`, which puts it on the landed entry),
+and stays open while a minted key is on screen. The open state is not
+remembered.
+
 `GET /v1/devices` lists id, name, when issued, when last used and from
 where, when it expires, and what the key sent this month — never the key or
 its hash; a key that is lost is revoked and a new one issued. The month's

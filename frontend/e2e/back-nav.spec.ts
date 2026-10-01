@@ -90,6 +90,24 @@ test('a cold start on the archive puts Home beneath it', async ({ page }) => {
   await expect(page).toHaveURL('about:blank');
 });
 
+test("About's Devices & shortcuts link lands on You with that card open and in view", async ({ page }) => {
+  await page.goto('/');
+  const start = await depth(page);
+  await openYou(page);
+  const card = page.getByRole('region', { name: 'Devices & shortcuts' });
+  // Folded by default (owner, round 8).
+  await expect(card.locator(':scope > details')).not.toHaveAttribute('open', '');
+  await openAbout(page);
+  await page.getByRole('link', { name: 'Devices & shortcuts' }).click();
+  // Back to You, not another You on top, with the hash that opens the card.
+  await expect(page).toHaveURL(/\/settings#devices$/);
+  await expect(card.locator(':scope > details')).toHaveAttribute('open', '');
+  await expect(card).toBeInViewport();
+  expect(await depth(page)).toBe(start + 2);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+});
+
 test('a cold start on About: "‹ You" leaves [Home, You]', async ({ page }) => {
   await page.goto('/about');
   await page.getByRole('link', { name: /back to\s*you/i }).click();

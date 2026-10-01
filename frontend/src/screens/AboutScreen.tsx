@@ -11,6 +11,8 @@ import { describeVersion } from '@/features/settings/VersionFootnote.tsx';
 export const REPOSITORY_URL = 'https://github.com/vppillai/chintan';
 export const BACKLOG_URL = `${REPOSITORY_URL}/blob/main/docs/backlog.md`;
 export const LICENSE_URL = `${REPOSITORY_URL}/blob/main/LICENSE`;
+/** The Devices card on You, opened and in view (`DevicesCard`'s anchor). */
+const DEVICES_ON_YOU = `${ROUTES.settings}#devices`;
 
 /**
  * The five things that happen to a recording, in the order they happen. The
@@ -127,14 +129,15 @@ export function AboutScreen() {
             Other devices can post recordings and text into your notes with a device key &mdash; a
             watch, a ring, a phone shortcut &mdash; and each is filed the same way. The keys, and
             how to point each device at the app, are under{' '}
-            {/* To You the way "‹ You" goes, so You is never stacked twice. */}
+            {/* To You the way "‹ You" goes, so You is never stacked twice,
+                with the hash that opens the folded card. */}
             <Link
               className="text-link"
-              to={ROUTES.settings}
+              to={DEVICES_ON_YOU}
               onClick={(event) => {
                 if (!isPlainClick(event)) return;
                 event.preventDefault();
-                goBackTo(ROUTES.settings);
+                goBackTo(DEVICES_ON_YOU);
               }}
             >
               Devices &amp; shortcuts

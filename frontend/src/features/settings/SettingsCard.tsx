@@ -25,6 +25,8 @@ export function SettingsCard({
   lead,
   foot,
   more,
+  fold,
+  id,
   children,
   className,
 }: {
@@ -40,37 +42,73 @@ export function SettingsCard({
    * are a tap away, in the DOM the whole time for a screen reader.
    */
   more?: ReactNode;
+  /**
+   * Folds the whole card behind its title: a native disclosure whose summary
+   * is the title, a short status and a chevron, and whose body is the lead,
+   * the rows and the foot. Controlled, so the card can open itself (a link
+   * to it, a key on screen) and no re-render closes it.
+   */
+  fold?: { status: ReactNode; open: boolean; onToggle: (open: boolean) => void };
+  /** The section's id, for a link or a scroll that lands on the card. */
+  id?: string;
   children: ReactNode;
   className?: string;
 }) {
   const headingId = useId();
+  const sectionClass = className ? `you-card ${className}` : 'you-card';
+  const footer = (foot || more) && (
+    <div className="you-card__foot">
+      {foot}
+      {more && (
+        <details className="you-card__more">
+          <summary className="you-card__more-summary">
+            {/* "Less" once open, so the same line reads as the way to fold it again. */}
+            <span className="you-card__more-closed">More</span>
+            <span className="you-card__more-opened">Less</span>
+          </summary>
+          <div className="you-card__more-body">{more}</div>
+        </details>
+      )}
+    </div>
+  );
+  const body = <div className="you-card__body">{children}</div>;
+  if (fold) {
+    // The heading sits inside the summary, which HTML allows, so the
+    // section is still named by it and the whole row is one 44 px target.
+    return (
+      <section id={id} className={`${sectionClass} you-card--fold`} aria-labelledby={headingId}>
+        <details
+          open={fold.open}
+          onToggle={(event) => {
+            fold.onToggle(event.currentTarget.open);
+          }}
+        >
+          <summary className="you-card__head you-card__fold-summary">
+            <span className="you-card__fold-text">
+              <h2 id={headingId} className="you-card__title">
+                {title}
+              </h2>
+              <span className="you-card__status">{fold.status}</span>
+            </span>
+            <Icon name="chevron-right" size={18} className="you-card__fold-chevron" />
+          </summary>
+          {lead && <p className="you-card__lead you-card__fold-lead">{lead}</p>}
+          {body}
+          {footer}
+        </details>
+      </section>
+    );
+  }
   return (
-    <section
-      className={className ? `you-card ${className}` : 'you-card'}
-      aria-labelledby={headingId}
-    >
+    <section id={id} className={sectionClass} aria-labelledby={headingId}>
       <header className="you-card__head">
         <h2 id={headingId} className="you-card__title">
           {title}
         </h2>
         {lead && <p className="you-card__lead">{lead}</p>}
       </header>
-      <div className="you-card__body">{children}</div>
-      {(foot || more) && (
-        <div className="you-card__foot">
-          {foot}
-          {more && (
-            <details className="you-card__more">
-              <summary className="you-card__more-summary">
-                {/* "Less" once open, so the same line reads as the way to fold it again. */}
-                <span className="you-card__more-closed">More</span>
-                <span className="you-card__more-opened">Less</span>
-              </summary>
-              <div className="you-card__more-body">{more}</div>
-            </details>
-          )}
-        </div>
-      )}
+      {body}
+      {footer}
     </section>
   );
 }

@@ -80,8 +80,12 @@ function arrived(target: string, pathname: string, search: string): boolean {
   if (target === ROUTES.home) return isHome(pathname, search);
   const url = new URL(target, window.location.origin);
   const here = new URLSearchParams(search);
+  // A target with a hash (About's link to the Devices card) has arrived
+  // only once the hash is there too; one without ignores it.
   return (
-    url.pathname === pathname && [...url.searchParams].every(([key, value]) => here.get(key) === value)
+    url.pathname === pathname &&
+    [...url.searchParams].every(([key, value]) => here.get(key) === value) &&
+    (!url.hash || url.hash === window.location.hash)
   );
 }
 
@@ -133,8 +137,12 @@ export function useTabNavigation() {
    * still ends [Home, You].
    */
   const goBackTo = (to: string): void => {
-    if (historyIndex() >= 2) void navigate(-1);
-    else void navigate(to, { replace: true, state: RESTORE_SCROLL });
+    if (historyIndex() >= 2) {
+      // A Back cannot carry a hash, so one in the target (About's link to
+      // the Devices card) is put on the landed entry by `usePendingTab`.
+      if (to.includes('#')) setPending(to);
+      void navigate(-1);
+    } else void navigate(to, { replace: true, state: RESTORE_SCROLL });
   };
 
   return { goHome, goTab, goBackTo };
