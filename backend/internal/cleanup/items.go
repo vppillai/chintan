@@ -34,9 +34,9 @@ import (
 
 // Item is one checklist item as the model returns it and as the append
 // writes it: its text, whether it is done (the Split up's; the per-recording
-// extraction never sets it) and its sub-items. One level: a child has no
-// children (owner decision CL-D1), and ParseItems clamps a deeper reply to
-// that.
+// extraction never sets it) and its sub-items. A list holds at most
+// MaxDepth levels under the top; the per-recording extraction still makes
+// one (ParseItems clamps a deeper reply to that).
 type Item struct {
 	Text     string `json:"text"`
 	Done     bool   `json:"done,omitempty"`
@@ -77,17 +77,22 @@ func (it *Item) UnmarshalJSON(b []byte) error {
 const checklistItemRules = `- An item is one thing the person wants on the list, as a short entry in their own words: quantity kept ("two lemons", "500 g rice"), first letter capitalised, no full stop. A task with an action of its own ("call the plumber", "post the parcel by Friday") keeps its verb.
 - Leave out every word that is about the list rather than on it: "add", "put", "into it", "to my list", "buy", "get", "pick up", "I need", "we're out of", and the list's own name — also when the recording opens with that name to file it ("Shopping list eggs from Walmart"). "Add milk, eggs and protein powder to the shopping list" is three items, Milk, Eggs and Protein powder: never one item holding the sentence, never "Add milk".
 - One thing per item: "X and Y" and "X, Y and Z" are one item each, unless the words plainly name one thing ("salt and pepper" is two; "fish and chips" is one). In doubt, split.
-- Group as the person grouped. A place, a person, an occasion or a category the things are named under ("eggs from Walmart and meat from Costco", "for the party plates and cups") is a parent item with those things as its children: Walmart › Eggs, Costco › Meat. One level only: a child has no children. A thing named under no group is a top-level item. Never invent a group, and never make a group of the list's own name.
+- Group as the person grouped. A place, a person, an occasion or a category the things are named under ("eggs from Walmart and meat from Costco", "for the party plates and cups") is a parent item with those things as its children: Walmart › Eggs, Costco › Meat. A thing named under no group is a top-level item. Never invent a group, and never make a group of the list's own name.
 - A request to remove, tick off or change an item is not an item to add: return the whole request as one top-level item, as spoken.
 - Fix obvious speech-to-text garbling and drop fillers ("um", "okay so"); change nothing else. Never invent an item and never lose one.
 ` + llm.LanguageRule + `
 ` + llm.DataRule
 
 // itemsSystemPrompt: one recording → the items to add, grouped as spoken.
-// Six examples, the owner's two sentences first.
+// Six examples, the owner's two sentences first. Its one-level rule is its
+// own, not checklistItemRules': a list may hold three levels, but what one
+// breath names is a handful of things under a group at most, and a second
+// level from speech is a guess (round 8 owner decision 2, default "no";
+// ParseItems clamps to one level either way).
 const itemsSystemPrompt = `You turn one dictated recording into items for the checklist named in the message. The recording was spoken to add things to that list; return the things to add, grouped as the person grouped them.
 
 ` + checklistItemRules + `
+- One level only: a child has no children.
 
 Reply with ONLY {"items":[{"text":"…","children":[{"text":"…"}]},…]}: "children" holds the things named under a parent, and is [] or left out when there are none. {"items":[]} when there is nothing to add. No fence, no commentary.
 
@@ -164,10 +169,13 @@ var ErrNotAnItemList = errors.New("cleanup: the model did not return a list of i
 // is lost. The prompt is the guard, and provider.TestLiveEval/items is the
 // check on the prompt.
 func ParseItems(raw string) ([]Item, error) {
-	return parseItems(raw, MaxItemsPerRecording)
+	return parseItems(raw, MaxItemsPerRecording, 1)
 }
 
-func parseItems(raw string, limit int) ([]Item, error) {
+// parseItems reads a reply of items, at most limit of them counting
+// sub-items, nested at most maxDepth levels under the top: 1 for the
+// per-recording extraction, MaxDepth for the Split up.
+func parseItems(raw string, limit, maxDepth int) ([]Item, error) {
 	obj, err := llm.ExtractJSONObject(raw)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNotAnItemList, err)
@@ -181,29 +189,39 @@ func parseItems(raw string, limit int) ([]Item, error) {
 	if n := countItems(*reply.Items); n > limit {
 		return nil, fmt.Errorf("%w: %d items, limit %d", ErrNotAnItemList, n, limit)
 	}
-	items := make([]Item, 0, len(*reply.Items))
-	for _, it := range *reply.Items {
-		// One level: a child's own children become children of the top-level
-		// item, after it, the way the frontend parser clamps a two-level
-		// jump (checklist.ts, MAX_DEPTH).
-		var children []Item
-		for _, c := range it.Children {
-			if text := itemText(c.Text); text != "" {
-				children = append(children, Item{Text: text, Done: c.Done})
-			}
-			for _, g := range flatten(c.Children) {
-				if text := itemText(g.Text); text != "" {
-					children = append(children, Item{Text: text, Done: g.Done})
-				}
-			}
-		}
-		if text := itemText(it.Text); text != "" {
-			items = append(items, Item{Text: text, Done: it.Done, Children: children})
-			continue
-		}
-		items = append(items, children...)
+	items := clampItems(*reply.Items, 0, maxDepth)
+	if items == nil {
+		items = []Item{}
 	}
 	return items, nil
+}
+
+// clampItems cleans items standing depth levels under the top: text through
+// itemText, an item with no words dropped and its children lifted to its
+// level, and at maxDepth an item's descendants made its siblings, after it,
+// the way the frontend parser clamps a body nested past MAX_DEPTH. Nothing
+// with words is lost to its depth.
+func clampItems(items []Item, depth, maxDepth int) []Item {
+	var out []Item
+	for _, it := range items {
+		var under []Item
+		if depth < maxDepth {
+			under = clampItems(it.Children, depth+1, maxDepth)
+		} else {
+			under = clampItems(flatten(it.Children), depth, maxDepth)
+		}
+		text := itemText(it.Text)
+		switch {
+		case text == "":
+			out = append(out, under...)
+		case depth < maxDepth:
+			out = append(out, Item{Text: text, Done: it.Done, Children: under})
+		default:
+			out = append(out, Item{Text: text, Done: it.Done})
+			out = append(out, under...)
+		}
+	}
+	return out
 }
 
 // countItems is the number of items in a reply at any depth.
@@ -242,60 +260,65 @@ func itemText(s string) string {
 }
 
 // RenderTaskList writes items as checklist body lines — `- [ ] ` open,
-// `- [x] ` done, a child indented two spaces — the shape SplitOutput stores
-// and the append writes where a recording's items go back into a list.
+// `- [x] ` done, two spaces of indent per level — the shape SplitOutput
+// stores and the append writes where a recording's items go back into a list.
 func RenderTaskList(items []Item) string {
+	return strings.Join(renderTaskLines(items, ""), "\n")
+}
+
+func renderTaskLines(items []Item, indent string) []string {
 	var lines []string
-	line := func(it Item, indent string) string {
-		if it.Done {
-			return indent + "- [x] " + it.Text
-		}
-		return indent + "- [ ] " + it.Text
-	}
 	for _, it := range items {
-		lines = append(lines, line(it, ""))
-		for _, c := range it.Children {
-			lines = append(lines, line(c, "  "))
+		box := "- [ ] "
+		if it.Done {
+			box = "- [x] "
 		}
+		lines = append(lines, indent+box+it.Text)
+		lines = append(lines, renderTaskLines(it.Children, indent+"  ")...)
 	}
-	return strings.Join(lines, "\n")
+	return lines
 }
 
 // RenderItems writes items as the clean artefact holds them: one line per
-// item, a child's line prefixed by two spaces, no box. The append renders
+// item, two spaces of prefix per level, no box. The append renders
 // the box (pipeline checklistItems) and the readers of the artefact that
 // compare items by their words (previousItems, replaceChecklistItems) fold
 // the indent away. Text is collapsed and an item with no words is skipped,
 // so a fake's untidy reply renders the way ParseItems would have cleaned it.
 func RenderItems(items []Item) string {
+	return strings.Join(renderItemLines(items, ""), "\n")
+}
+
+func renderItemLines(items []Item, indent string) []string {
 	var lines []string
 	for _, it := range items {
-		if text := itemText(it.Text); text != "" {
-			lines = append(lines, text)
-			for _, c := range it.Children {
-				if ct := itemText(c.Text); ct != "" {
-					lines = append(lines, "  "+ct)
-				}
-			}
+		text := itemText(it.Text)
+		if text == "" {
+			lines = append(lines, renderItemLines(it.Children, indent)...)
 			continue
 		}
-		for _, c := range it.Children {
-			if ct := itemText(c.Text); ct != "" {
-				lines = append(lines, ct)
-			}
-		}
+		lines = append(lines, indent+text)
+		lines = append(lines, renderItemLines(it.Children, indent+"  ")...)
 	}
-	return strings.Join(lines, "\n")
+	return lines
 }
+
+// MaxDepth is how deep a checklist item may nest: 0 is the top level, so 2
+// is three levels — top, sub-item, sub-sub-item (owner feedback F1, round 8,
+// which replaces CL-D1's one level; a fourth leaves about twelve characters
+// of text at 320 px). The editor's twin is MAX_DEPTH in checklist.ts, and
+// testdata/checklist-lines.json pins both.
+const MaxDepth = 2
 
 // ParseLine reads one checklist body line as a task-list item, the one rule
 // the Go readers and the editor (frontend checklist.ts ITEM) share, pinned by
 // testdata/checklist-lines.json and stated in docs/design/checklists.md: an
 // indent of spaces and tabs (a tab counts as two spaces), "- [", a box of " ",
-// "x" or "X", "]", at most one space, then the text as written. depth is 1
-// for an indent of two columns or more and 0 otherwise — one level
-// (CL-D1). ok is false for any other line: a marker, a blank or prose. A
-// trailing "\r" is not part of the text.
+// "x" or "X", "]", at most one space, then the text as written. depth is
+// the indent's level, unclamped: its width over two. Where the line stands
+// in a list it may be shallower than that (ParseLines). ok is false for any
+// other line: a marker, a blank or prose. A trailing "\r" is not part of the
+// text.
 func ParseLine(line string) (text string, done bool, depth int, ok bool) {
 	line = strings.TrimSuffix(line, "\r")
 	width := 0
@@ -320,38 +343,90 @@ func ParseLine(line string) (text string, done bool, depth int, ok bool) {
 	default:
 		return "", false, 0, false
 	}
-	if width >= 2 {
-		depth = 1
-	}
-	return strings.TrimPrefix(rest[len("- [ ]"):], " "), done, depth, true
+	return strings.TrimPrefix(rest[len("- [ ]"):], " "), done, width / 2, true
 }
 
-// ItemsFromLines is the inverse of RenderItems: a line that starts with two
-// spaces is a child of the last top-level line, blank lines are skipped, a
-// child with no parent yet is top level. It reads a checklist body's lines
-// too — a task-list line (ParseLine) gives its box as Done, its depth, and
-// its text without the box — so the append and the Split up's checks see
-// the body as items.
+// Line is one body line as ParseLines reads it: ParseLine's text and box,
+// and its depth where it stands in the list. OK is false for a line that is
+// not an item.
+type Line struct {
+	Text  string
+	Done  bool
+	Depth int
+	OK    bool
+}
+
+// ParseLines reads a checklist body's lines as the editor does
+// (checklist.ts parseChecklist): an item's depth is its indent's level,
+// clamped to one under the item before it and to MaxDepth, so a jump of two
+// levels reads as one, a line nested deeper than MaxDepth reads as MaxDepth
+// (clamped, never dropped) and a sub-item with no item above it is top
+// level. A line that is not an item has depth 0 and OK false. The clamp
+// reads past a blank and a capture marker, which the editor never sees (it
+// drops blanks, and the API strips markers), so a marker between a parent
+// and a sub-item a later recording merged under it does not cut the two
+// apart. A prose line is a top-level item to the editor, so the next item's
+// clamp counts from it: at most a sub-item.
+func ParseLines(lines []string) []Line {
+	out := make([]Line, len(lines))
+	prev := -1
+	for i, line := range lines {
+		text, done, depth, ok := ParseLine(line)
+		switch trimmed := strings.TrimSpace(line); {
+		case ok:
+			depth = min(depth, prev+1, MaxDepth)
+			prev = depth
+		case trimmed != "" && !strings.HasPrefix(trimmed, "<!--"):
+			prev = 0
+		}
+		out[i] = Line{Text: text, Done: done, Depth: depth, OK: ok}
+	}
+	return out
+}
+
+// ItemsFromLines is the inverse of RenderItems: every two spaces of prefix
+// is a level, clamped as ParseLines clamps — one under the item before at
+// most, MaxDepth at most, top level with nothing above — and blank lines are
+// skipped. It reads a checklist body's lines too — a task-list line
+// (ParseLine) gives its box as Done, its indent, and its text without the
+// box — so the append and the Split up's checks see the body as items. A
+// line with no box takes its level from its leading spaces (a tab is not
+// counted there, as before three levels) and, unlike in ParseLines, is an
+// item, so the next line's clamp counts from it.
 func ItemsFromLines(text string) []Item {
-	var items []Item
+	type leveled struct {
+		item  Item
+		depth int
+	}
+	var flat []leveled
+	prev := -1
 	for _, line := range strings.Split(text, "\n") {
 		t, done, depth, ok := ParseLine(line)
-		child := depth == 1
 		if !ok {
-			t, child = strings.TrimLeft(line, " \t"), strings.HasPrefix(line, "  ")
+			t = strings.TrimLeft(line, " \t")
+			depth = (len(line) - len(strings.TrimLeft(line, " "))) / 2
 		}
 		t = itemText(t)
 		if t == "" {
 			continue
 		}
-		it := Item{Text: t, Done: done}
-		if child && len(items) > 0 {
-			last := &items[len(items)-1]
-			last.Children = append(last.Children, it)
-			continue
-		}
-		items = append(items, it)
+		depth = min(depth, prev+1, MaxDepth)
+		prev = depth
+		flat = append(flat, leveled{Item{Text: t, Done: done}, depth})
 	}
+	// Each depth is at most one more than the one before, so the lines
+	// deeper than an item that follow it are exactly its descendants.
+	var build func(i, depth int) ([]Item, int)
+	build = func(i, depth int) ([]Item, int) {
+		var out []Item
+		for i < len(flat) && flat[i].depth >= depth {
+			it := flat[i].item
+			it.Children, i = build(i+1, depth+1)
+			out = append(out, it)
+		}
+		return out, i
+	}
+	items, _ := build(0, 0)
 	return items
 }
 

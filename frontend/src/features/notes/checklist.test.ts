@@ -20,6 +20,7 @@ import {
   removeItem,
   serialiseChecklist,
   setItemText,
+  shiftLevel,
   snippetIsCut,
   toggleItem,
   uncheckAll,
@@ -109,11 +110,13 @@ describe('sub-items: two spaces of indent under the parent', () => {
     // A jump of two levels is clamped to one; a child with no parent is top level.
     expect(parseChecklist('- [ ] A\n    - [ ] deep').at(-1)?.depth).toBe(1);
     expect(parseChecklist('  - [ ] orphan').at(0)?.depth).toBe(0);
-    // One level (CL-D1): a third level written elsewhere reads as the second
-    // and flattens to it on the first save here.
-    expect(MAX_DEPTH).toBe(1);
-    expect(parseChecklist('- [ ] A\n  - [ ] B\n    - [ ] C').map((item) => item.depth)).toEqual([0, 1, 1]);
-    expect(serialiseChecklist(parseChecklist('- [ ] A\n  - [ ] B\n    - [ ] C'))).toBe('- [ ] A\n  - [ ] B\n  - [ ] C');
+    // Three levels (round 8, F1): a fourth written elsewhere reads as the
+    // third and flattens to it on the first save here.
+    expect(MAX_DEPTH).toBe(2);
+    expect(parseChecklist('- [ ] A\n  - [ ] B\n    - [ ] C').map((item) => item.depth)).toEqual([0, 1, 2]);
+    expect(serialiseChecklist(parseChecklist('- [ ] A\n  - [ ] B\n    - [ ] C\n      - [ ] D'))).toBe(
+      '- [ ] A\n  - [ ] B\n    - [ ] C\n    - [ ] D',
+    );
   });
 
   it('round-trips a nested body byte for byte', () => {
@@ -177,9 +180,10 @@ describe('sub-items: two spaces of indent under the parent', () => {
     expect(canNest(parseChecklist('- [ ] A\n- [ ] B'), 1, 0)).toBe(true);
     // Under a sub-item: a sibling, under the same parent, right after the row it nests under.
     expect(nestUnder(NESTED, 4, 1)).toBe('- [ ] Party\n  - [ ] Plates\n  - [ ] Bread\n  - [x] Candles\n- [x] Eggs');
-    // Already a sub-item: nowhere deeper to go.
-    expect(nestUnder(NESTED, 2, 1)).toBe(NESTED);
-    expect(canNest(parseChecklist(NESTED), 2, 1)).toBe(false);
+    // A sub-item under a sibling sub-item: its child, the third level.
+    expect(canNest(parseChecklist(NESTED), 2, 1)).toBe(true);
+    expect(nestUnder(NESTED, 2, 1)).toBe('- [ ] Party\n  - [ ] Plates\n    - [x] Candles\n- [x] Eggs\n- [ ] Bread');
+    // Already as deep as the row above allows: one under it at most.
     expect(canNest(parseChecklist(NESTED), 1, 0)).toBe(false);
     // Nothing above the first item; `under` must stand above; a bad index.
     expect(canNest(parseChecklist(NESTED), 0, 0)).toBe(false);
@@ -207,10 +211,10 @@ describe('sub-items: two spaces of indent under the parent', () => {
     expect(unnest(NESTED, 9)).toBe(NESTED);
   });
 
-  it('a parent made a sub-item takes its children along as siblings, one level being the limit', () => {
-    expect(nestUnder('- [ ] A\n- [ ] P\n  - [ ] C', 1, 0)).toBe('- [ ] A\n  - [ ] P\n  - [ ] C');
-    // The same clamp when a parent is dropped on a sub-item's slot.
-    expect(moveItem('- [ ] A\n  - [ ] B\n- [ ] P\n  - [ ] C', 2, 1)).toBe('- [ ] A\n  - [ ] P\n  - [ ] C\n  - [ ] B');
+  it('a parent made a sub-item takes its children one level down with it', () => {
+    expect(nestUnder('- [ ] A\n- [ ] P\n  - [ ] C', 1, 0)).toBe('- [ ] A\n  - [ ] P\n    - [ ] C');
+    // The same when a parent is dropped on a sub-item's slot.
+    expect(moveItem('- [ ] A\n  - [ ] B\n- [ ] P\n  - [ ] C', 2, 1)).toBe('- [ ] A\n  - [ ] P\n    - [ ] C\n  - [ ] B');
   });
 
   it('ticking a parent ticks its sub-items; reopening a sub-item reopens its parent; reopening a parent leaves them', () => {
@@ -224,6 +228,63 @@ describe('sub-items: two spaces of indent under the parent', () => {
   it('prose conversion flattens: the indent has no notation in prose', () => {
     expect(checklistToProse(NESTED)).toBe('Party\n\nPlates\n\nCandles\n\nEggs\n\nBread');
     expect(proseToChecklist('One\n\nTwo')).toBe('- [ ] One\n- [ ] Two');
+  });
+});
+
+// Three levels (round 8, F1).
+const COSTCO = '- [ ] Costco\n  - [ ] Meat\n- [ ] Rice';
+const DEEP = '- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n    - [ ] Cups\n  - [ ] Candles\n- [ ] Milk';
+
+describe('three levels', () => {
+  it('one step in under a sub-item is its sibling; two steps is its child', () => {
+    // Rice (top level) under Meat (a sub-item): +1 is Meat's sibling under Costco, not Meat's child.
+    expect(shiftLevel(COSTCO, 2, 1, 1)).toBe('- [ ] Costco\n  - [ ] Meat\n  - [ ] Rice');
+    expect(shiftLevel(COSTCO, 2, 2, 1)).toBe('- [ ] Costco\n  - [ ] Meat\n    - [ ] Rice');
+    // Several steps past what the row above allows stop at one under it.
+    expect(shiftLevel('- [ ] A\n- [ ] B', 1, 2, 0)).toBe('- [ ] A\n  - [ ] B');
+  });
+
+  it('refuses an indent with no row above, past the row above, under a done row, or that pushes a sub-item past the third level', () => {
+    const items = parseChecklist(COSTCO);
+    expect(canNest(items, 0, 0)).toBe(false);
+    expect(shiftLevel(COSTCO, 0, 1, 0)).toBe(COSTCO);
+    // Meat is already one under Costco.
+    expect(canNest(items, 1, 0)).toBe(false);
+    // A done row above, or a done row it stands under.
+    expect(canNest(parseChecklist('- [x] Costco\n  - [ ] Meat\n- [ ] Rice'), 2, 1)).toBe(false);
+    expect(canNest(parseChecklist('- [ ] Costco\n  - [x] Meat\n- [ ] Rice'), 2, 1)).toBe(false);
+    // Party's block is three levels deep already: one step in would make Plates a fourth.
+    const deep = `- [ ] Top\n${DEEP}`;
+    expect(canNest(parseChecklist(deep), 1, 0)).toBe(false);
+    expect(shiftLevel(deep, 1, 1, 0)).toBe(deep);
+    // Costco has a sub-item, so under Sub it may go one level in, not two.
+    const two = '- [ ] Top\n  - [ ] Sub\n- [ ] Costco\n  - [ ] Meat';
+    expect(canNest(parseChecklist(two), 2, 1, 2)).toBe(false);
+    expect(shiftLevel(two, 2, 2, 1)).toBe(two);
+    expect(shiftLevel(two, 2, 1, 1)).toBe('- [ ] Top\n  - [ ] Sub\n  - [ ] Costco\n    - [ ] Meat');
+  });
+
+  it('two steps out, in place, and the sub-items that followed become its own', () => {
+    expect(shiftLevel(DEEP, 2, -2, 1)).toBe('- [ ] Party\n  - [ ] Costco\n- [ ] Plates\n  - [ ] Cups\n  - [ ] Candles\n- [ ] Milk');
+    expect(shiftLevel(DEEP, 0, -1, 0)).toBe(DEEP);
+  });
+
+  it('reopening a third-level item reopens both items it stands under; ticking the top ticks all three levels', () => {
+    const done = '- [x] Party\n  - [x] Costco\n    - [x] Plates\n- [ ] Milk';
+    expect(toggleItem(done, 2)).toBe('- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n- [ ] Milk');
+    expect(toggleItem(DEEP, 0)).toBe(
+      '- [x] Party\n  - [x] Costco\n    - [x] Plates\n    - [x] Cups\n  - [x] Candles\n- [ ] Milk',
+    );
+  });
+
+  it('a three-level block dropped on a second-level slot is clamped, never dropped', () => {
+    expect(moveItem(`${DEEP}\n- [ ] Top\n  - [ ] Sub`, 0, 7)).toBe(
+      '- [ ] Milk\n- [ ] Top\n  - [ ] Sub\n  - [ ] Party\n    - [ ] Costco\n    - [ ] Plates\n    - [ ] Cups\n    - [ ] Candles',
+    );
+  });
+
+  it('removing a parent lifts every level under it by one', () => {
+    expect(removeItem(DEEP, 0)).toBe('- [ ] Costco\n  - [ ] Plates\n  - [ ] Cups\n- [ ] Candles\n- [ ] Milk');
   });
 });
 
@@ -358,10 +419,18 @@ describe('the checklist line rule shared with the backend', () => {
       join(process.cwd(), '..', 'backend', 'internal', 'cleanup', 'testdata', 'checklist-lines.json'),
       'utf8',
     ),
-  ) as { cases: { name: string; body: string; items: { text: string; done: boolean; depth: number }[] }[] };
+  ) as {
+    max_depth: number;
+    cases: { name: string; body: string; items: { text: string; done: boolean; depth: number }[] }[];
+  };
 
   it('has cases', () => {
     expect(fixture.cases.length).toBeGreaterThan(0);
+  });
+  // The drift guard for the depth: the Go suite asserts the same number
+  // against cleanup.MaxDepth.
+  it('has the same maximum depth', () => {
+    expect(fixture.max_depth).toBe(MAX_DEPTH);
   });
   for (const { name, body, items } of fixture.cases) {
     it(name, () => {

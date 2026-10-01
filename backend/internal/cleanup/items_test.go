@@ -206,7 +206,8 @@ func TestItemsFromLinesMatchesTheSharedFixture(t *testing.T) {
 		Depth int    `json:"depth"`
 	}
 	var fixture struct {
-		Cases []struct {
+		MaxDepth *int `json:"max_depth"`
+		Cases    []struct {
 			Name  string `json:"name"`
 			Body  string `json:"body"`
 			Items []line `json:"items"`
@@ -218,19 +219,123 @@ func TestItemsFromLinesMatchesTheSharedFixture(t *testing.T) {
 	if len(fixture.Cases) == 0 {
 		t.Fatal("the fixture has no cases")
 	}
+	// The drift guard for the depth: checklist.test.ts asserts the same
+	// number against MAX_DEPTH.
+	if fixture.MaxDepth == nil || *fixture.MaxDepth != cleanup.MaxDepth {
+		t.Fatalf("the fixture's max_depth is %v, cleanup.MaxDepth is %d", fixture.MaxDepth, cleanup.MaxDepth)
+	}
 	for _, tc := range fixture.Cases {
 		t.Run(tc.Name, func(t *testing.T) {
 			got := []line{}
-			for _, it := range cleanup.ItemsFromLines(tc.Body) {
-				got = append(got, line{it.Text, it.Done, 0})
-				for _, c := range it.Children {
-					got = append(got, line{c.Text, c.Done, 1})
+			var walk func([]cleanup.Item, int)
+			walk = func(items []cleanup.Item, depth int) {
+				for _, it := range items {
+					got = append(got, line{it.Text, it.Done, depth})
+					walk(it.Children, depth+1)
 				}
 			}
+			walk(cleanup.ItemsFromLines(tc.Body), 0)
 			if !reflect.DeepEqual(got, tc.Items) {
 				t.Errorf("cleanup.ItemsFromLines(%q) = %+v, want %+v", tc.Body, got, tc.Items)
 			}
+			// ParseLines reads the same depth for every item line. A
+			// non-blank line it does not take as an item is one of the
+			// fixture's prose items, which it does not read; it is
+			// counted, so the two cannot fall out of step unseen.
+			body := strings.Split(tc.Body, "\n")
+			next := 0
+			for i, l := range cleanup.ParseLines(body) {
+				if strings.TrimSpace(body[i]) == "" {
+					continue
+				}
+				if next == len(tc.Items) {
+					t.Fatalf("cleanup.ParseLines(%q) reads more items than the fixture's %d", tc.Body, len(tc.Items))
+				}
+				want := tc.Items[next]
+				next++
+				if !l.OK {
+					continue
+				}
+				if got := (line{strings.Join(strings.Fields(l.Text), " "), l.Done, l.Depth}); got != want {
+					t.Errorf("cleanup.ParseLines(%q) line %d = %+v, want %+v", tc.Body, i, got, want)
+				}
+			}
+			if next != len(tc.Items) {
+				t.Errorf("cleanup.ParseLines(%q) reads %d lines, the fixture has %d items", tc.Body, next, len(tc.Items))
+			}
 		})
+	}
+}
+
+// ParseLines clamps where a line stands — one under the item before, never
+// past MaxDepth, top level with nothing above — and reads past a line that
+// is not an item, so a marker between a parent and its sub-item does not
+// cut them apart.
+func TestParseLinesClampsAndReadsPastMarkers(t *testing.T) {
+	body := []string{
+		"  - [ ] orphan",
+		"- [ ] Party",
+		"<!-- chintan:capture:c_1 -->",
+		"  - [ ] Plates",
+		"",
+		"      - [x] Paper",
+		"<!-- chintan:capture:c_2 -->",
+		"        - [ ] Deeper still",
+		"Some prose",
+		"    - [ ] After prose",
+	}
+	want := []cleanup.Line{
+		{Text: "orphan", Depth: 0, OK: true},
+		{Text: "Party", Depth: 0, OK: true},
+		{},
+		{Text: "Plates", Depth: 1, OK: true},
+		{},
+		{Text: "Paper", Done: true, Depth: 2, OK: true},
+		{},
+		{Text: "Deeper still", Depth: 2, OK: true},
+		{},
+		{Text: "After prose", Depth: 1, OK: true},
+	}
+	if got := cleanup.ParseLines(body); !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseLines = %+v, want %+v", got, want)
+	}
+}
+
+// Three levels go out as two spaces per level and come back as the same
+// tree, in both shapes: the clean artefact and the checklist body.
+func TestRenderAndReadRoundTripThreeLevels(t *testing.T) {
+	items := []cleanup.Item{
+		{Text: "Party", Children: []cleanup.Item{
+			{Text: "Costco", Children: []cleanup.Item{{Text: "Plates"}, {Text: "Cups", Done: true}}},
+			{Text: "Candles"},
+		}},
+		{Text: "Milk"},
+	}
+	if got, want := cleanup.RenderItems(items), "Party\n  Costco\n    Plates\n    Cups\n  Candles\nMilk"; got != want {
+		t.Errorf("RenderItems = %q, want %q", got, want)
+	}
+	body := "- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n    - [x] Cups\n  - [ ] Candles\n- [ ] Milk"
+	if got := cleanup.RenderTaskList(items); got != body {
+		t.Errorf("RenderTaskList = %q, want %q", got, body)
+	}
+	if got := cleanup.ItemsFromLines(body); !reflect.DeepEqual(got, items) {
+		t.Errorf("ItemsFromLines(RenderTaskList) = %+v, want %+v", got, items)
+	}
+	// The artefact has no box, so it carries no tick.
+	items[0].Children[0].Children[1].Done = false
+	if got := cleanup.ItemsFromLines(cleanup.RenderItems(items)); !reflect.DeepEqual(got, items) {
+		t.Errorf("ItemsFromLines(RenderItems) = %+v, want %+v", got, items)
+	}
+}
+
+// The extraction stays one level (owner decision 2 of round 8): a reply
+// three levels deep flattens into the children, in order, and nothing is
+// lost.
+func TestParseItemsFlattensAThreeLevelReplyToOneLevel(t *testing.T) {
+	const reply = `{"items":[{"text":"Party","children":[{"text":"Costco","children":[{"text":"Plates"},{"text":"Cups"}]},{"text":"Candles"}]}]}`
+	got, err := cleanup.ParseItems(reply)
+	if want := []cleanup.Item{item("Party", "Costco", "Plates", "Cups", "Candles")}; err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseItems = %+v, %v; want %+v", got, err, want)
 	}
 }
 
@@ -246,6 +351,10 @@ func TestParseLine(t *testing.T) {
 		{"- [ ]Milk", "Milk", false, 0, true},
 		{"- [X]  two", " two", true, 0, true},
 		{"\t- [x] Candles\r", "Candles", true, 1, true},
+		// Unclamped: where the line stands is ParseLines'.
+		{"    - [ ] Paper ones", "Paper ones", false, 2, true},
+		{"\t\t\t- [ ] Deep", "Deep", false, 3, true},
+		{"   - [ ] three", "three", false, 1, true},
 		{" - [ ] Plates", "Plates", false, 0, true},
 		{"- [ ]", "", false, 0, true},
 		{"- [-] Maybe", "", false, 0, false},

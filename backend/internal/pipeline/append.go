@@ -382,13 +382,13 @@ func keepTick(old, text string) string {
 	oldLines, lines := strings.Split(old, "\n"), strings.Split(text, "\n")
 	ticked := map[string]int{}
 	for _, line := range oldLines {
-		if t, done, _, ok := parseChecklistLine(line); ok && done {
+		if t, done, ok := parseChecklistLine(line); ok && done {
 			ticked[t]++
 		}
 	}
 	matched := false
 	for i, line := range lines {
-		t, done, _, ok := parseChecklistLine(line)
+		t, done, ok := parseChecklistLine(line)
 		if !ok || done || ticked[t] == 0 {
 			continue
 		}
@@ -398,8 +398,8 @@ func keepTick(old, text string) string {
 	}
 	if !matched && len(oldLines) == len(lines) {
 		for i, line := range lines {
-			_, wasDone, _, wasOK := parseChecklistLine(oldLines[i])
-			if _, done, _, ok := parseChecklistLine(line); wasOK && wasDone && ok && !done {
+			_, wasDone, wasOK := parseChecklistLine(oldLines[i])
+			if _, done, ok := parseChecklistLine(line); wasOK && wasDone && ok && !done {
 				lines[i] = tick(line)
 			}
 		}
@@ -437,16 +437,35 @@ func withBox(line, box string) string {
 // prompt capitalises or punctuates it all compare equal. ok is false for a
 // line that is not an item.
 func checklistLineText(line string) (text string, ok bool) {
-	text, _, _, ok = parseChecklistLine(line)
+	text, _, ok = parseChecklistLine(line)
 	return text, ok
 }
 
 // parseChecklistLine reads one body line as an item (cleanup.ParseLine): its
-// folded words, its tick, its depth (1 for a sub-item) and whether it is an
-// item line at all — a marker, a blank or prose is not.
-func parseChecklistLine(line string) (text string, done bool, depth int, ok bool) {
-	text, done, depth, ok = cleanup.ParseLine(line)
-	return llm.FoldWords(text), done, depth, ok
+// folded words, its tick and whether it is an item line at all — a marker,
+// a blank or prose is not. A line's depth depends on the lines above it, so
+// it is not read here: depths reads it for the whole body.
+func parseChecklistLine(line string) (text string, done bool, ok bool) {
+	text, done, _, ok = cleanup.ParseLine(line)
+	return llm.FoldWords(text), done, ok
+}
+
+// depths is each body line's depth as the editor reads it
+// (cleanup.ParseLines: clamped to one under the item before and to
+// cleanup.MaxDepth), -1 for a line that is not an item.
+//
+// ponytail: recomputed per call, O(n²) over a merge that walks the list; a
+// list is a few hundred lines at most. Cache it per body if one grows past
+// that.
+func depths(lines []string) []int {
+	d := make([]int, len(lines))
+	for i, l := range cleanup.ParseLines(lines) {
+		d[i] = l.Depth
+		if !l.OK {
+			d[i] = -1
+		}
+	}
+	return d
 }
 
 // replaceChecklistItems puts text — a recording's items, freshly extracted —
@@ -467,10 +486,10 @@ func parseChecklistLine(line string) (text string, done bool, depth int, ok bool
 // words are left the person deleted that recording's items, and putting
 // them back would overrule that: the body is returned as it was.
 //
-// A previous top-level line with a sub-item still under it that is not
-// being taken is not this recording's to take: it is a parent the recording
-// joined (mergeChecklistItems) — typed by hand, or another recording's —
-// and it stays, with what is under it. The new items then go in the way a
+// A previous line with a sub-item still under it that is not being taken is
+// not this recording's to take: it is a parent the recording joined
+// (mergeChecklistItems) — typed by hand, or another recording's — and it
+// stays, with what is under it, at any depth. The new items then go in the way a
 // first append's do, through the merge over the list without the taken
 // lines: the recording's parent joins that line again, its children after
 // the block's last line, and only the rest is written where the first taken
@@ -491,9 +510,10 @@ func parseChecklistLine(line string) (text string, done bool, depth int, ok bool
 // it for the merge to find (mergeLeaf drops the open duplicate, reopens a
 // done one), rather than being pulled out and written flat in the
 // recording's block where it stood, above the recording's own marker, left
-// bare (review 2026-09-29, DB6-8). Otherwise a sub-item is matched by its
-// words like any line, and the block is written with the recording's own
-// indent (checklists.md, "indent-blind").
+// bare (review 2026-09-29, DB6-8). A line under a taken one is the taken
+// one's, at any depth. Otherwise a sub-item is matched by its words like any
+// line, and the block is written with the recording's own indent
+// (checklists.md, "indent-blind").
 //
 // An empty text removes the recording's items and writes nothing in their
 // place: the recording, extracted again, named nothing to add.
@@ -514,13 +534,14 @@ func replaceChecklistItems(body, captureID string, previous []string, text strin
 		}
 	}
 	lines := strings.Split(body, "\n")
+	depth := depths(lines)
 	take, old := make([]bool, len(lines)), make([]bool, len(lines))
 	parentTaken := func(i int) bool {
 		parent := parentOf(lines, i)
 		return parent >= 0 && take[parent]
 	}
 	for i, line := range lines {
-		t, _, depth, ok := parseChecklistLine(line)
+		t, _, ok := parseChecklistLine(line)
 		if !ok {
 			continue
 		}
@@ -528,41 +549,57 @@ func replaceChecklistItems(body, captureID string, previous []string, text strin
 			wanted[t]--
 			take[i], old[i] = true, true
 		}
-		if fresh[t] > 0 && (depth == 0 || take[i] || parentTaken(i)) {
+		if fresh[t] > 0 && (depth[i] == 0 || take[i] || parentTaken(i)) {
 			fresh[t]--
 			take[i] = true
 		}
 	}
-	// A taken top-level line with a sub-item left under it is a shared
-	// parent: it stays, and the fresh parent joins it in the merge below.
+	// A taken line with a line left anywhere under it is a shared parent: it
+	// stays, and the fresh item joins it in the merge below. At every depth,
+	// so a sub-item typed under one of the recording's sub-items keeps its
+	// parent rather than landing under whatever line the block is written
+	// above. A shared parent released this way is still one of the
+	// recording's old lines: it was found, so the person did not delete the
+	// recording's items.
+	shared := -1
 	for i := range lines {
-		if _, _, depth, _ := parseChecklistLine(lines[i]); !take[i] || depth != 0 {
+		if !take[i] {
 			continue
 		}
-		for j := i + 1; j < len(lines); j++ {
-			if _, _, depth, ok := parseChecklistLine(lines[j]); !ok || depth != 1 {
-				break
-			}
+		for j := i + 1; j < len(lines) && depth[j] > depth[i]; j++ {
 			if !take[j] {
 				take[i] = false
+				if shared < 0 && old[i] {
+					shared = i
+				}
 				break
 			}
 		}
 	}
-	oldSeen := false
-	for i := range lines {
-		oldSeen = oldSeen || (take[i] && old[i])
-	}
-	if !oldSeen {
+	if !slices.Contains(old, true) {
 		return body
 	}
 	// The place the block goes back is held by a line that is not an item,
 	// so the merge's insertions above it cannot move it and a parent's block
-	// ends at it, as it ends at a marker.
+	// ends at it, as it ends at a marker. It is where the first taken line
+	// stood or, when every old line stayed as a shared parent, right after
+	// the first one's block (DB6-7), so a new item is not lost for want of a
+	// place: regenerating Costco › Meat to Costco › Meat, Rice when a line
+	// typed under Meat keeps both of them still writes Rice.
 	const placeholder = "\x00"
+	after := -1
+	if !slices.Contains(take, true) {
+		after = shared + 1
+		for after < len(lines) && depth[after] > depth[shared] {
+			after++
+		}
+	}
 	kept := make([]string, 0, len(lines)+1)
 	var removed []string
 	for i, line := range lines {
+		if i == after {
+			kept = append(kept, placeholder)
+		}
 		if !take[i] {
 			kept = append(kept, line)
 			continue
@@ -571,6 +608,9 @@ func replaceChecklistItems(body, captureID string, previous []string, text strin
 			kept = append(kept, placeholder)
 		}
 		removed = append(removed, line)
+	}
+	if after == len(lines) {
+		kept = append(kept, placeholder)
 	}
 	text = keepTick(strings.Join(removed, "\n"), text)
 	merged, rest, _ := mergeChecklistItems(strings.Join(kept, "\n"), cleanup.ItemsFromLines(text))
@@ -586,9 +626,10 @@ func replaceChecklistItems(body, captureID string, previous []string, text strin
 // checklistItems renders a recording's items — one per line of the cleaned
 // text — as open task-list lines: each with its whitespace runs collapsed to
 // single spaces, trimmed, cut to cleanup.MaxChecklistItemRunes; blank lines
-// and lines with no letter or digit dropped. A line that opens with two
-// spaces is a sub-item (cleanup.RenderItems) and keeps that indent ahead of
-// its box, which is how the frontend reads and writes one. Text with no
+// and lines with no letter or digit dropped. A line's leading spaces are its
+// level, two per level (cleanup.RenderItems), up to cleanup.MaxDepth, and it
+// keeps that indent ahead of its box, which is how the frontend reads and
+// writes one. Text with no
 // words stays empty — an empty paragraph, as a plain note would get — rather
 // than becoming an item with nothing in it.
 func checklistItems(text string) string {
@@ -601,11 +642,8 @@ func checklistItems(text string) string {
 		if runes := []rune(collapsed); len(runes) > cleanup.MaxChecklistItemRunes {
 			collapsed = strings.TrimSpace(string(runes[:cleanup.MaxChecklistItemRunes]))
 		}
-		indent := ""
-		if strings.HasPrefix(line, "  ") {
-			indent = "  "
-		}
-		lines = append(lines, indent+"- [ ] "+collapsed)
+		level := min((len(line)-len(strings.TrimLeft(line, " ")))/2, cleanup.MaxDepth)
+		lines = append(lines, strings.Repeat("  ", level)+"- [ ] "+collapsed)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -619,14 +657,17 @@ type mergeCounts struct{ joined, deduped, reopened int }
 // merge.go, its twelve cases in checklist_append_test.go):
 //
 //   - an item with children whose text matches a TOP-LEVEL line, open or
-//     done, joins that block: each child not already under it is added after
-//     the block's last line, a child already there and done is reopened, and
+//     done, joins that block: each child not already one of its direct
+//     sub-items is added after the block's last line, whatever its depth, a
+//     direct sub-item already there and done is reopened, and
 //     a done parent that gained or reopened a child is reopened (a parent
 //     with an open part is not done — the editor's own rule, checklist.ts);
 //   - an item with no children whose text matches ANY line is not added
 //     again: open, it is a duplicate and dropped; done, it is reopened (and a
 //     reopened sub-item reopens its parent), because "add milk" over a
-//     ticked Milk means milk is wanted again;
+//     ticked Milk means milk is wanted again (and a reopened line reopens
+//     every item it stands under, at any depth: a done item has no open
+//     descendant, the editor's rule too);
 //   - everything else is returned in rest, in the recording's order, for the
 //     caller to render under the marker as before.
 //
@@ -674,7 +715,7 @@ func mergeLeaf(lines []string, it cleanup.Item, counts *mergeCounts) bool {
 	}
 	want := llm.FoldWords(it.Text)
 	for i, raw := range lines {
-		text, done, depth, ok := parseChecklistLine(raw)
+		text, done, ok := parseChecklistLine(raw)
 		if !ok || text != want {
 			continue
 		}
@@ -684,10 +725,8 @@ func mergeLeaf(lines []string, it cleanup.Item, counts *mergeCounts) bool {
 		}
 		counts.reopened++
 		lines[i] = reopen(raw)
-		if depth == 1 {
-			if parent := parentOf(lines, i); parent >= 0 {
-				lines[parent] = reopen(lines[parent])
-			}
+		for p := parentOf(lines, i); p >= 0; p = parentOf(lines, p) {
+			lines[p] = reopen(lines[p])
 		}
 		return true
 	}
@@ -695,12 +734,20 @@ func mergeLeaf(lines []string, it cleanup.Item, counts *mergeCounts) bool {
 }
 
 // mergeParent joins an item with children to the top-level line with its
-// words. False when there is none.
+// words. False when there is none. The line's block is the item lines right
+// after it that are deeper than it, at any depth; a marker, a blank, prose or
+// another top-level line ends it (DB6-9, the owner's, is whether a blank or a
+// marker should). A child is looked for among the line's direct sub-items
+// only, depth 1, since a recording's children are one under its parent
+// (ParseItems): a deeper line with the same words is a different thing in a
+// different group. A child not found is added after the block's last line,
+// at depth 1.
 func mergeParent(lines []string, it cleanup.Item, counts *mergeCounts) ([]string, bool) {
 	want := llm.FoldWords(it.Text)
+	depth := depths(lines)
 	at := -1
 	for i, raw := range lines {
-		if text, _, depth, ok := parseChecklistLine(raw); ok && depth == 0 && text == want {
+		if text, _, _ := parseChecklistLine(raw); depth[i] == 0 && text == want {
 			at = i
 			break
 		}
@@ -709,13 +756,8 @@ func mergeParent(lines []string, it cleanup.Item, counts *mergeCounts) ([]string
 		return lines, false
 	}
 	counts.joined++
-	// The block: the parent and the sub-item lines right after it. A
-	// marker, a blank or a top-level item ends it.
 	end := at
-	for end+1 < len(lines) {
-		if _, _, depth, ok := parseChecklistLine(lines[end+1]); !ok || depth != 1 {
-			break
-		}
+	for end+1 < len(lines) && depth[end+1] > 0 {
 		end++
 	}
 	touched := false
@@ -723,7 +765,7 @@ func mergeParent(lines []string, it cleanup.Item, counts *mergeCounts) ([]string
 		cw := llm.FoldWords(c.Text)
 		found := false
 		for i := at + 1; i <= end; i++ {
-			if text, done, _, _ := parseChecklistLine(lines[i]); text == cw {
+			if text, done, _ := parseChecklistLine(lines[i]); depth[i] == 1 && text == cw {
 				found = true
 				if done && !c.Done {
 					counts.reopened++
@@ -741,10 +783,11 @@ func mergeParent(lines []string, it cleanup.Item, counts *mergeCounts) ([]string
 			box = "  - [x] "
 		}
 		lines = slices.Insert(lines, end+1, box+strings.Join(strings.Fields(c.Text), " "))
+		depth = depths(lines)
 		end++
 		touched = touched || !c.Done
 	}
-	if _, done, _, _ := parseChecklistLine(lines[at]); touched && done {
+	if _, done, _ := parseChecklistLine(lines[at]); touched && done {
 		lines[at] = reopen(lines[at])
 	}
 	return lines, true
@@ -788,10 +831,13 @@ func ownItems(paragraph, rest string, items []cleanup.Item) []string {
 	return nil
 }
 
-// parentOf is the index of the top-level item line above line i, or -1.
+// parentOf is the index of the item line that line i stands under — the
+// nearest item line above it that is shallower (depths) — or -1 at the top
+// level.
 func parentOf(lines []string, i int) int {
+	depth := depths(lines)
 	for j := i - 1; j >= 0; j-- {
-		if _, _, depth, ok := parseChecklistLine(lines[j]); ok && depth == 0 {
+		if depth[j] >= 0 && depth[j] < depth[i] {
 			return j
 		}
 	}

@@ -1,5 +1,6 @@
 {
-  "_comment": "One checklist body line rule for the Go readers (cleanup.ParseLine, cleanup.ItemsFromLines) and the editor (frontend/src/features/notes/checklist.ts parseChecklist). Both test suites read this file; the rule is stated in docs/design/checklists.md. Texts here have no extra whitespace, because the editor keeps an item's text as written while the Go readers collapse it.",
+  "_comment": "One checklist body line rule for the Go readers (cleanup.ParseLine, cleanup.ItemsFromLines) and the editor (frontend/src/features/notes/checklist.ts parseChecklist). Both test suites read this file and assert max_depth equals their own constant (cleanup.MaxDepth, MAX_DEPTH: 0 is the top level, so 2 is three levels); the rule is stated in docs/design/checklists.md. Texts here have no extra whitespace, because the editor keeps an item's text as written while the Go readers collapse it.",
+  "max_depth": 2,
   "cases": [
     {
       "name": "open, done, and a capital X is done",
@@ -92,7 +93,7 @@
       ]
     },
     {
-      "name": "a deeper indent is one level",
+      "name": "four spaces is the third level",
       "body": "- [ ] Party\n  - [ ] Plates\n    - [ ] Paper ones",
       "items": [
         {
@@ -108,7 +109,117 @@
         {
           "text": "Paper ones",
           "done": false,
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "name": "a jump of two levels reads as one",
+      "body": "- [ ] A\n    - [ ] B",
+      "items": [
+        {
+          "text": "A",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "B",
+          "done": false,
           "depth": 1
+        }
+      ]
+    },
+    {
+      "name": "past the maximum reads as the maximum",
+      "body": "- [ ] A\n  - [ ] B\n    - [ ] C\n      - [ ] D",
+      "items": [
+        {
+          "text": "A",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "B",
+          "done": false,
+          "depth": 1
+        },
+        {
+          "text": "C",
+          "done": false,
+          "depth": 2
+        },
+        {
+          "text": "D",
+          "done": false,
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "name": "two tabs are two levels",
+      "body": "- [ ] Party\n\t- [ ] Plates\n\t\t- [x] Paper ones",
+      "items": [
+        {
+          "text": "Party",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "Plates",
+          "done": false,
+          "depth": 1
+        },
+        {
+          "text": "Paper ones",
+          "done": true,
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "name": "a shallower line after a deep one",
+      "body": "- [ ] A\n    - [ ] B\n  - [ ] C",
+      "items": [
+        {
+          "text": "A",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "B",
+          "done": false,
+          "depth": 1
+        },
+        {
+          "text": "C",
+          "done": false,
+          "depth": 1
+        }
+      ]
+    },
+    {
+      "name": "a line after the third level goes back up",
+      "body": "- [ ] A\n  - [ ] B\n    - [ ] C\n- [ ] D",
+      "items": [
+        {
+          "text": "A",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "B",
+          "done": false,
+          "depth": 1
+        },
+        {
+          "text": "C",
+          "done": false,
+          "depth": 2
+        },
+        {
+          "text": "D",
+          "done": false,
+          "depth": 0
         }
       ]
     },
@@ -221,6 +332,53 @@
         {
           "text": "दाल",
           "done": true,
+          "depth": 1
+        }
+      ]
+    },
+    {
+      "name": "Indic at depth 2",
+      "body": "- [ ] പാൽ\n  - [x] दाल\n    - [ ] തുവര",
+      "items": [
+        {
+          "text": "പാൽ",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "दाल",
+          "done": true,
+          "depth": 1
+        },
+        {
+          "text": "തുവര",
+          "done": false,
+          "depth": 2
+        }
+      ]
+    },
+    {
+      "name": "prose between items is a top-level item, and the next item is at most one under it",
+      "body": "- [ ] Party\n  - [ ] Plates\nBuy candles\n    - [ ] Paper ones",
+      "items": [
+        {
+          "text": "Party",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "Plates",
+          "done": false,
+          "depth": 1
+        },
+        {
+          "text": "Buy candles",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "Paper ones",
+          "done": false,
           "depth": 1
         }
       ]

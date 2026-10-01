@@ -23,18 +23,20 @@
  * changes the order, and it is one write on release.
  *
  * A sub-item is two spaces of indent under its parent — `  - [ ] Plates`
- * under `- [ ] Party`. One level (`MAX_DEPTH`, owner decision CL-D1,
- * 2026-09-27): what a spoken list needs, and what Keep offers. The depth is
- * clamped to one under the item before it and to `MAX_DEPTH`, so a jump of
- * two levels reads as one, a deeper body written elsewhere flattens to one
- * level on its first save here, and a child with no parent is top level.
+ * under `- [ ] Party` — and two more for each level below, three levels in
+ * all (`MAX_DEPTH`; owner feedback F1 of round 8, replacing CL-D1's one).
+ * The depth is clamped to one under the item before it and to `MAX_DEPTH`,
+ * so a jump of two levels reads as one, a deeper body written elsewhere
+ * flattens to the third level on its first save here (clamped, never
+ * dropped), and a child with no parent is top level.
  * Until 2026-09-26 an indented line did not match the item pattern at all:
  * `  - [x] Candles` showed as an open row whose text was the raw syntax and
  * was rewritten to `- [ ]   - [x] Candles` on the first save. The editor
- * nests and un-nests through `nestUnder` and `unnest`; the worker appends
+ * changes a row's level through `shiftLevel`; the worker appends
  * at the end with no indent, so a filed item is top level by construction. An item that
  * moves takes the lines nested under it (`blockOf`), so a list is never torn
- * from its sub-items, and ticking a parent ticks them (`toggleItem`).
+ * from its sub-items, and ticking a parent ticks them (`toggleItem`): a
+ * done item has no open descendant, at any depth.
  */
 
 export interface ChecklistItem {
@@ -62,11 +64,12 @@ function indentWidth(indent: string): number {
 }
 
 /**
- * How deep an item may nest: one level, as Keep allows (CL-D1). A third
- * level is this constant plus a `data-depth` rule in checklist.css; nothing
- * in a voice-first list has asked for one.
+ * How deep an item may nest: 0 is the top level, so 2 is three levels — top,
+ * sub-item, sub-sub-item. A fourth leaves about twelve characters of text on
+ * a 320 px screen. The Go readers' twin is `cleanup.MaxDepth`, and both
+ * suites assert the shared fixture's `max_depth` against their own.
  */
-export const MAX_DEPTH = 1;
+export const MAX_DEPTH = 2;
 
 /** The server's snippet is the body's first 500 runes, then "..." when there was more. */
 const SNIPPET_RUNES = 500;
@@ -114,12 +117,13 @@ function withItems(
 
 /**
  * `[ ]` ↔ `[x]` on the item at `index`, in place. Ticking a parent ticks
- * its sub-items with it, as Keep does — the parent is the whole job, and a
+ * every item under it, as Keep does — the parent is the whole job, and a
  * finished job has no open parts. Reopening a parent leaves its sub-items
  * as they are: they were finished on their own terms, and the person can
  * tick the parent again once the reopened part is done. Reopening a
- * sub-item reopens its parent, because a parent with an open part is not
- * done. Every flipped line stays where it stands.
+ * sub-item reopens every item it stands under, up to the top level,
+ * because a parent with an open part is not done. Every flipped line stays
+ * where it stands.
  */
 export function toggleItem(body: string, index: number): string {
   return withItems(body, (items) => {
@@ -131,8 +135,9 @@ export function toggleItem(body: string, index: number): string {
       return;
     }
     item.done = false;
-    const parent = parentOf(items, index);
-    if (parent !== null) (items[parent] as ChecklistItem).done = false;
+    for (let parent = parentOf(items, index); parent !== null; parent = parentOf(items, parent)) {
+      (items[parent] as ChecklistItem).done = false;
+    }
   });
 }
 
@@ -190,62 +195,88 @@ function parentOf(items: readonly ChecklistItem[], index: number): number | null
   return null;
 }
 
-/**
- * Whether `nestUnder` would change anything: `under` stands above `index`
- * and there is a level left to go — one under `under`, never past
- * `MAX_DEPTH`. The first open item has no row above it, so it can never be
- * a sub-item; an item already as deep as `under` allows stays. Neither
- * `under` nor its own parent may be done: an open part under a finished job
- * is what `toggleItem` never writes, and a body written elsewhere with a
- * done parent over an open sub-item must not gain a second one through it.
- */
-export function canNest(items: readonly ChecklistItem[], index: number, under: number): boolean {
+/** The depth the item at `index` would go to, `by` levels in under the row `above`; its own depth when it cannot. */
+function levelIn(items: readonly ChecklistItem[], index: number, above: number, by: number): number {
   const item = items[index];
-  const parent = items[under];
-  if (!item || !parent || under >= index || parent.done) return false;
-  const grandparent = parentOf(items, under);
-  if (grandparent !== null && items[grandparent]?.done) return false;
-  return Math.min(MAX_DEPTH, parent.depth + 1) > item.depth;
+  const row = items[above];
+  if (!item || !row) return 0;
+  // At most one level under the row it follows, and never past MAX_DEPTH.
+  return Math.max(item.depth, Math.min(item.depth + by, row.depth + 1, MAX_DEPTH));
 }
 
 /**
- * Makes the item at `index` a sub-item of `under`, the open row shown above
- * it — a child when `under` is top level, a sibling under the same parent
- * when it is a sub-item itself. Its block moves to follow `under`'s in the
- * body when done lines stand between them: the Done section is the view's
- * grouping, and the row a person sees above is the one they mean, so a body
- * of `Milk`, `[x] Eggs`, `Bread` nests Bread under Milk and lets Eggs's line
- * slip below (its place shows nowhere). Its own sub-items come along,
- * clamped to `MAX_DEPTH`, so a parent nested this way keeps its children as
- * siblings. When `canNest` says no, a normalising no-op.
+ * Whether `shiftLevel(body, index, by, above)` with `by > 0` would change
+ * anything. It would not when there is no row `above` standing before
+ * `index` (the first open item can never be a sub-item); when the item is
+ * already as deep as the row above allows, one under it and never past
+ * `MAX_DEPTH`; when the row above or any item it stands under is done, since
+ * an open part under a finished job is what `toggleItem` never writes, and a
+ * body written elsewhere with a done parent over an open sub-item must not
+ * gain a second one through it; and when the item's own sub-items would go
+ * past `MAX_DEPTH` — indenting is an explicit act about levels, and quietly
+ * flattening a grandchild is never what it means.
  */
-export function nestUnder(body: string, index: number, under: number): string {
+export function canNest(items: readonly ChecklistItem[], index: number, above: number, by = 1): boolean {
+  const item = items[index];
+  if (!item || !items[above] || above >= index || by <= 0) return false;
+  for (let i: number | null = above; i !== null; i = parentOf(items, i)) if (items[i]?.done) return false;
+  const delta = levelIn(items, index, above, by) - item.depth;
+  const deepest = Math.max(...blockOf(items, index).map((i) => items[i]?.depth ?? 0));
+  return delta > 0 && deepest + delta <= MAX_DEPTH;
+}
+
+/**
+ * Changes the level of the item at `index` by `by`, the row `above` being
+ * the open row shown above it.
+ *
+ * In (`by > 0`): one level per step, at most one under `above` and never
+ * past `MAX_DEPTH` — so under a sub-item a top-level row becomes the
+ * sub-item's sibling, and a second step makes it its child. Its block moves
+ * to follow `above`'s in the body when done lines stand between them: the
+ * Done section is the view's grouping, and the row a person sees above is
+ * the one they mean, so a body of `Milk`, `[x] Eggs`, `Bread` nests Bread
+ * under Milk and lets Eggs's line slip below (its place shows nowhere). Its
+ * own sub-items come along, each the same number of levels deeper. When
+ * `canNest` says no, a normalising no-op.
+ *
+ * Out (`by < 0`): one level per step, in place, stopping at the top; the
+ * sub-items that followed it under the same parent become its own, as an
+ * outliner does.
+ */
+export function shiftLevel(body: string, index: number, by: number, above: number): string {
   return withItems(body, (items) => {
-    if (!canNest(items, index, under)) return;
-    const item = items[index] as ChecklistItem;
-    const parent = items[under] as ChecklistItem;
-    const delta = Math.min(MAX_DEPTH, parent.depth + 1) - item.depth;
+    const item = items[index];
+    if (!item) return;
+    if (by < 0) {
+      for (let step = 0; step < -by && item.depth > 0; step += 1) {
+        for (const i of blockOf(items, index)) (items[i] as ChecklistItem).depth -= 1;
+      }
+      return;
+    }
+    if (!canNest(items, index, above, by)) return;
+    const delta = levelIn(items, index, above, by) - item.depth;
     const block = blockOf(items, index).map((i) => items[i] as ChecklistItem);
-    for (const member of block) member.depth = Math.min(MAX_DEPTH, member.depth + delta);
+    for (const member of block) member.depth += delta;
     items.splice(index, block.length);
-    // Right after the parent's own block — `under` is before `index`, so its
-    // indices did not move — where it reads as the parent's last sub-item.
-    const at = (blockOf(items, under).at(-1) ?? under) + 1;
+    // Right after the row above's own block — `above` is before `index`, so
+    // its indices did not move — where it reads as that row's next sibling
+    // or last sub-item.
+    const at = (blockOf(items, above).at(-1) ?? above) + 1;
     items.splice(at, 0, ...block);
   });
 }
 
 /**
- * Brings the item at `index` up one level, in place; the sub-items that
- * followed it under the same parent become its own. A top-level item, or a
- * bad index, is a normalising no-op.
+ * One level in under `under`: `shiftLevel` by one, kept for the editor's
+ * Tab and grip until it calls `shiftLevel` itself.
  */
+export function nestUnder(body: string, index: number, under: number): string {
+  return shiftLevel(body, index, 1, under);
+}
+
+/** One level out, in place: `shiftLevel` by minus one. A top-level item, or a bad index, is a normalising no-op. */
 export function unnest(body: string, index: number): string {
-  return withItems(body, (items) => {
-    const item = items[index];
-    if (!item || item.depth === 0) return;
-    for (const i of blockOf(items, index)) (items[i] as ChecklistItem).depth -= 1;
-  });
+  return shiftLevel(body, index, -1, index);
 }
 
 /**
@@ -253,8 +284,9 @@ export function unnest(body: string, index: number): string {
  * started — above it moving up, below it moving down, which is the slot the
  * dragged row was shown in. The block takes the depth of the item at `to`,
  * so a row dropped on a sub-item's slot becomes a sub-item, its own children
- * shifted with it and clamped to `MAX_DEPTH` — a parent dropped there takes
- * its children along as siblings. The same index, one out of range, or a `to` inside the
+ * shifted with it and clamped to `MAX_DEPTH`: a drop is placed by eye, so
+ * it clamps where an indent refuses, and a block dropped deeper than its
+ * levels allow keeps its deepest lines at the third level. The same index, one out of range, or a `to` inside the
  * block itself (a parent cannot land under its own child) is a normalising
  * no-op, as `toggleItem` is for a bad index.
  */
