@@ -20,6 +20,9 @@
 #     rollback.
 #   * Runs the smoke test itself, so the caller can gate prod on staging's result
 #     instead of discovering a bad deploy after it is live.
+#   * After the smoke passes, deletes each function's versions beyond the newest
+#     KEEP_VERSIONS, never the one `live` serves or the one it would roll back
+#     to. Nothing else ever deleted one: prod had 97 by 1 Oct.
 #
 # Usage:
 #   scripts/deploy.sh --instance dev --environment staging \
@@ -171,6 +174,24 @@ refuse_stateful_replacements() {
     [ "$refused" = "0" ]
 }
 
+# Versions a function keeps after a deploy, beyond the one `live` serves and
+# the one it would roll back to. Five is a working week of deploys to look
+# back over; ≈4.5 MB each, so the regional 75 GB store stops growing by two
+# zips per merge.
+KEEP_VERSIONS=5
+
+# prune_candidates reads one version per line ($LATEST may be among them) and
+# prints the ones to delete: everything but the newest KEEP_VERSIONS, $1 (the
+# live version) and $2 (the rollback target, empty when there is none). It
+# touches nothing, so the self-test below runs it on a list.
+prune_candidates() {
+    local live="$1" previous="$2" v
+    grep -v -e '^\$LATEST$' -e '^$' | sort -rn | tail -n +"$((KEEP_VERSIONS + 1))" |
+        while IFS= read -r v; do
+            [ "$v" = "$live" ] || [ "$v" = "$previous" ] || printf '%s\n' "$v"
+        done
+}
+
 if [ "$SELF_TEST" = "1" ]; then
     require_cmd jq
     info "self-test: the failure report names the resource that actually broke"
@@ -267,6 +288,15 @@ JSON
     refuse_stateful_replacements "$harmless" 2>/dev/null ||
         die "self-test FAILED: a harmless change set was refused"
     ok "in-place modifications and stateless replacements pass"
+
+    info "self-test: pruning keeps the newest $KEEP_VERSIONS versions, live and the rollback target"
+    versions="$(printf '%s\n' '$LATEST' 1 2 3 4 5 6 7 8 9 10 11 12)"
+    got="$(printf '%s\n' "$versions" | prune_candidates 12 3 | tr '\n' ' ')"
+    [ "$got" = "7 6 5 4 2 1 " ] || die "self-test FAILED: prune candidates were '$got', want '7 6 5 4 2 1 ' (8-12 newest, 3 the rollback target)"
+    ok "the newest five and the rollback target are kept"
+    got="$(printf '%s\n' "$versions" | prune_candidates 2 "" | tr '\n' ' ')"
+    [ "$got" = "7 6 5 4 3 1 " ] || die "self-test FAILED: prune candidates were '$got', want '7 6 5 4 3 1 ' (live on an old version)"
+    ok "a live alias left on an old version keeps it"
 
     info "self-test: --allow-replacement admits exactly the named resource"
     ALLOW_REPLACEMENT=(UserPool)
@@ -733,6 +763,30 @@ if is_apply; then
     done < <(stack_resources_of_type "$STACK" 'AWS::Lambda::Function')
 fi
 
+prune_versions() {
+    local fn="$1" live previous="" entry v out deleted=0
+    live="$(aws_cli lambda get-alias --function-name "$fn" --name live \
+        --query FunctionVersion --output text 2>/dev/null || echo "")"
+    for entry in ${MOVED_ALIASES[@]+"${MOVED_ALIASES[@]}"}; do
+        [ "${entry% *}" = "$fn" ] && previous="${entry##* }"
+    done
+    while IFS= read -r v; do
+        if out="$(aws_cli lambda delete-function --function-name "$fn" --qualifier "$v" 2>&1)"; then
+            deleted=$((deleted + 1))
+        else
+            case "$out" in
+                *AccessDenied*)
+                    warn "versions of $fn not pruned: this role may not delete them; redeploy infrastructure/bootstrap.yaml (scripts/setup.sh)"
+                    return 0
+                    ;;
+                *) warn "could not delete $fn version $v: $out" ;;
+            esac
+        fi
+    done < <(aws_cli lambda list-versions-by-function --function-name "$fn" \
+        --query 'Versions[].Version' --output text | tr '\t' '\n' | prune_candidates "$live" "$previous")
+    ok "pruned $deleted old version(s) of $fn; keeping the newest $KEEP_VERSIONS, live ($live)${previous:+ and the rollback target ($previous)}"
+}
+
 # ---------------------------------------------------------------------------
 # Smoke
 # ---------------------------------------------------------------------------
@@ -806,4 +860,14 @@ if [ "$SMOKE" = "1" ] && is_apply; then
         log ""
     fi
     ok "smoke passed for $STACK"
+
+    # Only after a passed smoke, so a rollback never finds its target gone,
+    # and never under --no-smoke. Lambda also refuses to delete a version an
+    # alias points at, a second net under prune_candidates. An AccessDenied is
+    # a bootstrap stack from before the grant (2026-10): housekeeping, not a
+    # gate, so it warns rather than fails — the versions are still there.
+    while IFS= read -r fn; do
+        [ -n "$fn" ] || continue
+        prune_versions "$fn"
+    done < <(stack_resources_of_type "$STACK" 'AWS::Lambda::Function')
 fi
