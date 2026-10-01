@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="864" height="520" viewBox="0 0 864 520" font-family="system-ui, sans-serif">
+  <!-- F3: note Text tab, textarea focused, keyboard up (inset ~400 px on 412x915). Mic in the banner's right end; banner is its own grid row, so nothing is covered. -->
+  <g>
+    <text x="8" y="22" font-size="13" fill="#534f48">Ink · editing, keyboard up</text>
+    <rect x="0" y="40" width="412" height="47" fill="#fbf9f4"/>
+    <circle cx="24" cy="63" r="7" fill="none" stroke="#1a1917" stroke-width="2"/><text x="40" y="70" font-size="20" font-family="Georgia, serif" font-weight="700" fill="#1a1917">Chintan</text>
+    <!-- mic: 40 px disc in a 44 px target, right edge at 412-16 -->
+    <rect x="352" y="41.5" width="44" height="44" fill="none" stroke="#c2410c" stroke-dasharray="2 2" opacity=".5"/>
+    <circle cx="374" cy="63.5" r="20" fill="#f5f1e8" stroke="#8a8478"/>
+    <g fill="none" stroke="#1a1917" stroke-width="2" stroke-linecap="round"><rect x="370" y="54" width="8" height="13" rx="4"/><path d="M366 63a8 8 0 0 0 16 0M374 71v3"/></g>
+    <line x1="0" y1="87" x2="412" y2="87" stroke="#e6e0d3"/>
+    <rect x="20" y="96" width="372" height="52" rx="26" fill="#f2eee4"/>
+    <rect x="24" y="100" width="120" height="44" rx="22" fill="#fbf9f4"/><text x="84" y="127" font-size="14" text-anchor="middle" fill="#1a1917">Text</text>
+    <text x="208" y="127" font-size="14" text-anchor="middle" fill="#534f48">Cleaned</text><text x="325" y="127" font-size="14" text-anchor="middle" fill="#534f48">Recordings (2)</text>
+    <rect x="16" y="160" width="380" height="180" rx="12" fill="#f5f1e8" stroke="#1a1917" stroke-width="2"/>
+    <text x="32" y="190" font-size="16" font-family="Georgia, serif" fill="#1a1917">Measure the back wall before</text>
+    <text x="32" y="216" font-size="16" font-family="Georgia, serif" fill="#1a1917">ordering; the uprights need to clear</text>
+    <text x="32" y="242" font-size="16" font-family="Georgia, serif" fill="#1a1917">the door track.|</text>
+    <rect x="0" y="355" width="412" height="160" fill="#d6d2c8"/><text x="206" y="440" font-size="14" fill="#534f48" text-anchor="middle">on-screen keyboard (tab bar + disc are under it)</text>
+  </g>
+  <g transform="translate(452 0)">
+    <text x="8" y="22" font-size="13" fill="#534f48">Nocturne · same</text>
+    <rect x="0" y="40" width="412" height="47" fill="#0a0c0b"/>
+    <circle cx="24" cy="63" r="7" fill="none" stroke="#f2f5f3" stroke-width="2"/><text x="40" y="70" font-size="20" font-family="Georgia, serif" font-weight="700" fill="#f2f5f3">Chintan</text>
+    <circle cx="374" cy="63.5" r="20" fill="#1c211f" stroke="#5e6e66"/>
+    <g fill="none" stroke="#f2f5f3" stroke-width="2" stroke-linecap="round"><rect x="370" y="54" width="8" height="13" rx="4"/><path d="M366 63a8 8 0 0 0 16 0M374 71v3"/></g>
+    <line x1="0" y1="87" x2="412" y2="87" stroke="#2a312e"/>
+    <rect x="20" y="96" width="372" height="52" rx="26" fill="#141816"/>
+    <rect x="24" y="100" width="120" height="44" rx="22" fill="#1c211f"/><text x="84" y="127" font-size="14" text-anchor="middle" fill="#f2f5f3">Text</text>
+    <text x="208" y="127" font-size="14" text-anchor="middle" fill="#a4aca8">Cleaned</text><text x="325" y="127" font-size="14" text-anchor="middle" fill="#a4aca8">Recordings (2)</text>
+    <rect x="16" y="160" width="380" height="180" rx="12" fill="#1c211f" stroke="#f2f5f3" stroke-width="2"/>
+    <text x="32" y="190" font-size="16" font-family="Georgia, serif" fill="#f2f5f3">Measure the back wall before</text>
+    <text x="32" y="216" font-size="16" font-family="Georgia, serif" fill="#f2f5f3">ordering; the uprights need to clear</text>
+    <text x="32" y="242" font-size="16" font-family="Georgia, serif" fill="#f2f5f3">the door track.|</text>
+    <rect x="0" y="355" width="412" height="160" fill="#2a2f2d"/><text x="206" y="440" font-size="14" fill="#a4aca8" text-anchor="middle">on-screen keyboard</text>
+  </g>
+</svg>
