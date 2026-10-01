@@ -72,9 +72,15 @@ and flattens to it on the first save (clamped, never dropped), a child with
 no parent is top level — and write it back as two spaces per level, so a
 body indented in another editor round-trips byte for byte. The Go form is
 `cleanup.ParseLines`, which every depth read in `pipeline/append.go` goes
-through (`depths`); a line that is not an item — a capture marker, a blank,
-prose — does not reset its clamp, so a marker between a parent and the
-sub-item a later recording merged under it does not cut them apart.
+through (`depths`). A capture marker or a blank line does not reset its
+clamp, since the editor never sees either (the API strips markers and the
+editor drops blanks), so a marker between a parent and the sub-item a later
+recording merged under it does not cut them apart. A prose line does: the
+editor shows it as a top-level item, so the item after it is at most a
+sub-item to every reader (the fixture's "prose between items" case).
+`ItemsFromLines` differs on one thing only: it reads an *indented* prose
+line at its indent's level (it also reads the clean artefact's box-less
+lines), where the editor shows it at the top level.
 `cleanup.ParseLine` alone returns the indent's raw level. Every body from
 before three levels is at depth 0 or 1 and reads exactly as it did; the one
 change in meaning is a line indented four or more columns under a sub-item,
@@ -282,6 +288,15 @@ The match is exact folded words: "Costco" and "Costco wholesale" are two
 parents (a `ponytail:` ceiling in `append.go`; parent-name synonyms are
 the upgrade if a real list asks).
 
+**DB6-9 is open** (the owner's): whether a blank line or a capture marker
+ends a parent's block for the merge. As it stands they do, which is the rule
+from before three levels, and three levels change nothing about it. The
+known cost is a duplicate: a list `Costco › Meat`, a blank, then
+`<c_2>` with `  - [ ] Rice` (a sub-item of Costco to every reader, a later
+recording's paragraph), and a recording of Costco › Rice — the block ends
+at the blank, the Rice under the marker is not found, and a second Rice is
+added after Meat.
+
 The capture marker keeps its place on the line before the first item
 (`<marker>\n- [ ] A\n- [ ] B`, after `\n\n` when the body has content). A
 paragraph runs to the next marker, so `CutCaptureParagraph` finds exactly
@@ -371,8 +386,12 @@ up, or Use this list) writes it over the body:
   item under it is stored open, so `- [x] Costco` › `- [x] Meat` beside
   `- [ ] chicken from costco` tidies to an open Costco › Meat (done),
   Chicken, whether the model reopened Costco or left it done. The lost-tick
-  and reopened checks exempt exactly that: a done line whose words are an
-  open answer item with an open item under it. The editor's `toggleItem` and
+  and reopened checks exempt that only when the list put the open item
+  there: its own body line names the group ("chicken from costco" under
+  Costco), the body already had it open under that line, or it is itself
+  such a reopened group one level down. A group the model invents over an
+  open line — `- [x] Milk`, `- [ ] Eggs` answered as Milk › Eggs — still
+  loses Milk's tick and is refused. The editor's `toggleItem` and
   the merge keep the same rule.
 
 The stored view is task-list lines, two spaces of indent per level, in

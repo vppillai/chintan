@@ -340,7 +340,10 @@ and of no open one, a done answer item equal to no done body line, a done
 answer item equal to an open body line when no open answer item is — every
 check at every depth; and a done answer item with an open item under it is
 stored open, a done line with its words exempt from the lost-tick and
-reopened checks (DB6-11, "the parent reopens"). The pre-2026-09-29 prompt ("granular, actionable tasks", the person's
+reopened checks only when the open item's own body line names the group,
+the body had it open under that line already, or it is such a group itself
+(DB6-11, "the parent reopens"; an invented group over an open line is
+still refused). The pre-2026-09-29 prompt ("granular, actionable tasks", the person's
 words, done lines verbatim and in order) is what split the owner's `Add
 milk, eggs and protein powder to the shopping list` into "Add milk to…",
 "Add eggs to…", "Add protein powder…"; PR-D4 had proposed dropping the mode
