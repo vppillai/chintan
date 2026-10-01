@@ -23,11 +23,12 @@
  * changes the order, and it is one write on release.
  *
  * A sub-item is two spaces of indent under its parent — `  - [ ] Plates`
- * under `- [ ] Party` — and two more for each level below, three levels in
- * all (`MAX_DEPTH`; owner feedback F1 of round 8, replacing CL-D1's one).
+ * under `- [ ] Party` — and two more for each level below, four levels in
+ * all (`MAX_DEPTH`; owner feedback F1 of round 8 replaced CL-D1's one with
+ * three, and the owner's "why just 3" of round 10 made it four).
  * The depth is clamped to one under the item before it and to `MAX_DEPTH`,
  * so a jump of two levels reads as one, a deeper body written elsewhere
- * flattens to the third level on its first save here (clamped, never
+ * flattens to the fourth level on its first save here (clamped, never
  * dropped), and a child with no parent is top level.
  * Until 2026-09-26 an indented line did not match the item pattern at all:
  * `  - [x] Candles` showed as an open row whose text was the raw syntax and
@@ -67,12 +68,14 @@ function indentWidth(indent: string): number {
 }
 
 /**
- * How deep an item may nest: 0 is the top level, so 2 is three levels — top,
- * sub-item, sub-sub-item. A fourth leaves about twelve characters of text on
- * a 320 px screen. The Go readers' twin is `cleanup.MaxDepth`, and both
- * suites assert the shared fixture's `max_depth` against their own.
+ * How deep an item may nest: 0 is the top level, so 3 is four levels — top,
+ * sub-item, sub-sub-item, and one under that (the owner asked why only
+ * three; round 10, PR10-11). Not five: deeper than four reads as an outline,
+ * not a list, and at 320 px the fourth level already leaves about 94 px of
+ * text. The Go readers' twin is `cleanup.MaxDepth`, and both suites assert
+ * the shared fixture's `max_depth` against their own.
  */
-export const MAX_DEPTH = 2;
+export const MAX_DEPTH = 3;
 
 /** The server's snippet is the body's first 500 runes, then "..." when there was more. */
 const SNIPPET_RUNES = 500;
@@ -443,14 +446,14 @@ export function planLevel(
   // Why `canNest` said no, in the order a person would look: a done row
   // above (the one just ticked, held for the beat, or one it stands
   // under), then no level left under the row above, then the row's own
-  // sub-items, which would go past the third level.
+  // sub-items, which would go past the fourth level.
   for (let i: number | null = above.index; i !== null; i = parentOf(items, i)) {
     if (items[i]?.done) return { refusal: 'Cannot nest under a done item' };
   }
   if (Math.min(above.item.depth + 1, MAX_DEPTH) <= depth) {
-    return { refusal: depth >= MAX_DEPTH ? 'Already three levels deep' : 'Already a sub-item' };
+    return { refusal: depth >= MAX_DEPTH ? 'Already four levels deep' : 'Already a sub-item' };
   }
-  return { refusal: 'Its sub-items are already three levels deep' };
+  return { refusal: 'Its sub-items are already four levels deep' };
 }
 
 /** The open-list positions of the block at body index `index`: the row and its open sub-items. */

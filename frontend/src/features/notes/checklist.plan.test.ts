@@ -34,13 +34,13 @@ describe('planLevel', () => {
     expect(planLevel(items, open, 3, 0)).toEqual({ refusal: '' });
   });
 
-  it('refuses under a done row, and past the third level for the row’s own sub-items', () => {
+  it('refuses under a done row, and past the fourth level for the row’s own sub-items', () => {
     const done = parseChecklist('- [x] Party\n- [ ] Cake');
     expect(planLevel(done, rows(done), 0, 1)).toEqual({ refusal: 'Nothing above to nest under' });
     const held = [{ item: done[0]!, index: 0 }, { item: done[1]!, index: 1 }];
     expect(planLevel(done, held, 1, 1)).toEqual({ refusal: 'Cannot nest under a done item' });
-    const deep = parseChecklist('- [ ] A\n- [ ] B\n  - [ ] C\n    - [ ] D');
-    expect(planLevel(deep, rows(deep), 1, 1)).toEqual({ refusal: 'Its sub-items are already three levels deep' });
+    const deep = parseChecklist('- [ ] A\n- [ ] B\n  - [ ] C\n    - [ ] D\n      - [ ] E');
+    expect(planLevel(deep, rows(deep), 1, 1)).toEqual({ refusal: 'Its sub-items are already four levels deep' });
   });
 });
 

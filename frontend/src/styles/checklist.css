@@ -43,15 +43,21 @@
 
 /* A sub-item is set in by one step per level, its grip and box after it:
    the indent alone says "part of the row above", as Keep's does, and the box
-   is the same drawn box. Three levels (`MAX_DEPTH` in checklist.ts). No
-   narrower step on a small phone: at 320 px the third level still leaves
-   118 px of text, which wraps downward with its box on the first line. */
+   is the same drawn box. Four levels (`MAX_DEPTH` in checklist.ts), each a
+   multiple of the one spacing token, so no new literal. No narrower step on
+   a small phone: the grip and the box keep their 44 px, and at 320 px the
+   fourth level still leaves about 94 px of text, which wraps downward with
+   its box on the first line. */
 .checklist__row[data-depth='1'] {
   padding-inline-start: var(--space-6);
 }
 
 .checklist__row[data-depth='2'] {
   padding-inline-start: calc(2 * var(--space-6));
+}
+
+.checklist__row[data-depth='3'] {
+  padding-inline-start: calc(3 * var(--space-6));
 }
 
 /* The box: a real checkbox stretched invisibly over its 44 px label, so the
@@ -304,6 +310,10 @@ textarea.checklist__text {
 
 .checklist[data-dragging] .checklist__row[data-preview-depth='2'] {
   padding-inline-start: calc(2 * var(--space-6));
+}
+
+.checklist[data-dragging] .checklist__row[data-preview-depth='3'] {
+  padding-inline-start: calc(3 * var(--space-6));
 }
 
 .checklist__row[data-dragging][data-preview-depth]::before {
