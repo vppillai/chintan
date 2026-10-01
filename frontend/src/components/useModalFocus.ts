@@ -64,12 +64,22 @@ export function useModalFocus(panelRef: RefObject<HTMLElement | null>, onCancel:
       if (elements.length === 0) return;
       const first = elements[0];
       const last = elements[elements.length - 1];
-      const active = document.activeElement;
+      /*
+       * An active element that is not one of the controls — a heading given
+       * focus by script (`tabIndex=-1`, where the Share sheet opens), or
+       * nothing in the panel at all — is treated as both ends: Shift+Tab goes
+       * to the last control, Tab to the first. Checked against first and
+       * last only, the very first Shift+Tab from the heading walked out into
+       * the note's textarea (review of #214).
+       */
+      const index = elements.indexOf(document.activeElement as HTMLElement);
+      const atStart = index <= 0;
+      const atEnd = index === -1 || index === elements.length - 1;
 
-      if (event.shiftKey && active === first) {
+      if (event.shiftKey && atStart) {
         event.preventDefault();
         last?.focus();
-      } else if (!event.shiftKey && active === last) {
+      } else if (!event.shiftKey && atEnd) {
         event.preventDefault();
         first?.focus();
       }

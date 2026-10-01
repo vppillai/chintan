@@ -15,12 +15,12 @@ import type { NoteEditor } from './useNoteEditor.ts';
  * Tidy up list (R8-F8): the checklist's ⋮ action that splits sentences into
  * items and groups them, written straight into the body with a 6 s Undo.
  *
- * It replaced the Split up tab, a second editable copy of the list whose
- * first keystroke silently became the real one. The model call is the same
- * — `POST /v1/notes/{id}/clean`, where the server picks `tasks` for a
- * checklist and `SplitOutput` refuses an answer that drops or invents an
- * item or a tick — but nothing is shown before it lands; the Undo is the
- * preview (the OF-DEL pattern). Converting a prose note to a checklist starts
+ * Nothing is shown before the answer lands; the Undo is the preview (the
+ * OF-DEL pattern). A preview copy of the list is what the earlier design had,
+ * on a tab of its own, and its first keystroke silently became the real
+ * list. The model call is `POST /v1/notes/{id}/clean`, where the server picks
+ * `tasks` for a checklist and `SplitOutput` refuses an answer that drops or
+ * invents an item or a tick. Converting a prose note to a checklist starts
  * one too (`NoteDrawer`), since a dictated paragraph is otherwise one long
  * item.
  *

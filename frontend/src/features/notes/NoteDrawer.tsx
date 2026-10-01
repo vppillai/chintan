@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useId } from 'react';
+import { useCallback, useId, useRef, type RefObject } from 'react';
 
 import { queryKeys, useSettings } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
@@ -9,6 +9,7 @@ import { DownloadButton } from '@/components/DownloadButton.tsx';
 import { Icon } from '@/components/Icon.tsx';
 import { LanguageSelect } from '@/components/LanguageSelect.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
+import { useModalFocus } from '@/components/useModalFocus.ts';
 import { languageName } from '@/features/settings/languages.ts';
 
 import { checklistToProse, parseChecklist, proseToChecklist } from './checklist.ts';
@@ -75,11 +76,30 @@ export function NoteDrawer({
    */
   useApplyTidy(note, editor);
 
+  const panelRef = useRef<HTMLElement>(null);
+  const close = useCallback(() => {
+    onOpenChange(null);
+  }, [onOpenChange]);
+
   if (!open) return null;
 
   return (
     <div className="note-drawer" hidden={hidden}>
-      <section className="note-panel" aria-labelledby={headingId}>
+      {/*
+        A dialog while it is on screen: Tab stays inside, Escape closes it and
+        focus goes back to the ⋮ that opened it, as the Move sheet and the
+        confirm dialogs do (review 2026-10-01, FE-3). Not while hidden behind
+        the recordings' selection bar — Escape must cancel the selection
+        then, and R must still record — so the role and the hook step aside
+        with it; the content stays mounted either way.
+      */}
+      <section
+        ref={panelRef}
+        className="note-panel"
+        aria-labelledby={headingId}
+        {...(hidden ? {} : { role: 'dialog', 'aria-modal': true })}
+      >
+        {!hidden && <ModalFocus panelRef={panelRef} onCancel={close} />}
         <div className="note-panel__head">
           {/* Focusable by script only: where Share lands a keyboard user, its controls a Tab away. */}
           <h2 id={headingId} className="note-panel__heading" tabIndex={-1}>
@@ -89,9 +109,7 @@ export function NoteDrawer({
             type="button"
             className="note-panel__close"
             aria-label={open === 'details' ? 'Close details' : 'Close share'}
-            onClick={() => {
-              onOpenChange(null);
-            }}
+            onClick={close}
           >
             <Icon name="close" size={18} />
           </button>
@@ -244,6 +262,25 @@ export function NoteDrawer({
       </section>
     </div>
   );
+}
+
+/**
+ * `useModalFocus` as a child that renders nothing, so the hook mounts with
+ * the sheet on screen and unmounts when it is hidden or closed — the hook
+ * asks for exactly that — while the sheet's own content stays mounted. The
+ * screen then moves focus on to the language select or the heading; on
+ * close the hook returns it to what had focus when the sheet opened, which
+ * the ⋮ menu has already made its trigger.
+ */
+function ModalFocus({
+  panelRef,
+  onCancel,
+}: {
+  panelRef: RefObject<HTMLElement | null>;
+  onCancel: () => void;
+}) {
+  useModalFocus(panelRef, onCancel);
+  return null;
 }
 
 /**

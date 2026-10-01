@@ -30,7 +30,6 @@ export type IconName =
   | 'check'
   | 'trash'
   | 'more'
-  | 'download'
   | 'move'
   | 'plus'
   | 'archive'
@@ -83,8 +82,6 @@ export const PATHS: Record<IconName, string> = {
   // a zero-length stroke, so the round caps draw it at the stroke's own width
   // and it stays in step with every other glyph's weight.
   more: 'M12 5.5v.01M12 12v.01M12 18.5v.01',
-  // An arrow into a tray.
-  download: 'M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14',
   // An arrow leaving a bracket for a bar: out of this note, into another.
   move: 'M9 5H5v14h4M10 12h9M15.5 8.5 19 12l-3.5 3.5',
   // A box under its lid, with the pull on the front: where a note goes when

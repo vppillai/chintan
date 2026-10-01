@@ -48,7 +48,9 @@ Top to bottom, inside the shell's one scroll region (`.app__main`):
 - **The drawer** (`NoteDrawer.tsx`): Details or Share, rendered only while one
   is open. Outside the panels, so it is there on every tab; hidden (not
   unmounted) while recordings are being selected, whose own bar takes the
-  foot of the screen.
+  foot of the screen. On screen it is a dialog (`useModalFocus`, as the Move
+  sheet): Tab stays inside, Escape closes it, focus returns to the ⋮; hidden,
+  it is not one, so Escape cancels the selection and R still records.
 
 `NoteViews` is keyed by the note's id: the strip's memory and the panels'
 state belong to one note, and "Open <title>" after a move walks from one note
@@ -187,8 +189,9 @@ under the head appears once the body has left its top: a CSS scroll-driven
 animation on the body's named timeline where supported (Chromium), else a
 `data-scrolled` attribute the body's scroll listener sets on the sheet. A
 body with nothing to scroll (Share) has no hairline. Opening it moves focus in: Details to the language
-select, Share to its heading; Close hands focus back to the ⋮. Hidden while
-recordings are selected, and stepped aside while a conflict banner is up.
+select, Share to its heading; Close and Escape hand focus back to the ⋮, and
+Tab does not leave the sheet. Hidden while recordings are selected, and stepped
+aside while a conflict banner is up.
 
 `overscroll-behavior: contain` on the sheet's body holds in Chromium — measured at
 412×915 and 412×700 (T2–T4): a drag past the sheet's end, a drag on the short

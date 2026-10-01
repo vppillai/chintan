@@ -15,6 +15,11 @@
  * styling controls removed weeks earlier (the Search | Ask segment, the
  * note's action bar, `.icon-button`); a class nothing renders is a rule
  * nobody can see fail.
+ *
+ * A third pass fails on a token `tokens.css` defines that nothing reads —
+ * the other direction of the first rule. Round 9 found eleven (`--z-toast`,
+ * `--space-0`, `--radius-2xl`, …): a knob nothing turns is a scale a reader
+ * trusts and a change that does nothing (review 2026-10-01, FE-17).
  */
 
 import { readdir, readFile } from 'node:fs/promises';
@@ -124,8 +129,12 @@ function report(file, index, label, detail) {
 const stylesheets = new Map();
 /** Every identifier-shaped token in the sources and index.html. */
 const sourceTokens = new Set();
+/** Every non-test text scanned (comments blanked), for the token-read pass. */
+const texts = [];
 
-for (const match of (await readFile(join(ROOT, 'index.html'), 'utf8')).matchAll(SOURCE_TOKEN)) {
+const indexHtml = await readFile(join(ROOT, 'index.html'), 'utf8');
+texts.push(indexHtml);
+for (const match of indexHtml.matchAll(SOURCE_TOKEN)) {
   sourceTokens.add(match[0]);
 }
 
@@ -140,7 +149,9 @@ for await (const path of walk(join(ROOT, 'src'))) {
   const stripped = stripComments(await readFile(path, 'utf8'));
   if (isCss) stylesheets.set(file, stripped);
   // Tests may still name a class the app stopped rendering; only the app counts.
-  if (isSource && !/\.test\.tsx?$/.test(file)) {
+  const isTest = /\.test\.tsx?$/.test(file);
+  if (!isTest) texts.push(stripped);
+  if (isSource && !isTest) {
     for (const match of stripped.matchAll(SOURCE_TOKEN)) sourceTokens.add(match[0]);
   }
   const lines = stripped.split('\n');
@@ -204,6 +215,30 @@ if (unused.length > 0) {
   process.exit(1);
 }
 
+/*
+ * Defined, never read. A token is read where `var(--name)` appears in any
+ * stylesheet or source, including `tokens.css` itself (a token built from
+ * another), or where a script names it as a string (`'--name'`). Every
+ * `--name:` in `tokens.css` is a definition, the theme and reduced-motion
+ * overrides included; one of those alone is not a read.
+ */
+const tokenSource = stripComments(await readFile(join(ROOT, TOKEN_FILE), 'utf8'));
+const defined = new Set([...tokenSource.matchAll(/^\s*(--[\w-]+)\s*:/gm)].map((match) => match[1]));
+const read = new Set();
+for (const text of [tokenSource, ...texts]) {
+  for (const match of text.matchAll(/(?:var\(\s*|['"`])(--[\w-]+)/g)) read.add(match[1]);
+}
+const unread = [...defined].filter((name) => !read.has(name));
+
+if (unread.length > 0) {
+  console.error(
+    `Dead tokens — ${TOKEN_FILE} defines these and nothing reads them. Delete them, or use them:\n`,
+  );
+  for (const name of unread) console.error(`  ${name}`);
+  console.error(`\n${unread.length} unread token(s).`);
+  process.exit(1);
+}
+
 console.log(
-  `check-tokens: no literal colours or font sizes outside ${TOKEN_FILE}; every class selector is rendered`,
+  `check-tokens: no literal colours or font sizes outside ${TOKEN_FILE}; every class selector is rendered; every token is read`,
 );

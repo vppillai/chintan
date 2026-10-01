@@ -77,12 +77,12 @@
 .ask__waiting,
 .ask__error {
   font-size: var(--font-size-sm);
-  color: var(--color-muted);
 }
 
 /* The wait shows itself as a slow breath, in the motion tokens, so reduced
    motion stills it along with everything else. */
 .ask__waiting {
+  color: var(--color-muted);
   animation: ask-breathe calc(var(--motion-duration-slow) * 5) var(--motion-ease-standard)
     infinite alternate;
 }

@@ -119,7 +119,7 @@ export function AppShell() {
    */
   if (auth.phase !== 'signed-in') {
     return (
-      <div className="app" data-screen="signed-out" data-signed-out="true">
+      <div className="app" data-screen="signed-out">
         <header className="app__banner">
           <Wordmark />
         </header>

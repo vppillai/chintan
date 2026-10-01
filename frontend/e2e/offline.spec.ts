@@ -442,6 +442,67 @@ test('three offline edits to one note are one queued write, not three', async ({
     .toBe('One. Two. Three.');
 });
 
+/**
+ * An edit made offline is the note the device shows while still offline.
+ *
+ * The queued PATCH was the only place the edit went: neither the note query
+ * nor the device's copy was patched, so leaving the note and coming back
+ * served the pre-edit body under "Saved on this device — will sync", and the
+ * next keystroke replaced the queued PATCH with that body plus one character
+ * — the first offline edit lost silently (review 2026-10-01, FE-1).
+ */
+test('an edit made offline is still shown when the note is reopened offline, and a later keystroke keeps it', async ({
+  page,
+  context,
+  api,
+}) => {
+  await withServiceWorker(page);
+  await page.goto('/notes/roof-repair');
+  await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+
+  api.offline = true;
+  await context.setOffline(true);
+
+  const body = page.getByRole('textbox', { name: 'Note body' });
+  await body.fill('Ridge tiles slipped. Ellis quoted nine hundred.');
+  await expect(page.getByText(/saved on this device — will sync/i)).toBeVisible();
+
+  // Leave by the Home tab and come back from the library: in-app moves, so
+  // the document is kept and `navigator.onLine` stays false.
+  await page.getByRole('link', { name: 'Home' }).click();
+  await page.getByRole('button', { name: /roof repair/i }).click();
+
+  await expect(body).toHaveValue('Ridge tiles slipped. Ellis quoted nine hundred.');
+  await expect(page.getByText(/saved on this device — will sync/i)).toBeVisible();
+
+  // The device's copy carries it too, for a reopen after the tab is gone.
+  const cachedBody = await page.evaluate(async () => {
+    const open = indexedDB.open('chintan');
+    const db = await new Promise<IDBDatabase>((resolve) => {
+      open.onsuccess = () => resolve(open.result);
+    });
+    return new Promise<string | undefined>((resolve) => {
+      const request = db.transaction('notes').objectStore('notes').get('roof-repair');
+      request.onsuccess = () =>
+        resolve((request.result as { note?: { body?: string } } | undefined)?.note?.body);
+    });
+  });
+  expect(cachedBody).toBe('Ridge tiles slipped. Ellis quoted nine hundred.');
+
+  // One more keystroke onto what is shown, not a re-fill of the whole text.
+  await body.focus();
+  await body.press('End');
+  await body.pressSequentially(' Confirmed.');
+  await expect(page.getByText(/saved on this device — will sync/i)).toBeVisible();
+
+  api.offline = false;
+  await context.setOffline(false);
+
+  await expect
+    .poll(() => api.notes['roof-repair']?.body, { timeout: 20_000 })
+    .toBe('Ridge tiles slipped. Ellis quoted nine hundred. Confirmed.');
+});
+
 test('the offline banner says the data is cached', async ({ page, context, api }) => {
   await page.goto('/');
   await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
@@ -522,4 +583,83 @@ test('a queued edit the server refuses says so, instead of promising a sync', as
     timeout: 20_000,
   });
   await expect(page.getByText(/too long to store/i)).toBeVisible();
+});
+
+/**
+ * A queued edit the server answers 409 — the note moved on before the queue
+ * reached it — was retired with its text unreachable: the screen said "did
+ * not save" over a body that did not contain it, and nothing offered the
+ * text back (review 2026-10-01, FE-7). It is a conflict, and is shown as one.
+ */
+test('a queued edit refused as a conflict is offered back: Keep my edits sends it on the newer version', async ({
+  page,
+  context,
+  api,
+}) => {
+  await withServiceWorker(page);
+  await page.goto('/notes/roof-repair');
+  await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+
+  api.offline = true;
+  await context.setOffline(true);
+  await page.getByRole('textbox', { name: 'Note body' }).fill('Ellis quoted nine hundred.');
+  await expect(page.getByText(/saved on this device — will sync/i)).toBeVisible();
+
+  // Another device wrote first; the flush's replay is refused.
+  api.conflictOnce = true;
+  api.offline = false;
+  await context.setOffline(false);
+
+  await expect(page.getByText(/this note changed elsewhere/i)).toBeVisible({ timeout: 20_000 });
+  // Nothing of mine has been thrown away, and the choice is the usual one.
+  await expect(page.getByRole('textbox', { name: 'Note body' })).toHaveValue(
+    'Ellis quoted nine hundred.',
+  );
+  await page.getByRole('button', { name: 'Keep my edits' }).click();
+
+  await expect
+    .poll(() => api.notes['roof-repair']?.body, { timeout: 20_000 })
+    .toBe('Ellis quoted nine hundred.');
+  await expect(page.getByText('Saved')).toBeVisible();
+  await expect(page.getByText(/waiting to sync/i)).toHaveCount(0);
+});
+
+test('a queued edit refused as a conflict can be dropped for the newer version, and is then forgotten', async ({
+  page,
+  context,
+  api,
+}) => {
+  await withServiceWorker(page);
+  await page.goto('/notes/roof-repair');
+  await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+
+  api.offline = true;
+  await context.setOffline(true);
+  await page.getByRole('textbox', { name: 'Note body' }).fill('Ellis quoted nine hundred.');
+  await expect(page.getByText(/saved on this device — will sync/i)).toBeVisible();
+
+  api.conflictOnce = true;
+  api.offline = false;
+  await context.setOffline(false);
+
+  await expect(page.getByText(/this note changed elsewhere/i)).toBeVisible({ timeout: 20_000 });
+  await page.getByRole('button', { name: 'Use the newer version' }).click();
+
+  await expect(page.getByRole('textbox', { name: 'Note body' })).toHaveValue(
+    'Ridge tiles slipped. Ellis quoted nine hundred.',
+  );
+  // The retired entry goes with the choice: no "did not save", nothing counted.
+  await expect(page.getByText(/did not save/i)).toHaveCount(0);
+  await expect(page.getByText(/waiting to sync/i)).toHaveCount(0);
+  const queued = await page.evaluate(async () => {
+    const open = indexedDB.open('chintan');
+    const db = await new Promise<IDBDatabase>((resolve) => {
+      open.onsuccess = () => resolve(open.result);
+    });
+    return new Promise<number>((resolve) => {
+      const request = db.transaction('mutations').objectStore('mutations').count();
+      request.onsuccess = () => resolve(request.result);
+    });
+  });
+  expect(queued).toBe(0);
 });

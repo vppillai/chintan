@@ -2,9 +2,11 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
+import { queryKeys } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
+import { queuedEditBody } from '@/offline/queuedEdits.ts';
 import { onAFakeClock } from '@/test/clock.ts';
-import { TestProviders, testApiContext } from '@/test/providers.tsx';
+import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
 import { APPEND_WAIT_LIMIT, AUTOSAVE_DELAY_MS } from './autosave.ts';
 import { useNoteEditor } from './useNoteEditor.ts';
@@ -726,5 +728,65 @@ describe('a Details change goes out without the body', () => {
 
     expect(patches).toHaveLength(1);
     expect(patches[0]?.body).toEqual({ version: NOTE.version, language: 'ml' });
+  });
+});
+
+describe('an edit made offline is the note the device shows', () => {
+  /**
+   * The queued PATCH used to be the only place the edit went. Reopening the
+   * note offline served the pre-edit body under "Saved on this device — will
+   * sync", and a keystroke there replaced the queued PATCH with that body plus
+   * one character (review 2026-10-01, FE-1). Two things must hold: the note
+   * query is patched at the same version, and a later keystroke folds into
+   * what was queued rather than replacing it field for field.
+   */
+  it('patches the note query at the same version, and a later keystroke keeps an earlier queued field', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      if ((init?.method ?? 'GET') === 'PATCH') throw new TypeError('Failed to fetch');
+      return new Response(JSON.stringify(NOTE), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const queryClient = testQueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TestProviders api={testApiContext(fetchImpl)} queryClient={queryClient}>
+        {children}
+      </TestProviders>
+    );
+
+    await onAFakeClock(async () => {
+      const first = renderHook(() => useNoteEditor(NOTE), { wrapper });
+      act(() => {
+        first.result.current.edit({ title: 'Roof repair — Ellis' });
+      });
+      // Through the autosave and the client's retries, to the queue.
+      await act(() => vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 20_000));
+      await waitFor(() => {
+        expect(first.result.current.model.state).toBe('queued');
+      });
+      const patched = queryClient.getQueryData<NoteDetailWire>(queryKeys.note(NOTE.id));
+      expect(patched).toMatchObject({ title: 'Roof repair — Ellis', version: NOTE.version });
+      first.unmount();
+
+      // Reopened offline: the editor loads the patched note, and one more
+      // keystroke lands in the body.
+      const second = renderHook(() => useNoteEditor(patched), { wrapper });
+      expect(second.result.current.model.draft.title).toBe('Roof repair — Ellis');
+      act(() => {
+        second.result.current.edit({ body: 'Ellis quoted nine hundred.' });
+      });
+      await act(() => vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 20_000));
+      await waitFor(() => {
+        expect(second.result.current.model.state).toBe('queued');
+      });
+    });
+
+    // One queued PATCH, carrying both edits at the version the note was loaded at.
+    expect(await queuedEditBody(NOTE.id)).toEqual({
+      version: NOTE.version,
+      title: 'Roof repair — Ellis',
+      body: 'Ellis quoted nine hundred.',
+    });
   });
 });

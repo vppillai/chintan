@@ -4,8 +4,8 @@ import { useEffect, type ReactNode } from 'react';
  * The bar that appears while things are selected: how many, select all, the
  * actions, Cancel — and one line beneath for what the last action did.
  *
- * Sticky to the foot of the scrolling region, like the note screen's action
- * bar, so it sits directly above the tab bar wherever the list is scrolled
+ * Sticky to the foot of the scrolling region, like the note screen's Details
+ * sheet, so it sits directly above the tab bar wherever the list is scrolled
  * to. It used to be a card at the *end* of the list, which on a phone with
  * forty notes was six thousand pixels below the row that had just been
  * selected (QA Q6). Sticky rather than fixed for the reason every other shell

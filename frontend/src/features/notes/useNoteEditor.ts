@@ -8,12 +8,14 @@ import type { NoteDetailWire } from '@/api/schema.ts';
 import { enqueueReplacing } from '@/offline/queue.ts';
 import {
   clearQueuedEdit,
+  queuedEditBody,
   queuedEditFor,
   queuedEditId,
   queuedEditKey,
   type QueuedEdit,
 } from '@/offline/queuedEdits.ts';
 import { OFFLINE_QUEUE_KEY } from '@/offline/useOfflineQueue.ts';
+import { useOnline } from '@/hooks/useOnline.ts';
 
 import {
   additionTo,
@@ -21,6 +23,7 @@ import {
   APPEND_WAIT_LIMIT,
   applyEdit,
   AUTOSAVE_DELAY_MS,
+  draftFields,
   editorReducer,
   hasUnsavedWork,
   initialEditor,
@@ -48,6 +51,29 @@ function draftFrom(note: NoteDetailWire): NoteDraft {
     // The mode is only known from a cleaned view that exists; with none, the
     // draft leaves it unset and nothing is sent until the user picks one.
     ...(note.cleaned?.mode ? { cleaned_mode: note.cleaned.mode } : {}),
+  };
+}
+
+/**
+ * `base` with the draft's text and settings over it: the note as the caches
+ * should show it once the draft has been sent — or queued, since a note
+ * reopened on the device must read as the device last left it.
+ */
+function withDraft(base: NoteDetailWire, draft: NoteDraft): NoteDetailWire {
+  // `''` means "inherits the default", which the wire spells as absence.
+  const { language: _previous, ...rest } = base;
+  return {
+    ...rest,
+    title: draft.title,
+    body: draft.body,
+    aliases: draft.aliases,
+    tags: draft.tags,
+    ...(draft.language ? { language: draft.language } : {}),
+    // The list row the PATCH answers with may not carry these; the toggles
+    // must not flip back to what the cache held before the save.
+    ...(draft.auto_clean !== undefined ? { auto_clean: draft.auto_clean } : {}),
+    ...(draft.verbatim !== undefined ? { verbatim: draft.verbatim } : {}),
+    ...(draft.kind !== undefined ? { kind: draft.kind } : {}),
   };
 }
 
@@ -187,6 +213,38 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
    */
   const saveRef = useRef<() => Promise<void>>(async () => {});
 
+  /*
+   * What the device still owes the server for this note.
+   *
+   * `networkMode: 'always'` because it is a local read — the whole question is
+   * what is on this device — and `staleTime: 0` because the flush changes the
+   * answer from outside this component and invalidates this key when it does.
+   */
+  const queued = useQuery({
+    queryKey: queuedEditKey(note?.id ?? ''),
+    queryFn: (): Promise<QueuedEdit | null> => queuedEditFor(note?.id ?? ''),
+    enabled: Boolean(note),
+    networkMode: 'always',
+    staleTime: 0,
+    retry: false,
+  });
+
+  /**
+   * Nothing is owed to the server for this note any more: a direct save
+   * landed, or the user took the server's copy. The queue's entry goes, the
+   * editor's read of it is seeded rather than refetched (between the delete
+   * and a refetch `reconcileQueued` would flip "Saved" back to the old
+   * failure), and the offline banner is told the depth changed — its query
+   * polls slowly and only reacts to reconnect and focus, so without this it
+   * went on saying "waiting to sync" over an edit the server had.
+   */
+  const forgetQueued = useCallback(async () => {
+    if (!note) return;
+    await clearQueuedEdit(note.id).catch(() => {});
+    queryClient.setQueryData(queuedEditKey(note.id), null);
+    void queryClient.invalidateQueries({ queryKey: OFFLINE_QUEUE_KEY });
+  }, [note, queryClient]);
+
   useEffect(() => {
     if (!note) return;
     if (loadedId.current !== note.id) {
@@ -241,14 +299,11 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
 
     try {
       const stored = await api.updateNote(note.id, body);
-      /*
-       * A direct save supersedes anything the queue was still holding for this
-       * note. Leaving a dead entry behind would let `reconcileQueued` flip the
-       * screen from "Saved" back to the old failure the moment it re-read the
-       * queue.
-       */
-      await clearQueuedEdit(note.id).catch(() => {});
-      queryClient.setQueryData(queuedEditKey(note.id), null);
+      // A direct save supersedes anything the queue was still holding for
+      // this note — a retired entry included, once Keep my edits re-sent it.
+      // Only when something is (or may be) held: a plain autosave must not
+      // invalidate the offline banner's query for nothing.
+      if (queued.data !== null) await forgetQueued();
       /*
        * What the server now holds, written into the caches this screen reads
        * from next time. The response is a list row — no body — so the text is
@@ -257,20 +312,8 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
        * note reopened within `staleTime` showed the pre-edit body and its
        * next save lost a version check to the user's own edit.
        */
-      const { language: _previous, ...base } = { ...note, ...stored };
       recordSavedNote(queryClient, {
-        ...base,
-        title: attempted.title,
-        body: attempted.body,
-        aliases: attempted.aliases,
-        tags: attempted.tags,
-        // `''` means "inherits the default", which the wire spells as absence.
-        ...(attempted.language ? { language: attempted.language } : {}),
-        // The list row the PATCH answers with may not carry it; the toggle
-        // must not flip back to what the cache held before the save.
-        ...(attempted.auto_clean !== undefined ? { auto_clean: attempted.auto_clean } : {}),
-        ...(attempted.verbatim !== undefined ? { verbatim: attempted.verbatim } : {}),
-        ...(attempted.kind !== undefined ? { kind: attempted.kind } : {}),
+        ...withDraft({ ...note, ...stored }, attempted),
         ...(note.captures ? { captures: note.captures } : {}),
       });
       // The version is the server's, not `current.version + 1`. The two agree
@@ -298,11 +341,28 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
        */
       if (error instanceof ApiError && error.isOffline) {
         try {
+          /*
+           * Over what the queue already holds, field by field. The PATCH
+           * names only what differs from the server's copy, and after the
+           * caches below are patched that copy is the queued text: a
+           * keystroke on a reopened note would otherwise replace a queued
+           * title-and-body with the body alone (review 2026-10-01, FE-1).
+           */
+          const held = await queuedEditBody(note.id);
           await enqueueReplacing({
             id: queuedEditId(note.id),
             kind: 'updateNote',
-            payload: { noteId: note.id, body },
+            payload: { noteId: note.id, body: { ...held, ...body } },
           });
+          /*
+           * The caches this screen reads from next time, as a landed save
+           * patches them — at the same version, since the server has not
+           * seen it. Without this the note reopened offline showed the
+           * pre-edit body under "Saved on this device — will sync", and the
+           * next keystroke queued that body plus one character over the
+           * edit (FE-1).
+           */
+          recordSavedNote(queryClient, withDraft(note, attempted));
           // Seeded rather than invalidated: between the write and a refetch the
           // query would still answer "nothing queued", and the screen would
           // read "Saved" for an edit the server has never seen.
@@ -398,7 +458,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
         message: error instanceof ApiError ? error.userMessage : 'Could not save.',
       });
     }
-  }, [api, commit, note, queryClient]);
+  }, [api, commit, forgetQueued, note, queryClient, queued.data]);
 
   /**
    * The serialised entry point: at most one `performSave` on the wire.
@@ -510,20 +570,57 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
   }, [flush]);
 
   /*
-   * What the device still owes the server for this note.
+   * A queued edit the server refused is shown as what it is, with its text.
    *
-   * `networkMode: 'always'` because it is a local read — the whole question is
-   * what is on this device — and `staleTime: 0` because the flush changes the
-   * answer from outside this component and invalidates this key when it does.
+   * The flush retires an entry answered 409 — the note moved on before the
+   * queue reached it — and until now nothing read the retired text back: the
+   * screen said "That edit did not save" over a body that did not contain
+   * it, and "Try again" on a reopened note sent an empty PATCH and reported
+   * "Saved" (review 2026-10-01, FE-7). Here the queued fields are read back
+   * as my side and the server's copy fetched as theirs, and the ordinary
+   * conflict prompt offers Keep my edits and Use the newer version. When the
+   * server has not in fact moved — the attempts ran out on something
+   * transient — there is nothing to ask: my side is re-sent on its version.
+   * Only online, since theirs has to be fetched, and only from a state with
+   * nothing live of its own; a dirty draft's next save meets the 409 itself.
    */
-  const queued = useQuery({
-    queryKey: queuedEditKey(note?.id ?? ''),
-    queryFn: (): Promise<QueuedEdit | null> => queuedEditFor(note?.id ?? ''),
-    enabled: Boolean(note),
-    networkMode: 'always',
-    staleTime: 0,
-    retry: false,
-  });
+  const online = useOnline();
+  const dead = queued.data?.dead ?? false;
+  useEffect(() => {
+    if (!note || !dead || !online) return;
+    const { state } = latest.current;
+    if (state !== 'clean' && state !== 'saved' && state !== 'queued' && state !== 'error') return;
+    let gone = false;
+    void (async () => {
+      const held = await queuedEditBody(note.id);
+      const theirs = held ? await api.getNote(note.id).catch(() => null) : null;
+      if (gone || !held || !theirs) return;
+      const current = latest.current;
+      commit({
+        type: 'conflict',
+        draft: { ...current.draft, ...draftFields(held) },
+        theirs: draftFrom(theirs),
+        version: theirs.version,
+        message: 'This note changed somewhere else while you were editing.',
+        addition: additionTo(current.saved.body, theirs.body),
+        recording:
+          theirs.captures?.some(
+            (capture) => capture.status === 'appended' && !knownCaptures.current.has(capture.id),
+          ) ?? false,
+      });
+      if (theirs.version <= held.version) {
+        // One shot: the entry is forgotten and the dirty draft owns the text,
+        // so an edit the server refuses on its merits (400, 413, 422) shows
+        // its error with Try again rather than being re-sent on every visit.
+        await forgetQueued();
+        commit({ type: 'keepMine' });
+        void saveRef.current();
+      }
+    })();
+    return () => {
+      gone = true;
+    };
+  }, [note, dead, online, api, commit, forgetQueued]);
 
   return {
     // Derived at the point of use, never copied into the reducer. A second copy
@@ -537,7 +634,8 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     // sends nothing — the same-tick hazard `edit()` guards against.
     takeTheirs: useCallback(() => {
       commit({ type: 'takeTheirs' });
-    }, [commit]),
+      void forgetQueued();
+    }, [commit, forgetQueued]),
     keepMine: useCallback(() => {
       commit({ type: 'keepMine' });
     }, [commit]),

@@ -109,6 +109,50 @@ test('the Details sheet keeps Close in reach while its content scrolls', async (
   await expect(close).toBeInViewport();
 });
 
+/**
+ * The sheet is a dialog: Escape closes it from wherever focus is, and focus
+ * goes back to the ⋮ that opened it. Live QA on PR #212 found no Escape
+ * handler at all (qa-r8-followups-live.md F1; review 2026-10-01, FE-3).
+ */
+for (const sheet of ['Details', 'Share'] as const) {
+  test(`Escape closes the ${sheet} sheet from its first control, its heading and the page, and hands focus back to the ⋮`, async ({
+    page,
+  }) => {
+    await page.goto('/notes/roof-repair');
+    await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+    const menu = page.getByRole('button', { name: 'Note actions' });
+    const dialog = page.getByRole('dialog', { name: sheet });
+    const first =
+      sheet === 'Details'
+        ? page.getByRole('combobox', { name: 'Transcription language' })
+        : page.getByRole('button', { name: 'Copy note', exact: true });
+
+    for (const where of ['control', 'heading', 'page'] as const) {
+      await noteAction(page, sheet);
+      await expect(dialog).toBeVisible();
+      await expect(dialog).toHaveAttribute('aria-modal', 'true');
+      if (where === 'control') await first.focus();
+      else if (where === 'heading') {
+        await page.getByRole('heading', { name: sheet }).focus();
+        // The heading is not a control: Shift+Tab from it stays in the sheet
+        // (its last control), not the note's textarea behind (review of #214).
+        await page.keyboard.press('Shift+Tab');
+        await expect(dialog.locator(':focus')).toHaveCount(1);
+        await page.getByRole('heading', { name: sheet }).focus();
+      } else {
+        // Off the sheet altogether, as a tap on the note behind leaves it.
+        await page.evaluate(() => {
+          (document.activeElement as HTMLElement | null)?.blur();
+        });
+        await expect(page.locator('body')).toBeFocused();
+      }
+      await page.keyboard.press('Escape');
+      await expect(dialog).toHaveCount(0);
+      await expect(menu).toBeFocused();
+    }
+  });
+}
+
 test('the Details head stays put while only the body scrolls, and nothing shows above it', async ({
   page,
 }) => {

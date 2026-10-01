@@ -122,6 +122,15 @@ export default defineConfig(({ mode }) => {
       assetsDir: 'assets',
       sourcemap: mode !== 'production',
       target: 'es2022',
+      /*
+       * Two shared modules under a kilobyte (`YouBackLink`, `costNote`) come
+       * out as chunks of their own: two requests for 650 bytes, each shared by
+       * two lazy screens. Accepted. Rolldown's `codeSplitting.minSize` was
+       * tried and left them as they were while splitting `jsx-runtime` out of
+       * `routes` into a 9 kB chunk every launch would fetch (review
+       * 2026-10-01, FE-2). The main chunk's size is held by
+       * scripts/check-bundle.mjs, CI's step after the build.
+       */
     },
     server: {
       port: 5173,

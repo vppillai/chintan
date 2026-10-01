@@ -254,8 +254,9 @@ async function flushOnce(run: MutationRunner): Promise<FlushResult> {
  * and that version never changes — so a 409 was once retried on every flush
  * until the attempt budget ran out, eight guaranteed conflicts for an outcome
  * settled at the first. It is the same shape as replaying an expired presigned
- * URL: repeating a request that cannot change. The edit is kept and surfaced so
- * the user can reconcile it; it is simply not sent again.
+ * URL: repeating a request that cannot change. The edit is kept, and the note
+ * editor reads it back and shows it as the conflict it is — Keep my edits or
+ * Use the newer version (`useNoteEditor`); it is simply not sent again as is.
  */
 const TERMINAL_STATUSES: ReadonlySet<number> = new Set([400, 403, 404, 409, 413, 422]);
 
