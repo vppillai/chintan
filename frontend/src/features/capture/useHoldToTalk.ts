@@ -373,6 +373,9 @@ export function useHoldToTalk({
       if (event.pointerId === pointerId.current) interrupt();
     },
     onLostPointerCapture: (event) => {
+      // Only the disc's own capture: a child losing its says nothing about
+      // ours, as the swipe and drag hooks hold (review 2026-10-01, FE-5).
+      if (event.target !== event.currentTarget) return;
       if (event.pointerId === pointerId.current) interrupt();
     },
     /*
