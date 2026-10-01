@@ -51,7 +51,7 @@ gh run watch   # the Staging job: `rolled back: chintan-worker-… live -> versi
 
 | Date | Run | Result |
 |---|---|---|
-| 2026-10-01 | — | mechanism added (PR10-5); first dispatch is the owner's, after merge — record its run id and the `rolled back:` lines here |
+| 2026-10-01 | 36928400126 | staging deployed, health and ready smokes passed, the worker smoke failed on request; `rolled back: chintan-api-dev-staging live -> version 112` and `rolled back: chintan-worker-dev-staging live -> version 112` four seconds later; the production job was skipped and Deploy Frontend did not run |
 
 ## Account state, dated
 
