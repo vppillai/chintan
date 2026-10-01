@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { RouterProvider, createMemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { CleanedWire, NoteDetailWire } from '@/api/schema.ts';
+import type { CaptureWire, CleanedWire, NoteDetailWire } from '@/api/schema.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { NoteDetailScreen } from './NoteDetailScreen.tsx';
@@ -96,6 +96,10 @@ function server(initial: NoteDetailWire = NOTE): Server {
       state.gets += 1;
       return json(state.note);
     }
+    // The open note's filing poll asks after each moving capture on its own.
+    const capture = /\/v1\/captures\/([^/]+)$/.exec(url.pathname);
+    const held = capture && state.note.captures?.find((item) => item.id === capture[1]);
+    if (held) return json(held);
     return json({ items: [] });
   });
   const router = createMemoryRouter([{ path: '/notes/:id', Component: NoteDetailScreen }], {
@@ -184,6 +188,35 @@ describe('the Cleaned tab', () => {
     await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
     await waitFor(() => {
       expect(screen.queryByText(/the note changed since/i)).toBeNull();
+      expect(screen.getByText(/generated just now/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'Regenerate' })).toBeEnabled();
+  });
+
+  it('Regenerate lands while a recording is filing into the note', async () => {
+    /*
+     * The filing poll rewrites the note every 1.5 s. The rewrite's poll was
+     * a TanStack refetchInterval of 2 s, which restarts on every update to
+     * the query, so it never fired and "Regenerating…" stayed up for the
+     * minute (R8-F8b).
+     */
+    const filing: CaptureWire = {
+      id: 'cap-9',
+      status: 'transcribing',
+      created_at: new Date().toISOString(),
+      version: 1,
+      note_id: NOTE.id,
+      duration_ms: 3_000,
+      has_peaks: false,
+      has_segments: false,
+    };
+    const user = userEvent.setup();
+    server({ ...NOTE, cleaned: VIEW, captures: [filing] });
+    await screen.findByText(/generated 3 minutes ago/i);
+
+    await user.click(screen.getByRole('button', { name: 'Regenerate' }));
+    await act(() => vi.advanceTimersByTimeAsync(3 * CLEAN_POLL_MS));
+    await waitFor(() => {
       expect(screen.getByText(/generated just now/i)).toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: 'Regenerate' })).toBeEnabled();

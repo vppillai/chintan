@@ -5,6 +5,7 @@
  */
 
 import {
+  focusManager,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -13,6 +14,7 @@ import {
   type QueryClient,
   type QueryKey,
 } from '@tanstack/react-query';
+import { useEffect } from 'react';
 
 import { cacheNoteDetail, cacheNoteList, forgetNote } from '@/offline/notesCache.ts';
 
@@ -219,24 +221,45 @@ export function useNote(noteId: string | undefined) {
 }
 
 /**
- * The open note asked for again on a cadence of the caller's, while the
- * caller waits for something only a fresh read can show — the Cleaned view's
- * rewrite, which a 202 promises and the note's `cleaned` later carries.
- * `every` is null when there is nothing to wait for.
+ * The open note asked for again while the caller waits for something only a
+ * fresh read can show — a rewrite or a tidy, which a 202 promises and the
+ * note's `cleaned` later carries. `ladder` gives the next delay for the time
+ * since `since`, or false to stop; it must be a module-level function, as a
+ * new one each render restarts the timer. `since` is null when there is
+ * nothing to wait for.
  *
- * A second observer of the one detail query, not a timer of its own: the
- * answers land where the screen already reads, a poll already in flight is
- * joined rather than doubled, and TanStack stops asking while the app is in
- * the background. The `setInterval` this replaced kept firing into a
- * pocketed phone, every answer rewriting the device's copy.
+ * A timer of its own, not a `refetchInterval`: TanStack restarts an
+ * observer's interval on every update to the query, and while a recording
+ * is filing its poll rewrites the note every 1.5 s, so a 2 s interval never
+ * fired and the rewrite never landed (R8-F8a, F8b). The refetch still goes
+ * through the detail query, so the answer lands where the screen reads and
+ * a read already in flight is joined; and a tick while the app is in the
+ * background asks nothing, so a pocketed phone is left alone.
  */
-export function usePollNote(noteId: string, every: (() => number | false) | null): void {
-  useQuery({
-    ...useNoteQueryOptions(noteId),
-    enabled: every !== null,
-    refetchInterval: () => every?.() ?? false,
-    refetchIntervalInBackground: false,
-  });
+export function usePollNote(
+  noteId: string,
+  since: number | null,
+  ladder: (elapsedMs: number) => number | false,
+): void {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (since === null) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const next = (): void => {
+      const delay = ladder(Date.now() - since);
+      if (delay === false) return;
+      timer = setTimeout(() => {
+        if (focusManager.isFocused()) {
+          void queryClient.refetchQueries({ queryKey: queryKeys.note(noteId), exact: true });
+        }
+        next();
+      }, delay);
+    };
+    next();
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [since, noteId, ladder, queryClient]);
 }
 
 /**

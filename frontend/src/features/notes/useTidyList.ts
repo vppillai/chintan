@@ -1,8 +1,8 @@
-import { focusManager, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
-import { queryKeys } from '@/api/queries.ts';
+import { queryKeys, usePollNote } from '@/api/queries.ts';
 import type { CleanedWire, NoteDetailWire } from '@/api/schema.ts';
 import { showToast } from '@/components/Toast.tsx';
 
@@ -140,31 +140,7 @@ export function useApplyTidy(note: NoteDetailWire, editor: NoteEditor): void {
     };
   }, [note.id, saveNow]);
 
-  /*
-   * The note asked for again on the `cleanPollInterval` ladder. A timer of
-   * its own rather than `usePollNote`: TanStack restarts an observer's
-   * `refetchInterval` on every update to the query, and while a recording is
-   * filing its poll rewrites the note every 1.5 s, so a 2 s interval never
-   * fired and the tidy never landed.
-   */
-  useEffect(() => {
-    if (!entry) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const next = (): void => {
-      const delay = cleanPollInterval(Date.now() - entry.since);
-      if (delay === false) return;
-      timer = setTimeout(() => {
-        if (focusManager.isFocused()) {
-          void queryClient.refetchQueries({ queryKey: queryKeys.note(note.id), exact: true });
-        }
-        next();
-      }, delay);
-    };
-    next();
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [entry, note.id, queryClient]);
+  usePollNote(note.id, entry?.since ?? null, cleanPollInterval);
 
   useEffect(() => {
     // Once only: an effect run twice (StrictMode, a re-render) sees the entry gone.
