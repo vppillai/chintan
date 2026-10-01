@@ -98,6 +98,9 @@ var (
 // takes back one that a move made and then could not use.
 type NoteCreator interface {
 	CreateNote(ctx context.Context, userID, title string, aliases []string) (model.NoteIndex, error)
+	// CreateNoteOnce creates spec (its ID and Title) unless a note with that
+	// id exists, which it returns instead. See NotesService.CreateNoteOnce.
+	CreateNoteOnce(ctx context.Context, userID string, spec model.NoteIndex) (model.NoteIndex, error)
 	// DiscardNote hard-deletes a note nothing references: its body, its
 	// metadata and its index row, with no capture cascade. See
 	// NotesService.DiscardNote for why the cascade is left out.
@@ -395,11 +398,24 @@ func (s *CaptureService) IngestAudio(ctx context.Context, userID string, req Cap
 	if err := s.objects.PutTagged(ctx, stored.AudioKey, body, contentType, upload.CaptureAudioTags(settings.RetentionDays)); err != nil {
 		// Best effort: a row with nothing behind it would otherwise sit at
 		// uploaded until the stuck-capture sweep fails it.
-		_ = s.store.DeleteCapture(ctx, userID, stored.ID)
+		s.discardEmptyRow(ctx, userID, stored.ID)
 		return model.CaptureIndex{}, fmt.Errorf("failed to store audio: %w", err)
 	}
 	logCaptureCreated(ctx, stored, contentType)
 	return stored, nil
+}
+
+// discardEmptyRow is the compensation for an object write that failed after
+// its row landed. A delete that fails too is said aloud (R7-13's standard):
+// silently, the row sits at uploaded until the stuck-capture sweep fails it,
+// and the sweep's refusal of a retry (R7-11) then has nothing in the logs
+// to explain it.
+func (s *CaptureService) discardEmptyRow(ctx context.Context, userID, captureID string) {
+	if err := s.store.DeleteCapture(ctx, userID, captureID); err != nil {
+		obs.Log(ctx).Warn("could not remove the capture row after its object write failed; the stuck-capture sweep will fail it",
+			slog.String("capture_id", captureID),
+			slog.String("error", err.Error()))
+	}
 }
 
 // IngestText is POST /v1/inbox/text: a capture that arrives already
@@ -431,7 +447,7 @@ func (s *CaptureService) IngestText(ctx context.Context, userID string, req Capt
 		return model.CaptureIndex{}, fmt.Errorf("failed to store capture: %w", err)
 	}
 	if err := s.objects.Put(ctx, rawKey, []byte(text), "text/plain"); err != nil {
-		_ = s.store.DeleteCapture(ctx, userID, stored.ID)
+		s.discardEmptyRow(ctx, userID, stored.ID)
 		return model.CaptureIndex{}, fmt.Errorf("failed to store text: %w", err)
 	}
 	logCaptureCreated(ctx, stored, "text/plain")
@@ -640,7 +656,7 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 		if s.notes == nil {
 			return nil, ErrNoteCreationUnavailable
 		}
-		note, err := s.notes.CreateNote(ctx, userID, newNoteTitle, nil)
+		note, err := s.noteForChosenTitle(ctx, userID, captureID, newNoteTitle)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create note: %w", err)
 		}
@@ -667,6 +683,39 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 		return nil, err
 	}
 	return &updated, nil
+}
+
+// noteForChosenTitle is the note a person's new title names for a capture.
+// It is made under the capture's own note id, as routing makes one (R7-21):
+// a crash or a 5xx between the create and the row write, which the
+// idempotency layer does not replay, used to leave an empty orphan note per
+// attempt, where the repeat now finds the first attempt's note. The id is
+// reused only when the note under it is genuinely this choice's: a capture
+// is often at needs_target precisely because its routed note was archived
+// (route.go), and refusing the title then was a dead end; and an active
+// note under another title would silently replace the title typed. Both
+// fall back to a fresh-id note, the path before R9 PR9-26.
+func (s *CaptureService) noteForChosenTitle(ctx context.Context, userID, captureID, title string) (model.NoteIndex, error) {
+	own, err := s.store.GetNote(ctx, userID, RoutedNoteID(captureID))
+	switch {
+	case errors.Is(err, repository.ErrNotFound):
+		return s.notes.CreateNoteOnce(ctx, userID, model.NoteIndex{ID: RoutedNoteID(captureID), Title: title})
+	case err != nil:
+		return model.NoteIndex{}, err
+	case NoteIsActive(own) && own.Title == title:
+		return own, nil
+	default:
+		return s.notes.CreateNote(ctx, userID, title, nil)
+	}
+}
+
+// RoutedNoteID is the id of the note made for a capture that names no
+// existing one — by routing, or by a person choosing a new title: the
+// capture's own id under the note prefix, so a retry of the same capture
+// names the same note, and, like any note id, it sorts by when the capture
+// was made.
+func RoutedNoteID(captureID string) string {
+	return "note_" + strings.TrimPrefix(captureID, "c_")
 }
 
 func (s *CaptureService) invokeWorker(ctx context.Context, userID, captureID, reason string) error {

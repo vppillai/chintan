@@ -222,7 +222,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 		return finish(outcomeDeduped)
 	}
 
-	spec := model.NoteIndex{ID: routedNoteID(capture.ID), Title: title}
+	spec := model.NoteIndex{ID: service.RoutedNoteID(capture.ID), Title: title}
 	if decision.Checklist {
 		// The router heard a list — "add milk to the shopping list" with no
 		// such note — so the note is a checklist before the capture points
@@ -276,14 +276,6 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	capture.TargetSource = model.TargetSourceRouter
 	capture.Status = model.StatusTranscribed
 	return finish(outcome)
-}
-
-// routedNoteID is the id of the note routing creates for a capture: the
-// capture's own id under the note prefix, so a retry of the same capture
-// names the same note, and, like any note id, it sorts by when the capture
-// was made.
-func routedNoteID(captureID string) string {
-	return "note_" + strings.TrimPrefix(captureID, "c_")
 }
 
 // errRouteCandidates marks a routing failure that happened before the router

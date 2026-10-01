@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
+	"github.com/vppillai/chintan/backend/internal/llm"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
 )
@@ -153,24 +153,12 @@ func uniqueFilename(taken map[string]int, name string) string {
 const maxFilenameSlugRunes = 60
 
 // filenameSlug folds a note title into something every filesystem accepts:
-// lowercase letters, digits and combining marks of any script — a vowel sign
-// or virama is part of the syllable it follows, and dropping it mangles every
-// Indic title — with runs of anything else collapsed to one hyphen, bounded,
-// never empty.
+// its words (llm.Words: lowercase letters, digits and combining marks of any
+// script — a vowel sign or virama is part of the syllable it follows, and
+// dropping it mangles every Indic title) joined by hyphens, bounded, never
+// empty.
 func filenameSlug(title string) string {
-	var b strings.Builder
-	hyphen := true // suppress a leading one
-	for _, r := range strings.ToLower(title) {
-		switch {
-		case unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r):
-			b.WriteRune(r)
-			hyphen = false
-		case !hyphen:
-			b.WriteByte('-')
-			hyphen = true
-		}
-	}
-	slug := strings.TrimRight(b.String(), "-")
+	slug := strings.Join(llm.Words(title), "-")
 	if runes := []rune(slug); len(runes) > maxFilenameSlugRunes {
 		slug = strings.TrimRight(string(runes[:maxFilenameSlugRunes]), "-")
 	}

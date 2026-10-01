@@ -58,6 +58,11 @@ type objectRecord struct {
 	Key      string `json:"key"`
 	Size     int64  `json:"size"`
 	SHA256   string `json:"sha256"`
+	// Tags is the object's tag set, which restore puts back: the retention
+	// lifecycle rules match on them, so audio restored without its
+	// capture-audio tag would never expire (R9 PR9-27). A backup from
+	// before the field has none, and restores untagged as it always did.
+	Tags map[string]string `json:"tags,omitempty"`
 }
 
 type backupResult struct {
@@ -182,6 +187,10 @@ func runBackup(ctx context.Context, e *env, out string, explicitTenants []string
 			if err != nil {
 				return err
 			}
+			tags, err := e.Blobs.Tags(tctx, info.Key)
+			if err != nil {
+				return err
+			}
 			res.ObjectCount++
 			res.TotalBytes += n
 			return objects.writeLine(objectRecord{
@@ -189,6 +198,7 @@ func runBackup(ctx context.Context, e *env, out string, explicitTenants []string
 				Key:      info.Key,
 				Size:     n,
 				SHA256:   sum,
+				Tags:     tags,
 			})
 		})
 		if err != nil {

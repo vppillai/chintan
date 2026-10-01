@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/vppillai/chintan/backend/internal/obs"
 )
@@ -33,6 +35,17 @@ type restoreResult struct {
 	// Mismatches names every object whose bytes on disk disagree with the
 	// manifest. A non-empty list means nothing was restored.
 	Mismatches []string `json:"mismatches,omitempty"`
+	// Live lists the backup's tenants that already have rows or objects in
+	// the target, which the restore writes over. Writing over them needs
+	// --yes or a typed confirmation (R9 PR9-27).
+	Live []liveTenant `json:"live,omitempty"`
+}
+
+// liveTenant is one tenant of the backup with data in the target already.
+type liveTenant struct {
+	TenantID string `json:"tenant_id"`
+	Items    int    `json:"items"`
+	Objects  int    `json:"objects"`
 }
 
 func (r *restoreResult) human(w *lineWriter) {
@@ -50,6 +63,10 @@ func (r *restoreResult) human(w *lineWriter) {
 		return
 	}
 	w.printf("  verified %d objects (%s) against the manifest\n", r.ObjectsPlanned, humanBytes(r.BytesPlanned))
+	for _, l := range r.Live {
+		w.printf("  OVERWRITES live data: tenant %s has %d index items and %d objects in the target\n",
+			l.TenantID, l.Items, l.Objects)
+	}
 	if r.Apply {
 		w.printf("  restored %d index items and %d objects (%s)\n",
 			r.ItemsRestored, r.ObjectsRestored, humanBytes(r.BytesRestored))
@@ -62,9 +79,11 @@ func (r *restoreResult) human(w *lineWriter) {
 func cmdRestore(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.Reader) error {
 	var g globalFlags
 	var in string
+	var yes bool
 	fs := newFlagSet("restore", stderr)
 	g.register(fs, false, true)
 	fs.StringVar(&in, "in", "", "directory written by chintanctl backup (required)")
+	fs.BoolVar(&yes, "yes", false, "with --apply: write over a tenant's live data without the confirmation prompt")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -75,7 +94,7 @@ func cmdRestore(ctx context.Context, args []string, stdout, stderr io.Writer, st
 	if err != nil {
 		return err
 	}
-	res, resErr := runRestore(ctx, e, in, g.apply)
+	res, resErr := runRestore(ctx, e, in, g.apply, yes)
 	if res != nil {
 		if err := report(stdout, g.jsonOut, res); err != nil {
 			return err
@@ -102,7 +121,12 @@ var errManifestMismatch = errors.New("chintanctl: backup does not match its mani
 // is re-hashed and compared to its record. Only if all of that agrees does
 // anything get written. Hashing while uploading would be cheaper and useless —
 // by the time the mismatch was known the corruption would already be in S3.
-func runRestore(ctx context.Context, e *env, in string, apply bool) (*restoreResult, error) {
+//
+// A tenant with rows or objects in the target already is written over, which
+// a dry run lists and --apply does only with yes or the operator typing
+// "yes" at the prompt: until R9 PR9-27 --apply alone was enough, where erase
+// demands the tenant id typed.
+func runRestore(ctx context.Context, e *env, in string, apply, yes bool) (*restoreResult, error) {
 	headerBody, err := os.ReadFile(filepath.Join(in, backupHeaderName))
 	if err != nil {
 		return nil, fmt.Errorf("read %s (an interrupted backup has no header and cannot be restored): %w",
@@ -176,8 +200,17 @@ func runRestore(ctx context.Context, e *env, in string, apply bool) (*restoreRes
 	if len(res.Mismatches) > 0 {
 		return res, errManifestMismatch
 	}
+	if res.Live, err = liveTenants(ctx, e, itemsPath, objectsPath); err != nil {
+		return res, err
+	}
 	if !apply {
 		return res, nil
+	}
+	if len(res.Live) > 0 && !yes {
+		if err := confirmTyped(e.Stdin, e.Stdout, "", "yes",
+			fmt.Sprintf("write over the live data of %d tenant(s) in %s", len(res.Live), e.Target.Instance)); err != nil {
+			return res, err
+		}
 	}
 
 	err = forEachItem(itemsPath, func(it Item) error {
@@ -196,7 +229,7 @@ func runRestore(ctx context.Context, e *env, in string, apply bool) (*restoreRes
 		if err != nil {
 			return err
 		}
-		err = e.Blobs.Put(ctx, rec.Key, f, rec.Size, contentTypeFor(rec.Key))
+		err = e.Blobs.Put(ctx, rec.Key, f, rec.Size, contentTypeFor(rec.Key), rec.Tags)
 		_ = f.Close()
 		if err != nil {
 			return err
@@ -215,6 +248,50 @@ func runRestore(ctx context.Context, e *env, in string, apply bool) (*restoreRes
 		slog.Int64("bytes", res.BytesRestored),
 	)
 	return res, nil
+}
+
+// liveTenants counts, per tenant of the backup, the rows and objects the
+// target holds for it already, in tenant order. The backup's tenants are
+// read off its own manifests, so a backup of one tenant never reports the
+// others.
+func liveTenants(ctx context.Context, e *env, itemsPath, objectsPath string) ([]liveTenant, error) {
+	seen := map[string]bool{}
+	var tenants []string
+	note := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			tenants = append(tenants, id)
+		}
+	}
+	if err := forEachItem(itemsPath, func(it Item) error {
+		note(strings.TrimPrefix(it.PK(), tenantPK("")))
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := forEachObjectRecord(objectsPath, func(rec objectRecord) error {
+		note(rec.TenantID)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	sort.Strings(tenants)
+
+	var live []liveTenant
+	for _, id := range tenants {
+		var l liveTenant
+		if err := e.Part.Scan(ctx, tenantPK(id), "", func(Item) error { l.Items++; return nil }); err != nil {
+			return nil, err
+		}
+		if err := e.Blobs.List(ctx, tenantPrefix(id), func(ObjectInfo) error { l.Objects++; return nil }); err != nil {
+			return nil, err
+		}
+		if l.Items+l.Objects > 0 {
+			l.TenantID = id
+			live = append(live, l)
+		}
+	}
+	return live, nil
 }
 
 func mustRel(key string) string {

@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/vppillai/chintan/backend/internal/upload"
 )
 
 func TestBackupRestoreRoundTripIsExact(t *testing.T) {
@@ -40,7 +42,7 @@ func TestBackupRestoreRoundTripIsExact(t *testing.T) {
 	}
 
 	dst, dstPart, dstBlobs := newTestEnv(nil)
-	restored, err := runRestore(ctx, dst, dir, true)
+	restored, err := runRestore(ctx, dst, dir, true, false)
 	if err != nil {
 		t.Fatalf("restore: %v", err)
 	}
@@ -87,7 +89,7 @@ func TestRestoreRefusesWhenAnObjectDoesNotMatchItsHash(t *testing.T) {
 	}
 
 	dst, dstPart, dstBlobs := newTestEnv(nil)
-	res, err := runRestore(ctx, dst, dir, true)
+	res, err := runRestore(ctx, dst, dir, true, false)
 	if !errors.Is(err, errManifestMismatch) {
 		t.Fatalf("restore error = %v, want errManifestMismatch", err)
 	}
@@ -121,7 +123,7 @@ func TestRestoreRefusesWhenTheManifestItselfWasEdited(t *testing.T) {
 	}
 
 	dst, dstPart, _ := newTestEnv(nil)
-	res, err := runRestore(ctx, dst, dir, true)
+	res, err := runRestore(ctx, dst, dir, true, false)
 	if !errors.Is(err, errManifestMismatch) {
 		t.Fatalf("restore error = %v, want errManifestMismatch", err)
 	}
@@ -136,7 +138,7 @@ func TestRestoreRefusesWhenTheManifestItselfWasEdited(t *testing.T) {
 func TestRestoreRefusesABackupWithNoHeader(t *testing.T) {
 	ctx := context.Background()
 	dst, _, _ := newTestEnv(nil)
-	if _, err := runRestore(ctx, dst, t.TempDir(), true); err == nil {
+	if _, err := runRestore(ctx, dst, t.TempDir(), true, false); err == nil {
 		t.Fatal("restore accepted a directory with no backup.json")
 	}
 }
@@ -152,7 +154,7 @@ func TestRestoreDryRunWritesNothing(t *testing.T) {
 	}
 
 	dst, dstPart, dstBlobs := newTestEnv(nil)
-	res, err := runRestore(ctx, dst, dir, false)
+	res, err := runRestore(ctx, dst, dir, false, false)
 	if err != nil {
 		t.Fatalf("dry run: %v", err)
 	}
@@ -164,5 +166,86 @@ func TestRestoreDryRunWritesNothing(t *testing.T) {
 	}
 	if dstPart.puts != 0 || dstBlobs.puts != 0 || dstPart.deletes != 0 || dstBlobs.deletes != 0 {
 		t.Errorf("dry run mutated the target")
+	}
+}
+
+// The lifecycle rules key on the object tags (capture-audio and its
+// retention tier), so a restore that dropped them would bring back audio
+// that never expires. The tags travel in the manifest and are put back.
+func TestRestorePutsTheObjectTagsBack(t *testing.T) {
+	ctx := context.Background()
+	src, srcPart, srcBlobs := newTestEnv(nil)
+	seedTenant(t, srcPart, srcBlobs, "tenantA")
+	key := "tenants/tenantA/captures/c1/audio.webm"
+	want := upload.CaptureAudioTags(30)
+	if err := srcBlobs.Put(ctx, key, strings.NewReader("OPUSOPUSOPUS"), 12, "audio/webm", want); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if _, err := runBackup(ctx, src, dir, nil); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+
+	dst, _, dstBlobs := newTestEnv(nil)
+	if _, err := runRestore(ctx, dst, dir, true, false); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if got := dstBlobs.store.Tags(key); !reflect.DeepEqual(got, want) {
+		t.Errorf("restored tags = %v, want %v", got, want)
+	}
+	if got := dstBlobs.store.Tags("tenants/tenantA/notes/n1/note.md"); len(got) != 0 {
+		t.Errorf("an untagged object came back tagged: %v", got)
+	}
+}
+
+// A target that already holds a tenant's data is written over only on
+// purpose: the dry run lists it, --apply alone stops at the prompt and
+// writes nothing, a typed "yes" or --yes goes ahead.
+func TestRestoreOverATenantWithLiveDataNeedsYes(t *testing.T) {
+	ctx := context.Background()
+	src, srcPart, srcBlobs := newTestEnv(nil)
+	seedTenant(t, srcPart, srcBlobs, "tenantA")
+	dir := t.TempDir()
+	if _, err := runBackup(ctx, src, dir, nil); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+
+	live := func(stdin string) (*env, *fakePartition, *fakeBlobs) {
+		dst, part, blobs := newTestEnv(strings.NewReader(stdin))
+		seedTenant(t, part, blobs, "tenantA")
+		return dst, part, blobs
+	}
+
+	dst, part, blobs := live("")
+	res, err := runRestore(ctx, dst, dir, false, false)
+	if err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	if want := []liveTenant{{TenantID: "tenantA", Items: 3, Objects: 7}}; !reflect.DeepEqual(res.Live, want) {
+		t.Errorf("dry run listed %+v as live, want %+v", res.Live, want)
+	}
+	if _, err := runRestore(ctx, dst, dir, true, false); err == nil {
+		t.Fatal("--apply over live data with no confirmation went ahead")
+	}
+	if part.puts != 0 || blobs.puts != 0 {
+		t.Errorf("a refused restore wrote %d items and %d objects", part.puts, blobs.puts)
+	}
+
+	dst, part, _ = live("yes\n")
+	if res, err = runRestore(ctx, dst, dir, true, false); err != nil || res.ItemsRestored == 0 {
+		t.Fatalf("typed yes: err = %v, restored %d items", err, res.ItemsRestored)
+	}
+	if part.puts != res.ItemsRestored {
+		t.Errorf("typed yes wrote %d items, reported %d", part.puts, res.ItemsRestored)
+	}
+
+	dst, _, _ = live("")
+	if _, err := runRestore(ctx, dst, dir, true, true); err != nil {
+		t.Fatalf("--yes: %v", err)
+	}
+
+	empty, _, _ := newTestEnv(nil)
+	if res, err := runRestore(ctx, empty, dir, true, false); err != nil || len(res.Live) != 0 {
+		t.Fatalf("an empty target needs no confirmation: err = %v, live = %+v", err, res.Live)
 	}
 }

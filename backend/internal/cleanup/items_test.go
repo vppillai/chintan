@@ -245,7 +245,7 @@ func TestItemsFromLinesMatchesTheSharedFixture(t *testing.T) {
 			body := strings.Split(tc.Body, "\n")
 			next := 0
 			for i, l := range cleanup.ParseLines(body) {
-				if strings.TrimSpace(body[i]) == "" {
+				if t := strings.TrimSpace(body[i]); t == "" || strings.HasPrefix(t, "<!--") {
 					continue
 				}
 				if next == len(tc.Items) {

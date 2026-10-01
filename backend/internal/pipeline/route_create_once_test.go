@@ -143,7 +143,7 @@ func TestARetryAfterTheOwnerArchivedTheHalfMadeNoteAsksForADestination(t *testin
 	if _, err := p.Run(ctx, "user1", "c_1"); !errors.Is(err, errInducedCrash) {
 		t.Fatalf("first run = %v, want the induced crash", err)
 	}
-	made, err := base.GetNote(ctx, "user1", routedNoteID("c_1"))
+	made, err := base.GetNote(ctx, "user1", service.RoutedNoteID("c_1"))
 	if err != nil {
 		t.Fatalf("the crashed attempt's note: %v", err)
 	}

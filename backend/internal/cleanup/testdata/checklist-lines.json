@@ -382,6 +382,22 @@
           "depth": 1
         }
       ]
+    },
+    {
+      "name": "a capture marker line is not an item, and does not cut a sub-item from its parent",
+      "body": "- [ ] Party\n<!-- chintan:capture:c_1 -->\n  - [ ] Plates",
+      "items": [
+        {
+          "text": "Party",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "Plates",
+          "done": false,
+          "depth": 1
+        }
+      ]
     }
   ]
 }

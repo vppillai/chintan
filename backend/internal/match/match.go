@@ -5,10 +5,10 @@
 package match
 
 import (
-	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/vppillai/chintan/backend/internal/llm"
 	"github.com/vppillai/chintan/backend/internal/model"
 )
 
@@ -20,8 +20,6 @@ const (
 	weightAlias   = 0.30
 	weightSnippet = 0.15
 )
-
-var nonLetters = regexp.MustCompile(`[^a-z]+`)
 
 // Candidate is a ranked note match for a vague description query.
 type Candidate struct {
@@ -119,16 +117,12 @@ func normalize(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
 
+// tokens are llm.Words. Until R9 this split on `[^a-z]+`: digits and every
+// other script were breaks, so "Q3 plan" tokenised as `plan` alone and a
+// Malayalam or Hindi title had no tokens at all, matching only as an exact
+// substring. Now `q3` is a token and so is every Indic word.
 func tokens(s string) []string {
-	s = normalize(s)
-	parts := nonLetters.Split(s, -1)
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
+	return llm.Words(s)
 }
 
 func tokenOverlap(queryTokens, textTokens []string) float64 {

@@ -386,8 +386,8 @@ func ParseLines(lines []string) []Line {
 
 // ItemsFromLines is the inverse of RenderItems: every two spaces of prefix
 // is a level, clamped as ParseLines clamps — one under the item before at
-// most, MaxDepth at most, top level with nothing above — and blank lines are
-// skipped. It reads a checklist body's lines too — a task-list line
+// most, MaxDepth at most, top level with nothing above — and blank lines and
+// capture markers are skipped. It reads a checklist body's lines too — a task-list line
 // (ParseLine) gives its box as Done, its indent, and its text without the
 // box — so the append and the Split up's checks see the body as items. A
 // line with no box takes its level from its leading spaces (a tab is not
@@ -401,6 +401,13 @@ func ItemsFromLines(text string) []Item {
 	var flat []leveled
 	prev := -1
 	for _, line := range strings.Split(text, "\n") {
+		// A capture marker (service.CaptureMarker: an HTML comment on a
+		// line of its own) is bookkeeping, not an item, and is skipped as
+		// ParseLines and the editor skip it. Until R9 it became an item and
+		// took the sub-item after it as its child.
+		if strings.HasPrefix(strings.TrimSpace(line), "<!--") {
+			continue
+		}
 		t, done, depth, ok := ParseLine(line)
 		if !ok {
 			t = strings.TrimLeft(line, " \t")
