@@ -396,14 +396,11 @@ describe('the cards', () => {
     expect(screen.queryByRole('heading', { name: 'Usage this month' })).toBeNull();
   });
 
-  it('leads to PTT from the Recording card, since nothing else in the app does (R4-16)', async () => {
+  it('has no PTT row: the record disc holds to talk, and /talk is gone (R8, F5 and F7)', async () => {
     mountSettings();
-    const row = await screen.findByRole('link', { name: /^PTT/ });
-    expect(row).toHaveAttribute('href', '/talk');
-    expect(row).toHaveTextContent('Hold to talk, release to send');
-    expect(row.closest('.you-card')).toBe(
-      screen.getByRole('heading', { name: 'Recording & transcription' }).closest('.you-card'),
-    );
+    await screen.findByRole('heading', { name: 'Recording & transcription' });
+    expect(screen.queryByRole('link', { name: /PTT/ })).toBeNull();
+    expect(document.querySelector('a[href="/talk"]')).toBeNull();
   });
 
   it('keeps one sentence of each footnote in view and the rest behind a native More', async () => {

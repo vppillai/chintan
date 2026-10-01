@@ -21,8 +21,6 @@ export const ROUTES = {
   /** What this month has cost. Reached from one row on You. */
   usage: '/usage',
   capture: '/capture',
-  /** Push-to-talk: one giant hold button, ready again the moment a recording is sent. */
-  talk: '/talk',
   /** Record straight into a note the user is already reading. */
   captureInto: (noteId: string) => `/capture?note=${encodeURIComponent(noteId)}`,
 } as const;
@@ -47,6 +45,10 @@ export const LEGACY_ROUTES: Record<string, string> = {
   '/notes': '/',
   '/archive': ROUTES.archive,
   '/search': '/',
+  // The PTT screen, gone since the tab-bar disc holds to talk (R8, F7). An
+  // installed app keeps its old "PTT" launcher shortcut until Chrome refreshes
+  // the manifest, which can take days; it lands on Home rather than Not Found.
+  '/talk': '/',
 };
 
 /**

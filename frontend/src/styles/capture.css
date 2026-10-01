@@ -58,7 +58,7 @@
   padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
 }
 
-/* A row drawn on its own — this device's upload on /talk or a note's Recordings tab — is its own tray. */
+/* A row drawn on its own — this device's upload on a note's Recordings tab — is its own tray. */
 .filing-row:not(.filing__tray .filing-row) {
   background-color: var(--color-notice);
   border-radius: var(--radius-lg);
@@ -778,13 +778,12 @@
 
 /*
  * The shell's "Recording — tap to return" row is for a microphone left open
- * on another screen. A hold on `/talk` is not that: the button says so, from
- * the press through the "Sent" beat that covers the stop. Without this the
- * row appeared above the bar for the length of every hold and shoved the
- * screen up under the thumb. Only for the hold itself, not the screen: a
- * recording that belongs elsewhere must still be stated on `/talk`, or a
- * press there would stand down with no word why.
+ * on another screen. A hold or a locked recording on the tab bar is not
+ * that: the bar says so, from the press through the "Sent" beat that covers
+ * the stop. Without this the row appeared above the bar for the length of
+ * every hold and shoved the screen up under the thumb, and two things would
+ * state one fact.
  */
-.app:has(.talk[data-phase='holding'], .talk[data-phase='sent']) .recording-indicator {
+.app:has(.tab-bar[data-hold], .tab-bar[data-notice='sent']) .recording-indicator {
   display: none;
 }

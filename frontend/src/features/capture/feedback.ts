@@ -75,3 +75,13 @@ export function stopFeedback(
 export function errorFeedback(options: FeedbackOptions = {}): void {
   if (options.haptics !== false) vibrate([80, 80, 80]);
 }
+
+/** A short tick as the hold locks: the finger may lift now. */
+export function lockFeedback(options: FeedbackOptions = {}): void {
+  if (options.haptics !== false) vibrate(20);
+}
+
+/** A longer buzz as the slide crosses the cancel line: the take is gone. */
+export function cancelFeedback(options: FeedbackOptions = {}): void {
+  if (options.haptics !== false) vibrate(60);
+}

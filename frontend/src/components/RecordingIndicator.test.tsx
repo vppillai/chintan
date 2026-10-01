@@ -78,20 +78,6 @@ describe('the microphone being open is never invisible', () => {
     expect(screen.queryByRole('button', { name: /tap to return/i })).toBeNull();
   });
 
-  it('still says so on /talk for a recording that belongs elsewhere, but not for an upload the screen already shows', async () => {
-    // A recording left running on the capture screen and a jump to /talk: a
-    // press there would stand down, and this row is the only word why. An
-    // upload is drawn by the screen's own row under the button, as on the library.
-    mount(['/talk']);
-    setCaptureState('recording');
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(screen.getByRole('button', { name: /recording — tap to return/i })).toBeInTheDocument();
-    setCaptureState('uploading');
-    expect(screen.queryByRole('button', { name: /tap to return/i })).toBeNull();
-  });
-
   it('stands aside on the note an upload is going into, where the banner shows it, but not on another note', async () => {
     // Send into a note returns to that note and its filing banner reads
     // "Uploading… N%" on every tab; this row above the bar said the same

@@ -1,75 +1,225 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { HOLD_ARM_MS, MIN_TALK_MS } from '@/features/capture/holdTiming.ts';
 import { INITIAL_CAPTURE } from '@/features/capture/machine.ts';
 import { useCaptureStore } from '@/features/capture/store.ts';
-import { TestProviders, testApiContext } from '@/test/providers.tsx';
+import {
+  captureState,
+  endHold,
+  fake,
+  mountBar,
+  resetHold,
+  speak,
+  spoken,
+  touch,
+  wait,
+  where,
+} from '@/test/hold.tsx';
 
 import { PATHS } from './Icon.tsx';
-import { RecordButton } from './RecordButton.tsx';
 
-function Where() {
-  const { pathname, search } = useLocation();
-  return <output>{pathname + search}</output>;
+beforeEach(resetHold);
+afterEach(endHold);
+
+const disc = () => screen.getByRole('button', { name: /^(Record|Record into this note|Send recording)$/ });
+
+/** Holds the disc past the arm and long enough to send, with audio. */
+async function holdAndSpeak(): Promise<HTMLElement> {
+  const button = disc();
+  fireEvent.pointerDown(button, { ...touch, clientX: 200, clientY: 800 });
+  await wait(HOLD_ARM_MS + 50);
+  expect(captureState()).toBe('recording');
+  await wait(MIN_TALK_MS + 100);
+  speak();
+  return button;
 }
-
-function mount(noteId: string | null = null) {
-  return render(
-    <TestProviders api={testApiContext(undefined)}>
-      <MemoryRouter initialEntries={['/']}>
-        <RecordButton noteId={noteId} />
-        <Routes>
-          <Route path="*" element={<Where />} />
-        </Routes>
-      </MemoryRouter>
-    </TestProviders>,
-  );
-}
-
-const where = () => document.querySelector('output')?.textContent;
-
-afterEach(() => {
-  vi.useRealTimers();
-  useCaptureStore.setState({ model: INITIAL_CAPTURE });
-});
 
 /**
- * A plain Record control: a tap opens the recorder, and nothing else happens
- * on it. It held to talk from #85 to owner feedback 2026-09-27 ("I want it
- * only on the widget, not the main app"); the hold is `/talk`'s alone now.
+ * The disc: a tap opens the recorder, a hold is push-to-talk (R8, F5). It
+ * was tap-only from owner feedback 2026-09-27 to 2026-09-30, when the owner
+ * asked for WhatsApp's hold on it and for the PTT screen to go.
  */
 describe('the record button', () => {
-  it('is named Record, wears the microphone, and opens the capture screen on a tap', async () => {
-    mount();
+  it('is named Record, wears the microphone, says how to hold, and opens the capture screen on a tap', async () => {
+    mountBar();
     const record = screen.getByRole('button', { name: 'Record' });
     expect(record.querySelector('svg path')).toHaveAttribute('d', PATHS.mic);
     expect(record).toHaveTextContent('Record');
-    await userEvent.click(record);
-    expect(where()).toBe('/capture');
-  });
-
-  it('opens the recorder into the open note, and is named for it', async () => {
-    mount('roof-repair');
-    await userEvent.click(screen.getByRole('button', { name: 'Record into this note' }));
-    expect(where()).toBe('/capture?note=roof-repair');
-  });
-
-  it('does not hold to talk: a long press never touches the microphone, and is still a tap', () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    mount();
-    const record = screen.getByRole('button', { name: 'Record' });
-    fireEvent.pointerDown(record, { pointerId: 1, pointerType: 'touch', button: 0 });
-    act(() => {
-      vi.advanceTimersByTime(2_000);
-    });
-    // Nothing above the bar, nothing recording, and the name did not change.
-    expect(useCaptureStore.getState().model.state).toBe('idle');
-    expect(document.querySelector('[role="status"]')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Record' })).not.toHaveAttribute('data-holding');
-    fireEvent.pointerUp(record, { pointerId: 1, pointerType: 'touch' });
+    expect(record).toHaveAttribute(
+      'aria-description',
+      'Hold to talk and release to send. While holding, slide up to lock or left to cancel.',
+    );
+    expect(record).toHaveAttribute('aria-keyshortcuts', 'R');
+    fireEvent.pointerDown(record, { ...touch, clientX: 200, clientY: 800 });
+    await wait(HOLD_ARM_MS - 100);
+    fireEvent.pointerUp(record, touch);
     fireEvent.click(record);
     expect(where()).toBe('/capture');
+    expect(captureState()).toBe('idle');
+  });
+
+  it('swallows the click a browser sends after a hold, so a sent hold does not also open /capture (QA B-1)', async () => {
+    mountBar();
+    const button = await holdAndSpeak();
+    fireEvent.pointerUp(button, touch);
+    fireEvent.click(button);
+    expect(where()).toBe('/');
+    await waitFor(() => {
+      expect(captureState()).toBe('uploaded');
+    });
+    expect(fake.creates).toHaveLength(1);
+    expect(spoken()).toHaveTextContent('Sent');
+  });
+
+  it('treats Enter as a tap', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    mountBar();
+    disc().focus();
+    await user.keyboard('{Enter}');
+    expect(where()).toBe('/capture');
+  });
+
+  it('holds on Space and sends on its release, and a quick Space is a tap', async () => {
+    mountBar();
+    const button = disc();
+    fireEvent.keyDown(button, { key: ' ' });
+    await wait(HOLD_ARM_MS + 50);
+    expect(captureState()).toBe('recording');
+    // A held key repeats; the repeats are not new presses.
+    fireEvent.keyDown(button, { key: ' ', repeat: true });
+    await wait(MIN_TALK_MS + 100);
+    speak();
+    fireEvent.keyUp(button, { key: ' ' });
+    await waitFor(() => {
+      expect(captureState()).toBe('uploaded');
+    });
+    expect(where()).toBe('/');
+    expect(fake.creates).toHaveLength(1);
+
+    act(() => {
+      useCaptureStore.getState().reset();
+    });
+    fireEvent.keyDown(button, { key: ' ' });
+    await wait(50);
+    fireEvent.keyUp(button, { key: ' ' });
+    expect(where()).toBe('/capture');
+  });
+
+  it('cancels on Escape: nothing is sent and the recording is gone', async () => {
+    mountBar();
+    await holdAndSpeak();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    await waitFor(() => {
+      expect(captureState()).toBe('idle');
+    });
+    expect(spoken()).toHaveTextContent('Cancelled');
+    fireEvent.pointerUp(disc(), touch);
+    expect(fake.creates).toHaveLength(0);
+  });
+
+  it('says the last one is still sending rather than going dead under a hold', async () => {
+    act(() => {
+      useCaptureStore.setState({
+        model: { ...INITIAL_CAPTURE, state: 'uploading', localId: 'busy', uploadProgress: 0.4 },
+      });
+    });
+    mountBar();
+    const button = disc();
+    fireEvent.pointerDown(button, { ...touch, clientX: 200, clientY: 800 });
+    await wait(HOLD_ARM_MS + 50);
+    expect(captureState()).toBe('uploading');
+    expect(document.querySelector('.tab-bar__into')).toHaveTextContent('Still sending the last one…');
+    fireEvent.pointerUp(button, touch);
+    fireEvent.click(button);
+    expect(where()).toBe('/');
+  });
+
+  it('stands down for a recording live elsewhere, and its release opens /capture to show it', async () => {
+    act(() => {
+      useCaptureStore.setState({
+        model: { ...INITIAL_CAPTURE, state: 'recording', localId: 'other', startedAt: Date.now() },
+      });
+    });
+    mountBar();
+    const button = disc();
+    fireEvent.pointerDown(button, { ...touch, clientX: 200, clientY: 800 });
+    await wait(HOLD_ARM_MS + 50);
+    expect(useCaptureStore.getState().model.localId).toBe('other');
+    fireEvent.pointerUp(button, touch);
+    fireEvent.click(button);
+    expect(where()).toBe('/capture');
+  });
+
+  it('is named for what it does in every phase: Record, and Send once locked', async () => {
+    mountBar();
+    fireEvent.pointerDown(disc(), { ...touch, clientX: 200, clientY: 800 });
+    await wait(HOLD_ARM_MS + 50);
+    expect(screen.getByRole('button', { name: 'Record' })).toBeInTheDocument();
+    fireEvent.pointerMove(disc(), { ...touch, clientX: 200, clientY: 720 });
+    const send = screen.getByRole('button', { name: 'Send recording' });
+    expect(send.querySelector('svg path')).toHaveAttribute('d', PATHS.send);
+    expect(send).toHaveTextContent('Send');
+    expect(send).not.toHaveAttribute('aria-keyshortcuts');
+  });
+
+  it('sends a keyboard hold when the window loses focus, rather than discarding it', async () => {
+    // Alt-Tab or a notification takes the keyup with it. `/talk` discarded
+    // the recording here; the rule for an interruption is a release.
+    mountBar();
+    fireEvent.keyDown(document.body, { key: 'r' });
+    await wait(HOLD_ARM_MS + 50);
+    expect(captureState()).toBe('recording');
+    await wait(MIN_TALK_MS + 100);
+    speak();
+    fireEvent.blur(window);
+    await waitFor(() => {
+      expect(captureState()).toBe('uploaded');
+    });
+    expect(fake.creates).toHaveLength(1);
+    // And the next press is a new hold, not blocked by the one that never released.
+    act(() => {
+      useCaptureStore.getState().reset();
+    });
+    fireEvent.keyDown(document.body, { key: 'r' });
+    await wait(HOLD_ARM_MS + 50);
+    expect(captureState()).toBe('recording');
+  });
+
+  it('locks a first press whose finger lifts to answer the permission prompt, instead of "Too short"', async () => {
+    // A fresh install: `getUserMedia` waits on the prompt, and the finger
+    // lifts to answer it. That press used to end as "Too short" every time.
+    let allow: () => void = () => {};
+    fake.micGate = new Promise<void>((resolve) => {
+      allow = resolve;
+    });
+    mountBar();
+    const button = disc();
+    fireEvent.pointerDown(button, { ...touch, clientX: 200, clientY: 800 });
+    await wait(HOLD_ARM_MS + 50);
+    expect(captureState()).toBe('requesting');
+    fireEvent.pointerUp(button, touch);
+    fireEvent.click(button);
+    expect(screen.getByRole('button', { name: 'Send recording' })).toBeInTheDocument();
+    expect(document.querySelector('.tab-bar__into')).toHaveTextContent('Allow the microphone…');
+    expect(spoken()).not.toHaveTextContent('Too short');
+
+    // Allowed: it records hands-free, and Send sends.
+    allow();
+    await waitFor(() => {
+      expect(captureState()).toBe('recording');
+    });
+    await wait(MIN_TALK_MS + 100);
+    speak();
+    await wait(CLICK_GAP);
+    fireEvent.click(screen.getByRole('button', { name: 'Send recording' }));
+    await waitFor(() => {
+      expect(captureState()).toBe('uploaded');
+    });
+    expect(fake.creates).toHaveLength(1);
   });
 });
+
+/** Past the click suppression after the lift, as a person's second tap is. */
+const CLICK_GAP = 700;

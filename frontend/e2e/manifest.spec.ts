@@ -27,8 +27,13 @@ test('every icon the manifest names actually exists', async ({ page, request }) 
     scope: string;
     icons: { src: string }[];
     screenshots: { src: string; sizes: string; type: string }[];
-    shortcuts: { url: string; icons: { src: string }[] }[];
+    shortcuts: { name: string; url: string; icons: { src: string }[] }[];
   };
+
+  // One launcher shortcut: Record, which records the moment it opens. The PTT
+  // shortcut is gone with `/talk`; the record disc holds to talk (R8, F7).
+  expect(manifest.shortcuts.map((shortcut) => shortcut.name)).toEqual(['Record a thought']);
+  expect(manifest.shortcuts[0]?.url.endsWith('/capture')).toBe(true);
 
   // Nothing left to resolve: every URL states its own full path.
   for (const url of [
