@@ -184,55 +184,11 @@ var ErrNotATaskList = fmt.Errorf("cleanup: the model did not return a task list"
 // SplitOutput checks a completion for TasksPrompt against the body it
 // tidied and returns the checklist body to store — `- [ ] ` / `- [x] `
 // lines, two spaces of indent per level, at most MaxDepth — and how many
-// items were dropped.
-// Tidy up list writes this answer over the body (useTidyList, with only a
-// 6 s Undo for a preview), so the prompt's promises are checked rather than
-// trusted:
-//
-//   - an item whose words are not the body's words, in order
-//     (llm.VerifySubsequence; group names like "Walmart" or "Party" are
-//     body words), is the model's, not the person's: it is dropped and
-//     counted, and a dropped parent's children are lifted to its level.
-//     "- [x] Make a list." was the model inventing an antecedent for "it"
-//     (owner feedback 2026-09-26). Dropping rather than refusing keeps the
-//     split the model got right;
-//   - every open body line, a prose line with words included, must still be
-//     in the kept answer by words: an open item that is the line, a part of
-//     it (one line split into several) or that holds it (several lines
-//     merged into one); a done item does not count, since it would be the
-//     line closed. One with none is text the model dropped, and the whole
-//     answer is refused: the answer is written over the body;
-//   - every done body line must be accounted for by a done answer item whose
-//     words are the line's, or a sub-sequence of them (a done line the model
-//     tidied), else the whole answer is refused: a lost tick is worse than
-//     the previous view;
-//   - an open answer item with a done body line's words is refused too,
-//     unless the body also had an open line with those words — two lines
-//     naming one thing merge, and open wins. A childless open answer item
-//     whose words are a sub-sequence of a done line's and of no open line's
-//     is the same thing: "- [x] Milk and eggs" split into an open Milk and a
-//     done Eggs lost Milk's tick. A parent is exempt, because a group's name
-//     over done lines ("Walmart" over "- [x] Eggs from Walmart") is not a
-//     tick, and the prompt never asks for a parent's done;
-//   - a done answer item with no done body line's words (equal, or the item
-//     a sub-sequence of the line) is refused: the tick is the person's, and
-//     a model that adds one hides an open item under Done. So is a done
-//     answer item with an open body line's words when no open answer item
-//     has them: the model closed the open one of a pair, and open wins;
-//   - a done answer item with an open item under it is stored open, at any
-//     depth: a done item has no open descendant (the editor's toggleItem
-//     and the append's merge keep the same rule), so "- [x] Costco" that
-//     gains "chicken from costco" as a child is wanted again (DB6-11,
-//     settled as "the parent reopens"). The lost-tick and reopened checks
-//     exempt that only when the list put the open item there: its body
-//     line names the group, or the body already had it open under that
-//     line, or it is itself such a reopened group. A group invented over an
-//     open line ("- [x] Milk", "- [ ] Eggs" as Milk › Eggs) still loses a
-//     tick and is refused.
-//
-// The pre-2026-09-29 rule that done lines come back verbatim and in order is
-// gone: it is what forced "Add milk to the shopping list" to survive a
-// split. Nothing left after the drops is ErrEmptyNoteOutput.
+// items were dropped. Tidy up list writes this answer over the body
+// (useTidyList, with only a 6 s Undo for a preview), so the prompt's
+// promises are checked rather than trusted, in two pure steps: dropInvented
+// takes out what the model made up, tickSafety refuses an answer that lost
+// a line or a tick. Nothing left after the drops is ErrEmptyNoteOutput.
 func SplitOutput(raw, body string) (text string, dropped int, err error) {
 	out, err := NoteOutput(raw)
 	if err != nil {
@@ -242,7 +198,25 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 	if err != nil {
 		return "", 0, fmt.Errorf("%w: %v", ErrNotATaskList, err)
 	}
+	kept, dropped := dropInvented(items, body)
+	if len(kept) == 0 {
+		return "", dropped, ErrEmptyNoteOutput
+	}
+	reopenParents(kept)
+	if err := tickSafety(kept, body); err != nil {
+		return "", dropped, err
+	}
+	return RenderTaskList(kept), dropped, nil
+}
 
+// dropInvented is the first check on a Split up: an item whose words are
+// not the body's words, in order (llm.VerifySubsequence; group names like
+// "Walmart" or "Party" are body words), is the model's, not the person's.
+// It is dropped and counted, and a dropped parent's children are lifted to
+// its level. "- [x] Make a list." was the model inventing an antecedent for
+// "it" (owner feedback 2026-09-26). Dropping rather than refusing keeps the
+// split the model got right.
+func dropInvented(items []Item, body string) (kept []Item, dropped int) {
 	var keep func([]Item) []Item
 	keep = func(items []Item) []Item {
 		var kept []Item
@@ -257,13 +231,54 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 		}
 		return kept
 	}
-	kept := keep(items)
-	if len(kept) == 0 {
-		return "", dropped, ErrEmptyNoteOutput
-	}
-	reopenParents(kept)
+	kept = keep(items)
+	return kept, dropped
+}
 
-	// Tick safety, over the body's lines and the kept answer.
+// tickSafety is the second check on a Split up, over the body's lines and
+// the kept answer (reopenParents already run over it). It returns
+// ErrNotATaskList with a fixed sentence when:
+//
+//   - a done body line is not accounted for by a done answer item whose
+//     words are the line's, or a sub-sequence of them (a done line the model
+//     tidied): a lost tick is worse than the previous view. Exempt is a
+//     done line the body also had open — two lines naming one thing merge,
+//     and open wins — and a done group that gained an open item the list
+//     put under it (below);
+//   - an open body line, a prose line with words included, is not in the
+//     kept answer by words: an open item that is the line, a part of it
+//     (one line split into several) or that holds it (several lines merged
+//     into one). A done item does not count, since it would be the line
+//     closed. Dropped text is refused whole, because the answer is written
+//     over the body (review 2026-10-01, BE-1);
+//   - an open answer item has a done body line's words, unless the body
+//     also had an open line with those words. A childless open answer item
+//     whose words are a sub-sequence of a done line's and of no open line's
+//     is the same thing: "- [x] Milk and eggs" split into an open Milk and a
+//     done Eggs lost Milk's tick. A parent is exempt, because a group's name
+//     over done lines ("Walmart" over "- [x] Eggs from Walmart") is not a
+//     tick, and the prompt never asks for a parent's done;
+//   - a done answer item has no done body line's words (equal, or the item
+//     a sub-sequence of the line): the tick is the person's, and a model
+//     that adds one hides an open item under Done. So is a done answer item
+//     with an open body line's words when no open answer item has them: the
+//     model closed the open one of a pair, and open wins.
+//
+// A done answer item with an open item under it was stored open by
+// reopenParents, at any depth: a done item has no open descendant (the
+// editor's toggleItem and the append's merge keep the same rule), so "- [x]
+// Costco" that gains "chicken from costco" as a child is wanted again
+// (DB6-11, settled as "the parent reopens"). The lost-tick and reopened
+// checks exempt that only when the list put the open item there: its body
+// line names the group, or the body already had it open under that line,
+// or it is itself such a reopened group. A group invented over an open line
+// ("- [x] Milk", "- [ ] Eggs" as Milk › Eggs) still loses a tick and is
+// refused.
+//
+// The pre-2026-09-29 rule that done lines come back verbatim and in order is
+// gone: it is what forced "Add milk to the shopping list" to survive a
+// split.
+func tickSafety(kept []Item, body string) error {
 	bodyDone, bodyOpen := map[string]bool{}, map[string]bool{}
 	for _, it := range flatten(ItemsFromLines(body)) {
 		if it.Done {
@@ -325,9 +340,6 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 	}
 	for line := range bodyDone {
 		if bodyOpen[line] || gained[line] {
-			// Two lines naming one thing, one of them open: they merge and
-			// open wins, so the done one need not come back done. Or a done
-			// group that gained an open item, which reopens it.
 			continue
 		}
 		accounted := false
@@ -338,17 +350,9 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 			}
 		}
 		if !accounted {
-			return "", dropped, fmt.Errorf("%w: a done item was lost", ErrNotATaskList)
+			return fmt.Errorf("%w: a done item was lost", ErrNotATaskList)
 		}
 	}
-	// Coverage: every open body line (a prose line with words included) is
-	// still in the answer by words — an item that is the line, a part of it
-	// (a line split into several), or that holds it (several lines merged
-	// into one). Only an open answer item counts: a done one with the line's
-	// words is the model closing it ("- [x] Milk", "- [ ] Milk 2 litres"
-	// answered as a done Milk). A line with none is dropped text; the kept
-	// answer is written over the body, so the whole answer is refused rather
-	// than the person's list shortened (review 2026-10-01, BE-1).
 	for line := range bodyOpen {
 		covered := false
 		for _, it := range answer {
@@ -358,7 +362,7 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 			}
 		}
 		if !covered {
-			return "", dropped, fmt.Errorf("%w: an open item was lost", ErrNotATaskList)
+			return fmt.Errorf("%w: an open item was lost", ErrNotATaskList)
 		}
 	}
 	check := func(it Item, parent bool) error {
@@ -386,10 +390,7 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 		}
 		return nil
 	}
-	if err := checkAll(kept); err != nil {
-		return "", dropped, err
-	}
-	return RenderTaskList(kept), dropped, nil
+	return checkAll(kept)
 }
 
 // reopenParents opens every done item with an open item under it, deepest

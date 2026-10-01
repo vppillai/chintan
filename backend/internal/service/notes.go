@@ -18,18 +18,8 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/routing"
 )
-
-// maxNoteTitleLen bounds a stored title. It matches the OpenAPI document's
-// maxLength for a note title, so a title the API accepts is a title that is
-// stored whole. Two different limits for one field means a request the handler
-// validated is quietly truncated by the service, which is data loss with a
-// receipt.
-//
-// The routing prompt does not depend on this number: it bounds every rendered
-// candidate field itself (routing.maxFieldLen), so a longer stored title cannot
-// grow the prompt.
-const maxNoteTitleLen = 200
 
 var (
 	ErrNoteArchived    = errors.New("note is archived")
@@ -39,21 +29,6 @@ var (
 
 // maxMatchCandidates bounds how many notes note-matching will page through.
 const maxMatchCandidates = 500
-
-// sanitizeNoteTitle collapses a title to a single bounded line.
-func sanitizeNoteTitle(title string) string {
-	title = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, title)
-	title = strings.Join(strings.Fields(title), " ")
-	if runes := []rune(title); len(runes) > maxNoteTitleLen {
-		title = strings.TrimSpace(string(runes[:maxNoteTitleLen]))
-	}
-	return title
-}
 
 func NoteIsActive(n model.NoteIndex) bool {
 	return strings.TrimSpace(n.DeletedAt) == ""
@@ -177,7 +152,7 @@ func (s *NotesService) CreateNote(ctx context.Context, userID, title string, ali
 
 // CreateNoteWithTags creates a note carrying tags.
 func (s *NotesService) CreateNoteWithTags(ctx context.Context, userID, title string, aliases, tags []string) (model.NoteIndex, error) {
-	title = sanitizeNoteTitle(title)
+	title = routing.SanitizeTitle(title)
 	if title == "" {
 		return model.NoteIndex{}, ErrEmptyNoteTitle
 	}
@@ -211,7 +186,7 @@ func (s *NotesService) CreateNoteOnce(ctx context.Context, userID string, spec m
 	if !errors.Is(err, repository.ErrNotFound) {
 		return model.NoteIndex{}, fmt.Errorf("failed to read note: %w", err)
 	}
-	spec.Title = sanitizeNoteTitle(spec.Title)
+	spec.Title = routing.SanitizeTitle(spec.Title)
 	if spec.Title == "" {
 		return model.NoteIndex{}, ErrEmptyNoteTitle
 	}
@@ -594,7 +569,7 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 // pinned row read as edited just now (review 2026-09-24 R4-1).
 func (s *NotesService) applyNoteUpdates(ctx context.Context, userID string, note *model.NoteIndex, updates NoteUpdates) (touched bool, err error) {
 	if updates.Title != nil {
-		title := sanitizeNoteTitle(*updates.Title)
+		title := routing.SanitizeTitle(*updates.Title)
 		if title == "" {
 			return false, ErrEmptyNoteTitle
 		}

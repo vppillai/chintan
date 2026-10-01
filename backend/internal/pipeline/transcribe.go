@@ -90,12 +90,10 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	if err != nil {
 		return fmt.Errorf("pipeline: raw key: %w", err)
 	}
-	// A transcript that reads the spelling hints back is kept, and nothing
-	// else of it is: no segments, nothing routed (below).
-	echoed := echoesHints(result.Text, hints)
+	verdict := transcriptOutcome(result, hints)
 	segmentsKey := ""
 	var segments []byte
-	if !echoed && (len(result.Segments) > 0 || len(result.Words) > 0) {
+	if !verdict.echoed && (len(result.Segments) > 0 || len(result.Words) > 0) {
 		segments, err = json.Marshal(newTranscriptDocument(result))
 		if err != nil {
 			return fmt.Errorf("pipeline: encode segments: %w", err)
@@ -124,12 +122,10 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	if segmentsErr != nil {
 		return fmt.Errorf("pipeline: store segments: %w", segmentsErr)
 	}
-	if echoed {
-		// Whisper can answer silence by reading its prompt back, with
-		// confident log-probs, so neither the silence gate nor a letter test
-		// catches it; filed, the person's note titles would become the
-		// dictation. The transcript is kept, nothing is routed.
-		obs.Count(ctx, "CaptureHintEcho", nil)
+	if verdict.echoed {
+		// The transcript is kept, nothing else of it is: no segments, no
+		// excerpt, nothing routed (transcriptOutcome).
+		obs.Count(ctx, verdict.metric, nil)
 		capture.RawKey = rawKey
 		capture.Language = language
 		capture.LanguageDetected = result.Language
@@ -179,13 +175,9 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	if ms := result.DurationMS(); ms > 0 {
 		capture.DurationMS = ms
 	}
-	capture.Status = model.StatusTranscribed
-	if result.NoSpeech() {
-		// Nothing was said, so there is nothing to route or file; left to go
-		// on, a tone became a new note called "Dictation" whose body was "."
-		// (R7-10c). The transcript and segments stay stored beside the audio.
-		obs.Count(ctx, "CaptureNoSpeech", nil)
-		capture.Status = model.StatusNoContent
+	capture.Status = verdict.status
+	if verdict.metric != "" {
+		obs.Count(ctx, verdict.metric, nil)
 	}
 	capture.Error = ""
 	if capture.NoteID == "" && capture.Status == model.StatusTranscribed {
@@ -197,6 +189,43 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	// the instruction strip's model call before the cleanup's status write,
 	// so the transcript is recorded now rather than left for that write.
 	return p.persist(ctx, capture)
+}
+
+// transcriptVerdict is what transcriptOutcome decides from the provider's
+// answer: the status the stage leaves the capture in, the counter that says
+// why ("" when the transcript goes on to routing), and whether the transcript
+// is the spelling prompt read back, which keeps the text and nothing else of
+// it — no segments, no excerpt, no duration.
+type transcriptVerdict struct {
+	status model.CaptureStatus
+	metric string
+	echoed bool
+}
+
+// transcriptOutcome is the decision in transcribe, taken on the transcription
+// and the hints alone, so the gates that landed in it one at a time in rounds
+// 7–8 are read in one place and the next one joins them here rather than
+// between the object writes (review 2026-10-01, BE-6). In order:
+//
+//   - the hint echo (R7-10b): Whisper can answer silence by reading its
+//     prompt back, with confident log-probs, so neither the silence gate nor
+//     a letter test catches it; filed, the person's note titles would become
+//     the dictation. no_content, counted as CaptureHintEcho;
+//   - no speech (R7-10c, provider.Transcription.NoSpeech): nothing was said,
+//     so there is nothing to route or file; left to go on, a tone became a
+//     new note called "Dictation" whose body was ".". no_content, counted as
+//     CaptureNoSpeech; the transcript and segments stay stored beside the
+//     audio;
+//   - otherwise transcribed, and routing or cleanup is next.
+func transcriptOutcome(result provider.Transcription, hints []string) transcriptVerdict {
+	switch {
+	case echoesHints(result.Text, hints):
+		return transcriptVerdict{status: model.StatusNoContent, metric: "CaptureHintEcho", echoed: true}
+	case result.NoSpeech():
+		return transcriptVerdict{status: model.StatusNoContent, metric: "CaptureNoSpeech"}
+	default:
+		return transcriptVerdict{status: model.StatusTranscribed}
+	}
 }
 
 // transcriptionLanguage decides what the recording is transcribed in: the
@@ -242,26 +271,15 @@ func (p *Pipeline) transcriptionLanguage(ctx context.Context, tenantID string, c
 	return language, nil
 }
 
-// minHintAudioMS is the shortest recording that gets a spelling prompt.
-// Whisper can answer near-silence by echoing its prompt back as the
-// transcript, and a 1.5 s clip is mostly the ring's start and stop; below it
-// a list of the person's note titles would become the "dictation".
-const minHintAudioMS = 1500
-
-// maxHintNotes bounds the notes read for an untargeted capture's hints. The
-// adapter keeps only what fits Whisper's 224-token prompt, which is fewer
-// names than this, so the extra rows only cost read bytes.
-const maxHintNotes = 50
-
 // spellingHints is the names Whisper is asked to spell as written (R7-10b):
 // the destination note's title and aliases for a capture recorded into a
 // note, else the titles and aliases of the most recently touched notes,
 // which is the order the router reads them in. It is a convenience like
 // routing: a store fault is logged and the recording is transcribed without
 // hints rather than failed. An unknown or short duration gets none, see
-// minHintAudioMS.
+// routing.MinHintAudioMS.
 func (p *Pipeline) spellingHints(ctx context.Context, tenantID string, capture *model.CaptureIndex) []string {
-	if capture.DurationMS <= minHintAudioMS {
+	if capture.DurationMS <= routing.MinHintAudioMS {
 		return nil
 	}
 	var notes []model.NoteIndex
@@ -280,7 +298,7 @@ func (p *Pipeline) spellingHints(ctx context.Context, tenantID string, capture *
 		// partition read per routed capture; hand this list over if reads
 		// ever show in the bill. Not threaded through now because a retry
 		// resumes at routing in a later invocation, where this list is gone.
-		active, _, err := p.cfg.Store.DrainNotes(ctx, tenantID, repository.DrainOptions{MaxItems: maxHintNotes})
+		active, _, err := p.cfg.Store.DrainNotes(ctx, tenantID, repository.DrainOptions{MaxItems: routing.MaxHintNotes})
 		if err != nil {
 			obs.Log(ctx).Warn("spelling hints unavailable; transcribing without them",
 				slog.String("capture_id", capture.ID), slog.String("error", err.Error()))

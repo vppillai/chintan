@@ -230,12 +230,9 @@ func (s *CaptureService) moveInto(ctx context.Context, userID string, current mo
 		// away with the only copy of the new words in the source.
 		edited := false
 		_, err = RewriteNoteBody(ctx, s.objects, sourceKey, func(body string) (string, bool) {
-			rest, now, ok := CutCaptureParagraph(body, captureID)
-			if ok && now != text {
-				edited = true
-				return body, false
-			}
-			return rest, ok
+			rest, cut, changed := cutUnedited(body, captureID, text)
+			edited = edited || changed
+			return rest, cut
 		})
 		if err == nil && edited {
 			err = errors.New("the paragraph was edited during the move")
@@ -305,6 +302,19 @@ func (s *CaptureService) moveInto(ctx context.Context, userID string, current mo
 		slog.Bool("paragraph_moved", found))
 	obs.Count(ctx, "CapturesMoved", map[string]string{"Stage": string(current.Status)})
 	return &updated, nil
+}
+
+// cutUnedited is the source cut's decision, pure: captureID's paragraph out
+// of body, provided it still reads as text, the words that were copied into
+// the target. cut is whether the body changed; edited reports a paragraph
+// whose words moved in between, which is left where it is, since cutting it
+// would take the only copy of the new words out of the source.
+func cutUnedited(body, captureID, text string) (rest string, cut, edited bool) {
+	rest, now, ok := CutCaptureParagraph(body, captureID)
+	if ok && now != text {
+		return body, false, true
+	}
+	return rest, ok, false
 }
 
 // olderCapturesIn returns the before() an insert into noteID uses: true for a

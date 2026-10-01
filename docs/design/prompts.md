@@ -143,8 +143,9 @@ test123") still ends empty rather than keeping the name's tail; spans that
 leave no content are believed only for a transcript of at most 20 words
 with a title of at most 8 words, since a longer one means the router
 swallowed dictation into the title; the derived content is re-checked as a sub-sequence of the transcript
-(`llm.VerifySubsequence`); the title is one line of at most 120 runes;
-confidence is clamped. Then the pipeline: a `new` decision whose title names
+(`llm.VerifySubsequence`); the title is one line of at most 200 runes
+(`routing.MaxTitleRunes`, the one bound the API and the store share since
+2026-10-01; the router cut at 120 before); confidence is clamped. Then the pipeline: a `new` decision whose title names
 an active candidate, by title, alias or tag, compared in `NormalizeSpeech`
 form so "Roof repair." names "Roof repair" (DB6-40), becomes an append to it
 (`preferExistingTitle`, `matched_by` title|alias|tag on its log line; the
@@ -180,6 +181,20 @@ decode or unknown-id error is retried (`routeWithRetries`), and a routing
 failure keeps the dictation as a plain note titled from its first words
 rather than losing it (`needs_target` is the router's unsure append, where
 the person chooses).
+
+**The numbers.** Every bound the rules above read — the two-word or
+eight-letter name, the 0.75 confidence bar, the 24 removable words, the
+five-word name a growth is undone past, the 20-word instruction-only
+transcript and 8-word spoken title, the 200-note window, the six-word or
+forty-character fallback title, the 200-rune title — is one constant in
+`backend/internal/routing/bounds.go`, with why it is that number and the
+rule that reads it; the no-speech scores and the hint and short-dictation
+bounds (rules 13 and 14) are named from there and live with the transcription
+and the cleanup. `TestRoutingBoundsAreRegistered` (`routing/bounds_test.go`)
+lists the fourteen rules and their bounds and refuses a constant without a
+row, so a new rule registers its number before it ships; and a new rule waits
+for a recorded replay case (decision D8, 2026-10-01), as prompt text already
+does.
 
 **Metrics.** `RouterSpansDiscarded{Reason=missing_field|malformed|too_long|empty_content|not_derived}`,
 `RouterTitleMatchedExistingNote` (11 of 86 routes in the week measured under

@@ -9,7 +9,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
 )
 
-// A dictation under shortDictationWords words is tidied, not sent to the
+// A dictation under routing.ShortDictationWords words is tidied, not sent to the
 // cleanup model; one of exactly that many words is sent (R7-15).
 func TestAShortDictationSkipsTheCleanupModel(t *testing.T) {
 	cases := []struct {

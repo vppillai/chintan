@@ -14,6 +14,12 @@ import (
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
+// spendCappedVerdict is the one sentence a capture, a clean-note run and an
+// ask record when the daily spend cap stopped them. Fixed, like every other
+// verdict, because it reaches the user; written once, because until
+// 2026-10-01 it was three literals (review 2026-10-01, BE-12).
+const spendCappedVerdict = "daily provider spend cap reached"
+
 // ---------------------------------------------------------------------------
 // Status bookkeeping
 // ---------------------------------------------------------------------------
@@ -246,7 +252,7 @@ func (p *Pipeline) handleProviderError(ctx context.Context, capture *model.Captu
 			slog.String("stage", stage))
 		obs.Count(ctx, "CaptureSpendCapped", map[string]string{"Stage": stage})
 		capture.Status = service.StatusSpendCapped
-		capture.Error = "daily provider spend cap reached"
+		capture.Error = spendCappedVerdict
 		return p.persist(ctx, capture)
 	}
 

@@ -80,6 +80,7 @@ paths:
                 required: [status]
                 properties:
                   status: { type: string, const: ok }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /v1/health/ready:
     get:
@@ -95,6 +96,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Readiness' }
+        '500': { $ref: '#/components/responses/ServerError' }
         '503':
           description: A dependency is unreachable.
           content:
@@ -112,6 +114,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Settings' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
     put:
       tags: [settings]
       summary: Replace settings
@@ -133,6 +136,10 @@ paths:
               schema: { $ref: '#/components/schemas/Settings' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/notes:
     get:
@@ -187,6 +194,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/NotePage' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
     post:
       tags: [notes]
       summary: Create a note
@@ -207,6 +215,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/notes/{noteId}:
     parameters:
@@ -225,6 +235,7 @@ paths:
               schema: { $ref: '#/components/schemas/NoteDetail' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
     patch:
       tags: [notes]
       summary: Update a note
@@ -261,6 +272,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/NoteConflict' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
     delete:
       tags: [notes]
       summary: Archive a note
@@ -272,6 +285,7 @@ paths:
         '204': { description: Archived. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /v1/notes/{noteId}/restore:
     parameters:
@@ -285,8 +299,13 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Note' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/notes/{noteId}/permanent:
     parameters:
@@ -330,6 +349,7 @@ paths:
               schema: { $ref: '#/components/schemas/RecordingURLs' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /v1/notes/{noteId}/clean:
     parameters:
@@ -395,7 +415,10 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '429': { $ref: '#/components/responses/SpendCapped' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/notes/{noteId}/regenerate:
     parameters:
@@ -440,6 +463,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/NoteRegenerateQueued' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
@@ -451,7 +475,10 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '429': { $ref: '#/components/responses/SpendCapped' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/notes/pins:
     post:
@@ -484,6 +511,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/notes/match:
     post:
@@ -497,6 +526,8 @@ paths:
               schema: { $ref: '#/components/schemas/MatchResponse' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '500': { $ref: '#/components/responses/ServerError' }
       requestBody:
         required: true
         content:
@@ -529,6 +560,8 @@ paths:
                         name: { type: string }
                         count: { type: integer }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/search:
     get:
@@ -556,6 +589,8 @@ paths:
               schema: { $ref: '#/components/schemas/SearchPage' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/usage:
     get:
@@ -599,6 +634,8 @@ paths:
               schema: { $ref: '#/components/schemas/Usage' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/ask:
     post:
@@ -645,6 +682,7 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '429': { $ref: '#/components/responses/SpendCapped' }
+        '500': { $ref: '#/components/responses/ServerError' }
         '503':
           description: The worker is not configured on this instance, so a question has nowhere to go.
           content:
@@ -670,6 +708,8 @@ paths:
               schema: { $ref: '#/components/schemas/Ask' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/devices:
     get:
@@ -688,6 +728,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/DevicePage' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
     post:
       tags: [devices]
       summary: Issue a device key
@@ -723,6 +764,7 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /v1/devices/{deviceId}:
     parameters:
@@ -739,6 +781,7 @@ paths:
           description: Revoked.
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /v1/push/key:
     get:
@@ -763,6 +806,7 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /v1/push/subscriptions:
     get:
@@ -781,6 +825,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PushSubscriptionPage' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
     post:
       tags: [push]
       summary: Subscribe this browser
@@ -812,6 +857,7 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /v1/push/subscriptions/{subscriptionId}:
     parameters:
@@ -828,6 +874,7 @@ paths:
           description: Removed.
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /v1/captures:
     get:
@@ -854,6 +901,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/CapturePage' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
     post:
       tags: [captures]
       summary: Begin a capture
@@ -879,7 +927,10 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '429': { $ref: '#/components/responses/SpendCapped' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/captures/{captureId}:
     parameters:
@@ -895,6 +946,7 @@ paths:
               schema: { $ref: '#/components/schemas/Capture' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
     delete:
       tags: [captures]
       summary: Delete one recording and the text it dictated
@@ -927,6 +979,7 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /v1/captures/{captureId}/target:
     parameters:
@@ -954,6 +1007,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/captures/{captureId}/move:
     parameters:
@@ -1042,6 +1098,8 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '500': { $ref: '#/components/responses/ServerError' }
         '503': { $ref: '#/components/responses/Retryable' }
 
   /v1/captures/{captureId}/retry:
@@ -1072,6 +1130,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Capture' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
@@ -1088,7 +1147,10 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '429': { $ref: '#/components/responses/SpendCapped' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/captures/{captureId}/retranscribe:
     parameters:
@@ -1142,7 +1204,10 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '429': { $ref: '#/components/responses/SpendCapped' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/captures/{captureId}/download:
     parameters:
@@ -1176,6 +1241,7 @@ paths:
                   expires_at: { type: string, format: date-time }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /v1/inbox/captures:
     post:
@@ -1208,6 +1274,8 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '429': { $ref: '#/components/responses/SpendCapped' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/inbox/audio:
     post:
@@ -1303,6 +1371,8 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '429': { $ref: '#/components/responses/SpendCapped' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/inbox/text:
     post:
@@ -1342,6 +1412,8 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '429': { $ref: '#/components/responses/SpendCapped' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/export:
     post:
@@ -1358,7 +1430,12 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ExportJob' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
   /v1/export/{exportId}:
     parameters:
@@ -1377,6 +1454,8 @@ paths:
               schema: { $ref: '#/components/schemas/ExportJob' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
 
 components:
   securitySchemes:
@@ -1468,9 +1547,23 @@ components:
         again. A replay carries the recorded response's own Content-Type.
       schema: { type: string, minLength: 8, maxLength: 128 }
 
+  # The helper statuses. Four helpers answer on many routes before or instead
+  # of the handler, and every route that goes through one declares what it
+  # can return: `fail` answers 500 on every route for a fault nothing
+  # classified (`ServerError`); the `Idempotency-Key` wrapper answers 400 for
+  # a key outside 8–128 characters, 409 for a key reused with another request
+  # or still in flight, 413 for a body over the route's cap and 503 on an
+  # instance without a store to record replays in (`BadRequest`, `Conflict`,
+  # `PayloadTooLarge`, `NotConfigured`); the JSON reader answers 413 over the
+  # route's cap; and a feature's nil guard answers 503 where the instance was
+  # built without it (`NotConfigured`). The conformance test proves each of
+  # these reachable on at least one route and that every route behind a
+  # helper declares its statuses (openapi_conformance_test.go).
   responses:
     BadRequest:
-      description: Malformed or invalid request.
+      description: |
+        Malformed or invalid request. On an operation that takes
+        `Idempotency-Key`, also a key outside 8–128 characters.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -1485,7 +1578,10 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     Conflict:
-      description: Version conflict; the current state is included.
+      description: |
+        Version conflict; the current state is included. On an operation that
+        takes `Idempotency-Key`, also a key reused with a different request or
+        one whose first request is still in flight.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -1504,7 +1600,10 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
     PayloadTooLarge:
-      description: Body or field exceeded its limit.
+      description: |
+        Body or field exceeded its limit. Every request body is read under
+        its route's cap, by the JSON reader and by the `Idempotency-Key`
+        wrapper alike.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -1536,8 +1635,20 @@ components:
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
+    NotConfigured:
+      description: |
+        The instance was built without what this needs: the feature's service
+        (ask, export, search, tags, usage, the inbox, the capture worker, note
+        creation from a capture) or the store that records idempotent
+        replays, when the request carried an `Idempotency-Key`. Repeating does
+        not help; a 503 of type `retryable` is the other kind.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     ServerError:
-      description: Unexpected failure. Correlate via `correlation_id`.
+      description: |
+        Unexpected failure, on any route: a fault nothing classified.
+        Correlate via `correlation_id`.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

@@ -8,6 +8,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
+	"github.com/vppillai/chintan/backend/internal/routing"
 )
 
 // hintsSentTo runs the seeded capture at durationMS and returns the hints the
@@ -53,7 +54,7 @@ func TestSpellingHintsFollowTheTargetAndSkipShortAudio(t *testing.T) {
 	if !slices.Contains(got, "Chintan feedback") || !slices.Contains(got, "app bugs") {
 		t.Errorf("routed hints = %q, want the recent notes' titles and aliases", got)
 	}
-	for _, ms := range []int64{0, 1_000, minHintAudioMS} {
+	for _, ms := range []int64{0, 1_000, routing.MinHintAudioMS} {
 		if got := hintsSentTo(t, "", ms); len(got) != 0 {
 			t.Errorf("hints for %d ms = %q, want none", ms, got)
 		}

@@ -38,19 +38,16 @@ import (
 	"log"
 	"log/slog"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/budgets"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	lambdasvc "github.com/aws/aws-sdk-go-v2/service/lambda"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 
 	"github.com/vppillai/chintan/backend/internal/awscost"
+	"github.com/vppillai/chintan/backend/internal/boot"
 	"github.com/vppillai/chintan/backend/internal/breaker"
 	"github.com/vppillai/chintan/backend/internal/meter"
 	"github.com/vppillai/chintan/backend/internal/obs"
@@ -71,52 +68,134 @@ var (
 	snapshots *storagesnap.Snapshotter
 )
 
-// setup builds everything the handlers need. It is called from main rather
+// deps is everything build wires that setup reads from the environment,
+// resolves from SSM or opens on AWS, as the interfaces the pipeline and the
+// tasks take, so a test builds the same worker over fakes
+// (TestBuildWiresTheWorkerOverFakes).
+type deps struct {
+	store   repository.Store
+	objects repository.Objects
+	stt     provider.STT
+	llm     provider.LLM
+	router  provider.Router
+	// sttModel and llmModel are what the breaker prices each call as.
+	sttModel, llmModel string
+	// counter is the instance-wide daily spend row the breaker reserves
+	// against; spendCapMicros the cap it enforces, 0 to count only.
+	counter        breaker.Counter
+	spendCapMicros int64
+	// usage is the per-tenant accounting: the breaker's two ADDs per settled
+	// call, the daily AWS cost reading and the daily storage snapshot all
+	// write the same rows.
+	usage interface {
+		usage.Recorder
+		usage.AWSCostStore
+		storagesnap.Store
+	}
+	// cleanInvoker hands a note back to this function, through the live
+	// alias, for its cleaned view after an append; nil regenerates inline.
+	cleanInvoker pipeline.NoteCleanInvoker
+	// pusher sends Web Push when a recording files; nil sends nothing.
+	pusher pipeline.Pusher
+	// budgets, accountID and budgetName are the daily cost reading's; an
+	// empty budgetName makes the task a logged no-op.
+	budgets    awscost.Budgets
+	accountID  string
+	budgetName string
+}
+
+// build wires the pipeline and the three scheduled tasks over d into the
+// package's handler variables. Building the tasks here rather than lazily
+// keeps a failure at init, where the deploy can see it, instead of on the
+// first sweep a week after the deploy that broke it.
+func build(d deps) error {
+	// The breaker owns every provider call. It is built here, once, and passed
+	// in — the pipeline refuses to start without it, so there is no build of
+	// this binary in which a paid API is reachable without reserving against
+	// the day's counter. One counter, one cap: DAILY_SPEND_CAP_MICROS from the
+	// template, compared against the instance-wide SPEND#<day> row.
+	//
+	// WithUsage is the per-tenant accounting: two ADDs per settled call onto
+	// the tenant's USAGE#<month> and USAGE#<day> rows, in the same place the
+	// breaker writes the usage log line. It enforces nothing; GET /v1/usage
+	// reads it.
+	spend := breaker.New(d.counter, meter.DefaultPrices, d.spendCapMicros, breaker.WithUsage(d.usage))
+	notes := service.NewNotesService(d.store, d.objects)
+
+	p, err := pipeline.New(pipeline.Config{
+		Store:        d.store,
+		Objects:      d.objects,
+		STT:          d.stt,
+		LLM:          d.llm,
+		Router:       d.router,
+		Notes:        notes,
+		Breaker:      spend,
+		CleanInvoker: d.cleanInvoker,
+		Pusher:       d.pusher,
+		STTProvider:  "groq",
+		STTModel:     d.sttModel,
+		LLMProvider:  "openai",
+		LLMModel:     d.llmModel,
+	})
+	if err != nil {
+		return fmt.Errorf("build capture pipeline: %w", err)
+	}
+	handleWork = pipeline.NewWorker(p).Handle
+
+	// The expiry sweep runs the same cascade a permanent delete runs, over the
+	// same store and bucket.
+	if sweeper, err = purge.New(d.store, notes); err != nil {
+		return fmt.Errorf("build the expiry sweeper: %w", err)
+	}
+	// The daily AWS cost reading. The account id is how DescribeBudget
+	// addresses a budget; the template passes it so the binary need not learn
+	// it from STS or the function ARN.
+	if costs, err = awscost.New(d.budgets, d.usage, d.accountID, d.budgetName); err != nil {
+		return fmt.Errorf("build the aws-cost task: %w", err)
+	}
+	// The daily storage snapshot: the same footprint GET /v1/usage computes
+	// on demand, added onto each tenant's usage rows once a day so storage
+	// has a figure over the month and not only a figure right now.
+	if snapshots, err = storagesnap.New(d.usage, service.NewStorageService(d.store)); err != nil {
+		return fmt.Errorf("build the storage-snapshot task: %w", err)
+	}
+	return nil
+}
+
+// setup reads the environment and the secrets, opens AWS, builds the
+// providers and hands everything to build. It is called from main rather
 // than from init so that the package is testable at all: an init that calls
-// log.Fatalf on a missing TABLE_NAME kills the test binary before a single test
-// runs, which is why the dispatch below had no test until it needed one.
+// log.Fatalf on a missing TABLE_NAME kills the test binary before a single
+// test runs, which is why the dispatch below had no test until it needed one.
 //
 // The fail-fast property is unchanged. Lambda's init phase runs package
 // initialisation *and* main up to lambda.Start, so a missing environment
 // variable still stops the cold start rather than the first invocation.
 func setup() {
-	obs.Setup(logLevel())
+	obs.Setup(boot.LogLevel())
 
 	ctx := context.Background()
 
-	tableName := mustEnv("TABLE_NAME")
-	contentBucket := mustEnv("CONTENT_BUCKET")
-	llmBaseURL := envOr("LLM_BASE_URL", "https://api.minimax.io/v1")
-	llmModel := envOr("LLM_MODEL", "MiniMax-M3")
-	sttModel := envOr("GROQ_STT_MODEL", "")
-	awsRegion := os.Getenv("AWS_REGION")
+	tableName := boot.MustEnv("TABLE_NAME")
+	contentBucket := boot.MustEnv("CONTENT_BUCKET")
+	llmBaseURL := boot.EnvOr("LLM_BASE_URL", "https://api.minimax.io/v1")
+	llmModel := boot.EnvOr("LLM_MODEL", "MiniMax-M3")
+	sttModel := boot.EnvOr("GROQ_STT_MODEL", "")
 
-	var cfg aws.Config
-	var err error
-	if awsRegion != "" {
-		cfg, err = config.LoadDefaultConfig(ctx, config.WithRegion(awsRegion))
-	} else {
-		cfg, err = config.LoadDefaultConfig(ctx)
-	}
+	cfg, err := boot.LoadAWS(ctx)
 	if err != nil {
 		log.Fatalf("failed to load AWS config: %v", err)
 	}
+	stores := boot.NewStores(cfg, tableName, contentBucket)
 
-	ssmClient := ssm.NewFromConfig(cfg)
-	groqAPIKey, err := resolveSecret(ctx, ssmClient, "GROQ_API_KEY", "GROQ_API_KEY_PATH")
+	groqAPIKey, err := resolveSecret(ctx, stores.SSM, "GROQ_API_KEY", "GROQ_API_KEY_PATH")
 	if err != nil {
 		log.Fatalf("failed to resolve Groq API key: %v", err)
 	}
-	llmAPIKey, err := resolveSecret(ctx, ssmClient, "LLM_API_KEY", "LLM_API_KEY_PATH")
+	llmAPIKey, err := resolveSecret(ctx, stores.SSM, "LLM_API_KEY", "LLM_API_KEY_PATH")
 	if err != nil {
 		log.Fatalf("failed to resolve LLM API key: %v", err)
 	}
-
-	dynamoClient := dynamodb.NewFromConfig(cfg)
-	s3Client := s3.NewFromConfig(cfg)
-
-	store := repository.NewDynamoStore(dynamoClient, tableName)
-	objects := repository.NewS3Objects(s3Client, contentBucket)
 
 	stt, err := provider.NewGroqSTT(groqAPIKey, "", sttModel, nil)
 	if err != nil {
@@ -131,7 +210,8 @@ func setup() {
 	// meter prices an unknown provider at zero rather than failing the call,
 	// which is right at runtime and wrong at deploy time, where refusing to
 	// start is what gets the row added. Checked here, once, before anything
-	// paid is reachable.
+	// paid is reachable. The api has no such check because it prices
+	// nothing: it reads the counter this binary's breaker writes.
 	for _, m := range []struct{ provider, model string }{
 		{"groq", stt.Model()},
 		{"openai", llm.Model()},
@@ -140,26 +220,6 @@ func setup() {
 			log.Fatalf("%v", err)
 		}
 	}
-
-	// The breaker owns every provider call. It is built here, once, and passed in
-	// — the pipeline refuses to start without it, so there is no build of this
-	// binary in which a paid API is reachable without reserving against the
-	// day's counter. One counter, one cap: DAILY_SPEND_CAP_MICROS from the
-	// template, compared against the instance-wide SPEND#<day> row.
-	//
-	// WithUsage is the per-tenant accounting: two ADDs per settled call onto
-	// the tenant's USAGE#<month> and USAGE#<day> rows, in the same place the
-	// breaker writes the usage log line. It enforces nothing; GET /v1/usage
-	// reads it.
-	usageStore := usage.NewDynamo(dynamoClient, tableName)
-	spend := breaker.New(
-		pipeline.NewDynamoCounter(dynamoClient, tableName),
-		meter.DefaultPrices,
-		envInt64("DAILY_SPEND_CAP_MICROS", 0),
-		breaker.WithUsage(usageStore),
-	)
-
-	notes := service.NewNotesService(store, objects)
 
 	// After an append to a note with auto_clean the worker hands the note back
 	// to itself, through the same live alias the API uses, so the cleaned view
@@ -175,17 +235,17 @@ func setup() {
 	// (scripts/vapid-keys.sh --apply, docs/design/push.md). Both halves are optional
 	// reads: an instance without them starts, files recordings and sends
 	// nothing, and says so once here rather than on every capture.
-	vapidPublic, err := ssmparam.Optional(ctx, ssmClient, "VAPID_PUBLIC_KEY_PATH")
+	vapidPublic, err := ssmparam.Optional(ctx, stores.SSM, "VAPID_PUBLIC_KEY_PATH")
 	if err != nil {
 		log.Fatalf("failed to read the VAPID public key: %v", err)
 	}
-	vapidPrivate, err := ssmparam.Optional(ctx, ssmClient, "VAPID_PRIVATE_KEY_PATH")
+	vapidPrivate, err := ssmparam.Optional(ctx, stores.SSM, "VAPID_PRIVATE_KEY_PATH")
 	if err != nil {
 		log.Fatalf("failed to read the VAPID private key: %v", err)
 	}
 	var pusher pipeline.Pusher
 	if vapidPublic != "" && vapidPrivate != "" {
-		sender, err := push.New(vapidPublic, vapidPrivate, envOr("VAPID_SUBJECT", "https://github.com/vppillai/chintan"))
+		sender, err := push.New(vapidPublic, vapidPrivate, boot.EnvOr("VAPID_SUBJECT", "https://github.com/vppillai/chintan"))
 		if err != nil {
 			log.Fatalf("failed to build the web push sender: %v", err)
 		}
@@ -195,57 +255,33 @@ func setup() {
 			slog.String("hint", "put vapid_public_key and vapid_private_key under /chintan/<instance>/ in SSM; scripts/vapid-keys.sh --apply installs them"))
 	}
 
-	p, err := pipeline.New(pipeline.Config{
-		Store:        store,
-		Objects:      objects,
-		STT:          stt,
-		LLM:          llm,
-		Router:       llm,
-		Notes:        notes,
-		Breaker:      spend,
-		CleanInvoker: cleanInvoker,
-		Pusher:       pusher,
-		STTProvider:  "groq",
-		STTModel:     stt.Model(),
-		LLMProvider:  "openai",
-		LLMModel:     llm.Model(),
-	})
-	if err != nil {
-		log.Fatalf("failed to build capture pipeline: %v", err)
-	}
-
-	handleWork = pipeline.NewWorker(p).Handle
-
-	// The expiry sweep runs the same cascade a permanent delete runs, over the
-	// same store and bucket. Building it here rather than lazily keeps the
-	// failure at init, where the deploy can see it, instead of on the first
-	// sweep a week after the deploy that broke it.
-	sweeper, err = purge.New(store, notes)
-	if err != nil {
-		log.Fatalf("failed to build the expiry sweeper: %v", err)
-	}
-
-	// The daily AWS cost reading. MONTHLY_BUDGET_NAME is the stack's budget,
-	// or empty when the stack has none (no alarm address), in which case the
-	// task is a logged no-op and the API shows no AWS figure. The account id
-	// is how DescribeBudget addresses a budget; the template passes it so the
-	// binary need not learn it from STS or the function ARN.
+	// MONTHLY_BUDGET_NAME is the stack's budget, or empty when the stack has
+	// none (no alarm address), in which case the task is a logged no-op and
+	// the API shows no AWS figure.
 	budgetName := strings.TrimSpace(os.Getenv("MONTHLY_BUDGET_NAME"))
 	var accountID string
 	if budgetName != "" {
-		accountID = mustEnv("AWS_ACCOUNT_ID")
-	}
-	costs, err = awscost.New(budgets.NewFromConfig(cfg), usageStore, accountID, budgetName)
-	if err != nil {
-		log.Fatalf("failed to build the aws-cost task: %v", err)
+		accountID = boot.MustEnv("AWS_ACCOUNT_ID")
 	}
 
-	// The daily storage snapshot: the same footprint GET /v1/usage computes
-	// on demand, added onto each tenant's usage rows once a day so storage
-	// has a figure over the month and not only a figure right now.
-	snapshots, err = storagesnap.New(usageStore, service.NewStorageService(store))
-	if err != nil {
-		log.Fatalf("failed to build the storage-snapshot task: %v", err)
+	if err := build(deps{
+		store:          stores.Store,
+		objects:        stores.Objects,
+		stt:            stt,
+		llm:            llm,
+		router:         llm,
+		sttModel:       stt.Model(),
+		llmModel:       llm.Model(),
+		counter:        stores.Counter,
+		spendCapMicros: boot.EnvInt64("DAILY_SPEND_CAP_MICROS", 0),
+		usage:          stores.Usage,
+		cleanInvoker:   cleanInvoker,
+		pusher:         pusher,
+		budgets:        budgets.NewFromConfig(cfg),
+		accountID:      accountID,
+		budgetName:     budgetName,
+	}); err != nil {
+		log.Fatalf("failed to %v", err)
 	}
 }
 
@@ -268,48 +304,6 @@ func checkPriced(ctx context.Context, prices meter.PriceTable, provider, model s
 		obs.Count(ctx, "PriceWildcardUsed", map[string]string{"Provider": provider})
 	}
 	return nil
-}
-
-func logLevel() slog.Level {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("LOG_LEVEL"))) {
-	case "debug":
-		return slog.LevelDebug
-	case "warn":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
-}
-
-func mustEnv(key string) string {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		log.Fatalf("%s environment variable is required", key)
-	}
-	return v
-}
-
-func envOr(key, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
-	}
-	return fallback
-}
-
-// envInt64 refuses to start on a malformed value. A spend cap that silently
-// reads as zero because somebody typed "10 USD" is a cap that does not exist.
-func envInt64(key string, fallback int64) int64 {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return fallback
-	}
-	v, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
-		log.Fatalf("%s must be a whole number of microdollars: %v", key, err)
-	}
-	return v
 }
 
 // resolveSecret prefers a direct env value (local/dev), else fetches SecureString from SSM path env.

@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"math"
 	"strings"
-	"unicode"
 
 	"github.com/vppillai/chintan/backend/internal/llm"
 	"github.com/vppillai/chintan/backend/internal/obs"
@@ -16,23 +15,6 @@ import (
 )
 
 const (
-	// maxTitleLen bounds a dictated note title.
-	maxTitleLen = 120
-	// maxInstructionOnlyWords is the longest transcript that is plausibly nothing but a
-	// spoken app instruction. Past it, spans that cover every word look like lost dictation.
-	maxInstructionOnlyWords = 20
-	// maxSpokenTitleWords is the longest title that still reads as a name rather than a
-	// sentence the router mistook for one.
-	maxSpokenTitleWords = 8
-	// maxNameWords is the prompt's own bound on a name: its Titles rule invents
-	// "a short descriptive title (one to five words)", and the fixture for a
-	// sentence taken as a title pins the shape (R6-RT-8's sentence was tried
-	// and reverted; the bound stands on the older rule). A title within it is a
-	// name the speaker may have said in full,
-	// so a span grown over it removes instruction; a title past it is the
-	// dictation the model mistook for a name, and growing over it removes the
-	// note.
-	maxNameWords = 5
 	// routeMaxTokens caps the routing completion. A well-formed reply is an action, an
 	// id or a short title, a confidence and a span or two — under fifty tokens — so the
 	// cap never shortens a real answer; it bounds a runaway one, which then fails to
@@ -140,14 +122,14 @@ func routedContent(ctx context.Context, transcript, title string, action RouteAc
 			slog.Int("dictated_words", dictated), slog.Int("spans", len(*reply.Spans)))
 	}
 
-	if strings.TrimSpace(content) == "" && action == RouteNew && len(routing.Words(title)) > maxNameWords {
+	if strings.TrimSpace(content) == "" && action == RouteNew && len(routing.Words(title)) > routing.MaxNameWords {
 		// "make a note the dog is having his dinner", titled by the model "The
 		// dog is having his dinner" (the owner's ring, 2026-09-27): the span
 		// {0,3} grown over that title covers every word, and the note was
 		// created empty (DB6-4, review 2026-09-29). The growth is a
 		// convenience and must never be what empties the body, so when the
 		// model's own spans leave content, that is the content, title
-		// duplicated or not. Only a title longer than a name (maxNameWords)
+		// duplicated or not. Only a title longer than a name (routing.MaxNameWords)
 		// takes this path: a naming-only recording whose span stopped before
 		// or inside a real name ("Create a note with the title test123",
 		// "title this staging smoke" — the battery of 2026-09-29 showed the
@@ -174,7 +156,7 @@ func routedContent(ctx context.Context, transcript, title string, action RouteAc
 		if action == RouteNew {
 			titleWords = len(routing.Words(title))
 		}
-		if dictated > maxInstructionOnlyWords || titleWords > maxSpokenTitleWords {
+		if dictated > routing.MaxInstructionOnlyWords || titleWords > routing.MaxSpokenTitleWords {
 			return discard("empty_content", "router spans cover a recording too long to be instruction-only; keeping the dictation",
 				slog.Int("dictated_words", dictated), slog.Int("title_words", titleWords))
 		}
@@ -188,22 +170,6 @@ func routedContent(ctx context.Context, transcript, title string, action RouteAc
 			slog.Int("dictated_words", dictated))
 	}
 	return content
-}
-
-// sanitizeTitle bounds a title to one line, since it comes from dictation and is
-// later stored and rendered back into prompts.
-func sanitizeTitle(title string) string {
-	title = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, title)
-	title = strings.Join(strings.Fields(title), " ")
-	if runes := []rune(title); len(runes) > maxTitleLen {
-		title = strings.TrimSpace(string(runes[:maxTitleLen]))
-	}
-	return title
 }
 
 // parseRouteDecision tolerates markdown fences and surrounding prose. The reply
@@ -264,7 +230,7 @@ func parseRouteDecision(raw string, candidates []routing.Candidate) (RouteDecisi
 	if decision.Confidence > 1 {
 		decision.Confidence = 1
 	}
-	decision.Title = sanitizeTitle(decision.Title)
+	decision.Title = routing.SanitizeTitle(decision.Title)
 
 	var reply routeReply
 	if parsed.Spans != nil {

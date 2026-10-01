@@ -42,6 +42,10 @@ type operation struct {
 	Method   string
 	Path     string
 	Statuses []int
+	// Refs is the components.responses name a status is declared as, for a
+	// status declared by `$ref` on one line; a status declared inline has no
+	// entry. sharedResponses are proven once, by name, not per route.
+	Refs map[int]string
 	// Public records that the operation is not behind the gateway's JWT
 	// authorizer: `security: []` (the health probes) or the `deviceKey`
 	// scheme (the inbox), either of which overrides the document's global
@@ -56,7 +60,7 @@ func (o operation) key() string { return o.Method + " " + o.Path }
 var (
 	pathLine   = regexp.MustCompile(`^ {2}(/\S*):\s*$`)
 	methodLine = regexp.MustCompile(`^ {4}(get|put|post|patch|delete|head|options):\s*$`)
-	statusLine = regexp.MustCompile(`^ {8}'(\d{3})':`)
+	statusLine = regexp.MustCompile(`^ {8}'(\d{3})':(?:\s*\{\s*\$ref:\s*'#/components/responses/(\w+)'\s*\})?`)
 )
 
 // parseOpenAPI reads the paths section.
@@ -136,6 +140,12 @@ func parseOpenAPI(t *testing.T, path string) []operation {
 				var code int
 				if _, err := fmt.Sscanf(m[1], "%d", &code); err == nil {
 					current.Statuses = append(current.Statuses, code)
+					if m[2] != "" {
+						if current.Refs == nil {
+							current.Refs = map[int]string{}
+						}
+						current.Refs[code] = m[2]
+					}
 				}
 			}
 		}
@@ -264,6 +274,48 @@ func TestEveryRegisteredRouteIsDocumented(t *testing.T) {
 		if !documented[route] {
 			t.Errorf("the router serves %s but %s does not declare it; document it or stop registering it",
 				route, openAPIPath)
+		}
+	}
+}
+
+// registrationOptions matches a row of routes() with the options after the
+// handler, so the reverse check below knows which routes the idempotency
+// wrapper answers on.
+var registrationOptions = regexp.MustCompile(`rt\.handle\("([A-Z]+) "\s*\+\s*p\s*\+\s*"([^"]*)",\s*rt\.\w+((?:,\s*\w+\([^)]*\))*)\)`)
+
+// TestEveryRouteDocumentsItsHelperStatuses is the direction
+// TestEveryDocumentedStatusIsReachable does not cover for the helpers: it
+// proves documented ⇒ reachable, and until 2026-10-01 a route could go
+// through fail's 500 fallback or the Idempotency-Key wrapper's four refusals
+// with none of them in the document (review 2026-10-01, OPS-9). Every
+// operation declares 500 as ServerError; every operation registered with
+// idempotent() declares 400, 409, 413 and 503, however each is worded.
+func TestEveryRouteDocumentsItsHelperStatuses(t *testing.T) {
+	src, err := os.ReadFile(routesGoPath)
+	if err != nil {
+		t.Fatalf("open %s: %v", routesGoPath, err)
+	}
+	idempotent := map[string]bool{}
+	for _, m := range registrationOptions.FindAllStringSubmatch(string(src), -1) {
+		if strings.Contains(m[3], "idempotent()") {
+			idempotent[m[1]+" "+handler.APIPrefix+m[2]] = true
+		}
+	}
+	if len(idempotent) < 10 {
+		t.Fatalf("found %d idempotent registrations in %s; the reader and the route table have diverged", len(idempotent), routesGoPath)
+	}
+
+	for _, op := range parseOpenAPI(t, openAPIPath) {
+		if op.Refs[http.StatusInternalServerError] != "ServerError" {
+			t.Errorf("%s does not declare '500' as ServerError; every route can fall through fail", op.key())
+		}
+		if !idempotent[op.key()] {
+			continue
+		}
+		for _, status := range []int{http.StatusBadRequest, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusServiceUnavailable} {
+			if !containsInt(op.Statuses, status) {
+				t.Errorf("%s takes Idempotency-Key but does not declare %d, which the wrapper answers", op.key(), status)
+			}
 		}
 	}
 }
@@ -410,18 +462,64 @@ func concretePath(p string) string {
 // scenario produces one documented status.
 type scenario func(t *testing.T) int
 
+// sharedResponses are the components.responses that a helper, not the
+// handler, answers with on every route it wraps (the comment above
+// `responses:` in the document): the 500 fallback and the not-configured 503.
+// A status declared by one of these refs is proven once, by sharedScenarios,
+// rather than once per route, since the helper is the same code on each.
+var sharedResponses = map[string]int{
+	"ServerError":   http.StatusInternalServerError,
+	"NotConfigured": http.StatusServiceUnavailable,
+}
+
+// sharedScenarios produce each shared status through its helper, on at least
+// one route: the 500 from fail's fallback arm, and the 503 from the two nil
+// guards, a feature the instance was built without and the idempotency
+// wrapper on an instance with no store to record replays in.
+func sharedScenarios() map[string][]scenario {
+	return map[string][]scenario{
+		"ServerError": {func(t *testing.T) int {
+			h := newHarness(t, withBrokenObjects())
+			note := h.createNote(t, "user1", "Undeletable", nil)
+			h.do(t, http.MethodDelete, "/v1/notes/"+note.ID, "user1", nil)
+			return h.do(t, http.MethodDelete, "/v1/notes/"+note.ID+"/permanent", "user1", nil).Code
+		}},
+		"NotConfigured": {
+			func(t *testing.T) int {
+				return newHarness(t, withoutExport()).do(t, http.MethodGet, "/v1/export/e_1", "user1", nil).Code
+			},
+			func(t *testing.T) int {
+				return newHarness(t, withoutIdempotencyStore()).do(t, http.MethodPost, "/v1/notes/n_1/restore", "user1", nil,
+					[2]string{"Idempotency-Key", "no-store-to-record-this"}).Code
+			},
+		},
+	}
+}
+
 // TestEveryDocumentedStatusIsReachable runs a scenario for each declared
-// (path, method, status) and asserts it produces that status.
+// (path, method, status) and asserts it produces that status; a status
+// declared through a shared response is proven once through its helper.
 //
 // A declared status with no scenario fails the test. That is the point: it is
 // how a status somebody added to the document but never implemented — or
 // implemented and then lost — gets noticed.
 func TestEveryDocumentedStatusIsReachable(t *testing.T) {
 	scenarios := statusScenarios()
+	shared := sharedScenarios()
+	referenced := map[string]bool{}
 
 	for _, op := range parseOpenAPI(t, openAPIPath) {
 		for _, status := range op.Statuses {
 			key := fmt.Sprintf("%s %s -> %d", op.Method, op.Path, status)
+			if name, ok := op.Refs[status]; ok {
+				if want, isShared := sharedResponses[name]; isShared {
+					if want != status {
+						t.Errorf("%s declares %s, which is a %d", key, name, want)
+					}
+					referenced[name] = true
+					continue
+				}
+			}
 			run, ok := scenarios[key]
 			if !ok {
 				t.Errorf("no scenario proves %s is reachable; add one or stop declaring it", key)
@@ -433,6 +531,23 @@ func TestEveryDocumentedStatusIsReachable(t *testing.T) {
 				}
 			})
 			delete(scenarios, key)
+		}
+	}
+
+	for name, status := range sharedResponses {
+		if !referenced[name] {
+			t.Errorf("no operation declares the shared response %s; drop it or reference it", name)
+		}
+		runs := shared[name]
+		if len(runs) == 0 {
+			t.Errorf("no scenario proves the shared response %s is reachable", name)
+		}
+		for i, run := range runs {
+			t.Run(fmt.Sprintf("shared %s #%d -> %d", name, i+1, status), func(t *testing.T) {
+				if got := run(t); got != status {
+					t.Fatalf("scenario produced %d, want the shared %d", got, status)
+				}
+			})
 		}
 	}
 
@@ -464,6 +579,29 @@ func statusScenarios() map[string]scenario {
 			return newHarness(t).do(t, method, path, user, body).Code
 		}
 	}
+	// The Idempotency-Key wrapper's three refusals, the same on every route
+	// it wraps: a key too short to be one; a key already used for another
+	// request (a note create, whose fingerprint differs); a body over the
+	// route's cap, read by the wrapper before the handler sees it.
+	badKey := func(method, path string, body any) scenario {
+		return func(t *testing.T) int {
+			return newHarness(t).do(t, method, path, "user1", body, [2]string{"Idempotency-Key", "short"}).Code
+		}
+	}
+	reusedKey := func(method, path string, body any) scenario {
+		return func(t *testing.T) int {
+			h := newHarness(t)
+			key := [2]string{"Idempotency-Key", "reused-across-requests-1"}
+			h.do(t, http.MethodPost, "/v1/notes", "user1", map[string]any{"title": "First"}, key)
+			return h.do(t, method, path, "user1", body, key).Code
+		}
+	}
+	oversized := func(method, path string) scenario {
+		return func(t *testing.T) int {
+			body := []byte(`{"pad":"` + strings.Repeat("x", int(handler.MaxSmallRequestBytes)) + `"}`)
+			return newHarness(t).do(t, method, path, "user1", body, [2]string{"Idempotency-Key", "oversized-body-1"}).Code
+		}
+	}
 
 	return map[string]scenario{
 		// ---- health
@@ -479,6 +617,8 @@ func statusScenarios() map[string]scenario {
 		"PUT /v1/settings -> 200": send(http.MethodPut, "/v1/settings", "user1", map[string]any{"theme": "nocturne"}),
 		"PUT /v1/settings -> 400": send(http.MethodPut, "/v1/settings", "user1", map[string]any{"theme": "puce"}),
 		"PUT /v1/settings -> 401": send(http.MethodPut, "/v1/settings", "", map[string]any{}),
+		"PUT /v1/settings -> 409": reusedKey(http.MethodPut, "/v1/settings", map[string]any{"theme": "nocturne"}),
+		"PUT /v1/settings -> 413": oversized(http.MethodPut, "/v1/settings"),
 
 		// ---- notes
 		"GET /v1/notes -> 200":  get("/v1/notes", "user1"),
@@ -551,7 +691,10 @@ func statusScenarios() map[string]scenario {
 			h.do(t, http.MethodDelete, "/v1/notes/"+note.ID, "user1", nil)
 			return h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/restore", "user1", nil).Code
 		},
+		"POST /v1/notes/{noteId}/restore -> 400": badKey(http.MethodPost, "/v1/notes/x/restore", nil),
 		"POST /v1/notes/{noteId}/restore -> 401": send(http.MethodPost, "/v1/notes/x/restore", "", nil),
+		"POST /v1/notes/{noteId}/restore -> 409": reusedKey(http.MethodPost, "/v1/notes/x/restore", nil),
+		"POST /v1/notes/{noteId}/restore -> 413": oversized(http.MethodPost, "/v1/notes/x/restore"),
 		"POST /v1/notes/{noteId}/restore -> 404": send(http.MethodPost, "/v1/notes/missing/restore", "user1", nil),
 
 		"DELETE /v1/notes/{noteId}/permanent -> 204": func(t *testing.T) int {
@@ -571,13 +714,6 @@ func statusScenarios() map[string]scenario {
 		"DELETE /v1/notes/{noteId}/permanent -> 404": send(http.MethodDelete, "/v1/notes/missing/permanent", "user1", nil),
 		// A cascade that cannot finish fails loudly and leaves the note in
 		// place, rather than reporting success over orphaned audio.
-		"DELETE /v1/notes/{noteId}/permanent -> 500": func(t *testing.T) int {
-			h := newHarness(t, withBrokenObjects())
-			note := h.createNote(t, "user1", "Undeletable", nil)
-			h.do(t, http.MethodDelete, "/v1/notes/"+note.ID, "user1", nil)
-			return h.do(t, http.MethodDelete, "/v1/notes/"+note.ID+"/permanent", "user1", nil).Code
-		},
-
 		"POST /v1/notes/pins -> 200": func(t *testing.T) int {
 			h := newHarness(t)
 			note := h.createNote(t, "user1", "Pinned", nil)
@@ -610,6 +746,7 @@ func statusScenarios() map[string]scenario {
 		},
 		"POST /v1/notes/match -> 400": send(http.MethodPost, "/v1/notes/match", "user1", map[string]any{"query": ""}),
 		"POST /v1/notes/match -> 401": send(http.MethodPost, "/v1/notes/match", "", map[string]any{"query": "x"}),
+		"POST /v1/notes/match -> 413": oversized(http.MethodPost, "/v1/notes/match"),
 
 		"GET /v1/notes/{noteId}/recordings/urls -> 200": func(t *testing.T) int {
 			h := newHarness(t)
@@ -632,6 +769,7 @@ func statusScenarios() map[string]scenario {
 		},
 		"POST /v1/notes/{noteId}/clean -> 401": send(http.MethodPost, "/v1/notes/x/clean", "", nil),
 		"POST /v1/notes/{noteId}/clean -> 404": send(http.MethodPost, "/v1/notes/missing/clean", "user1", nil),
+		"POST /v1/notes/{noteId}/clean -> 413": oversized(http.MethodPost, "/v1/notes/x/clean"),
 		"POST /v1/notes/{noteId}/clean -> 409": func(t *testing.T) int {
 			h := newHarness(t)
 			note := h.createNote(t, "user1", "Archived", nil)
@@ -651,7 +789,9 @@ func statusScenarios() map[string]scenario {
 			h.seedRegenerable(t, "user1", note, "c_regen", "the gutter leaks")
 			return h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/regenerate", "user1", nil).Code
 		},
+		"POST /v1/notes/{noteId}/regenerate -> 400": badKey(http.MethodPost, "/v1/notes/x/regenerate", nil),
 		"POST /v1/notes/{noteId}/regenerate -> 401": send(http.MethodPost, "/v1/notes/x/regenerate", "", nil),
+		"POST /v1/notes/{noteId}/regenerate -> 413": oversized(http.MethodPost, "/v1/notes/x/regenerate"),
 		"POST /v1/notes/{noteId}/regenerate -> 404": send(http.MethodPost, "/v1/notes/missing/regenerate", "user1", nil),
 		"POST /v1/notes/{noteId}/regenerate -> 409": func(t *testing.T) int {
 			h := newHarness(t)
@@ -882,6 +1022,7 @@ func statusScenarios() map[string]scenario {
 		"POST /v1/captures -> 400": send(http.MethodPost, "/v1/captures", "user1", map[string]any{}),
 		"POST /v1/captures -> 401": send(http.MethodPost, "/v1/captures", "", map[string]any{"content_type": "audio/webm"}),
 		"POST /v1/captures -> 404": send(http.MethodPost, "/v1/captures", "user1", map[string]any{"content_type": "audio/webm", "note_id": "missing"}),
+		"POST /v1/captures -> 413": oversized(http.MethodPost, "/v1/captures"),
 		"POST /v1/captures -> 409": func(t *testing.T) int {
 			h := newHarness(t)
 			return h.do(t, http.MethodPost, "/v1/captures", "user1", map[string]any{"content_type": "audio/webm", "note_id": archivedNote(t, h)}).Code
@@ -914,6 +1055,7 @@ func statusScenarios() map[string]scenario {
 		},
 		"POST /v1/captures/{captureId}/target -> 401": send(http.MethodPost, "/v1/captures/c_1/target", "", map[string]any{}),
 		"POST /v1/captures/{captureId}/target -> 404": send(http.MethodPost, "/v1/captures/missing/target", "user1", map[string]any{"note_id": "n1"}),
+		"POST /v1/captures/{captureId}/target -> 413": oversized(http.MethodPost, "/v1/captures/c_1/target"),
 		"POST /v1/captures/{captureId}/target -> 409": func(t *testing.T) int {
 			h := newHarness(t)
 			note := h.createNote(t, "user1", "Taken", nil)
@@ -933,7 +1075,9 @@ func statusScenarios() map[string]scenario {
 			})
 			return h.do(t, http.MethodPost, "/v1/captures/"+c.ID+"/retry", "user1", nil).Code
 		},
+		"POST /v1/captures/{captureId}/retry -> 400": badKey(http.MethodPost, "/v1/captures/c_1/retry", nil),
 		"POST /v1/captures/{captureId}/retry -> 401": send(http.MethodPost, "/v1/captures/c_1/retry", "", nil),
+		"POST /v1/captures/{captureId}/retry -> 413": oversized(http.MethodPost, "/v1/captures/c_1/retry"),
 		"POST /v1/captures/{captureId}/retry -> 404": send(http.MethodPost, "/v1/captures/missing/retry", "user1", nil),
 		"POST /v1/captures/{captureId}/retry -> 409": func(t *testing.T) int {
 			h := newHarness(t)
@@ -962,6 +1106,7 @@ func statusScenarios() map[string]scenario {
 		},
 		"POST /v1/captures/{captureId}/retranscribe -> 401": send(http.MethodPost, "/v1/captures/c_1/retranscribe", "", nil),
 		"POST /v1/captures/{captureId}/retranscribe -> 404": send(http.MethodPost, "/v1/captures/missing/retranscribe", "user1", nil),
+		"POST /v1/captures/{captureId}/retranscribe -> 413": oversized(http.MethodPost, "/v1/captures/c_1/retranscribe"),
 		"POST /v1/captures/{captureId}/retranscribe -> 409": func(t *testing.T) int {
 			h := newHarness(t)
 			c := h.putCapture(t, model.CaptureIndex{
@@ -1017,6 +1162,7 @@ func statusScenarios() map[string]scenario {
 		"POST /v1/captures/{captureId}/move -> 400": send(http.MethodPost, "/v1/captures/c_1/move", "user1",
 			map[string]any{"note_id": "n1", "new_note_title": "New"}),
 		"POST /v1/captures/{captureId}/move -> 401": send(http.MethodPost, "/v1/captures/c_1/move", "", map[string]any{"note_id": "n1"}),
+		"POST /v1/captures/{captureId}/move -> 413": oversized(http.MethodPost, "/v1/captures/c_1/move"),
 		"POST /v1/captures/{captureId}/move -> 404": send(http.MethodPost, "/v1/captures/missing/move", "user1", map[string]any{"note_id": "n1"}),
 		"POST /v1/captures/{captureId}/move -> 409": func(t *testing.T) int {
 			h := newHarness(t)
@@ -1042,7 +1188,10 @@ func statusScenarios() map[string]scenario {
 
 		// ---- export
 		"POST /v1/export -> 202":           send(http.MethodPost, "/v1/export", "user1", nil),
+		"POST /v1/export -> 400":           badKey(http.MethodPost, "/v1/export", nil),
 		"POST /v1/export -> 401":           send(http.MethodPost, "/v1/export", "", nil),
+		"POST /v1/export -> 409":           reusedKey(http.MethodPost, "/v1/export", nil),
+		"POST /v1/export -> 413":           oversized(http.MethodPost, "/v1/export"),
 		"GET /v1/export/{exportId} -> 401": get("/v1/export/e_1", ""),
 		"GET /v1/export/{exportId} -> 404": get("/v1/export/e_neverissued", "user1"),
 		"GET /v1/export/{exportId} -> 200": func(t *testing.T) int {

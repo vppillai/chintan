@@ -186,9 +186,11 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 		}
 	}
 
-	title := service.SanitizeTitle(decision.Title)
+	// The provider sanitised the model's title already; the fake routers and
+	// the fallback did not, and the function is idempotent.
+	title := routing.SanitizeTitle(decision.Title)
 	if title == "" {
-		title = service.SanitizeTitle(fallbackNoteTitle(decision.Content, p.now()))
+		title = routing.SanitizeTitle(fallbackNoteTitle(decision.Content, p.now()))
 	}
 	if p.cfg.Notes == nil {
 		capture.SuggestedTitle = title
@@ -205,7 +207,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	// errRouteCandidates does: the retry is cheap, the duplicate note is not.
 	// The rule is preferExistingTitle's pure half: the dedupe is counted as
 	// itself, not as a title match too (DB6-13).
-	fresh, _, err := p.cfg.Store.DrainNotes(ctx, tenantID, repository.DrainOptions{MaxItems: maxRouteCandidates})
+	fresh, _, err := p.cfg.Store.DrainNotes(ctx, tenantID, repository.DrainOptions{MaxItems: routing.MaxCandidates})
 	if err != nil {
 		return fmt.Errorf("pipeline: re-check routing candidates: %w", err)
 	}
@@ -300,11 +302,11 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transc
 	}
 
 	// The store orders the list most recently touched first over every note
-	// the tenant has, so the leading maxRouteCandidates are the window the
+	// the tenant has, so the leading routing.MaxCandidates are the window the
 	// router should see — the likeliest destinations. Until 2026-09 this
 	// drained a 500-note pool and cut it here, which was only right while the
 	// store's own order was by creation.
-	active, _, err := p.cfg.Store.DrainNotes(ctx, tenantID, repository.DrainOptions{MaxItems: maxRouteCandidates})
+	active, _, err := p.cfg.Store.DrainNotes(ctx, tenantID, repository.DrainOptions{MaxItems: routing.MaxCandidates})
 	if err != nil {
 		return routed{}, fmt.Errorf("%w: %w", errRouteCandidates, err)
 	}
@@ -317,8 +319,8 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transc
 	sort.SliceStable(active, func(i, j int) bool {
 		return noteTouchedAt(active[i]).After(noteTouchedAt(active[j]))
 	})
-	if len(active) > maxRouteCandidates {
-		active = active[:maxRouteCandidates]
+	if len(active) > routing.MaxCandidates {
+		active = active[:routing.MaxCandidates]
 	}
 	active = withinRouteBudget(active)
 
@@ -348,7 +350,7 @@ const (
 // decide is the deterministic half of routing: the router's reply and the
 // transcript, over the notes the router saw, to what route() does with them
 // before the store is asked again. The spoken-name rules (existingNoteNamed)
-// may turn the reply into an append; an append at routeConfidenceThreshold
+// may turn the reply into an append; an append at routing.AppendConfidence
 // or above is filed (outcomeAppend), one below it asks (outcomeNeedsTarget),
 // and anything else starts a note (outcomeNew). It reads nothing and logs
 // nothing, so the worker and the replayed routing eval
@@ -368,7 +370,7 @@ func outcomeOf(decision provider.RouteDecision) string {
 	switch {
 	case decision.Action != provider.RouteAppend || decision.NoteID == "":
 		return outcomeNew
-	case decision.Confidence >= routeConfidenceThreshold:
+	case decision.Confidence >= routing.AppendConfidence:
 		return outcomeAppend
 	default:
 		return outcomeNeedsTarget
@@ -453,7 +455,7 @@ func withinRouteBudget(active []model.NoteIndex) []model.NoteIndex {
 // (prefix_transcript). The prefix rules take a name of at least two words or
 // eight letters, so "list" or "test" never files anything, prefer the longest
 // name, and apply to a "new" decision and to an append the model was unsure
-// of (under routeConfidenceThreshold), since filing silently on a spoken name
+// of (under routing.AppendConfidence), since filing silently on a spoken name
 // (R6-RT-OD1) should not depend on which unsure verdict the model gave. The
 // derived content is kept as the model left it; a name that stays in the
 // body is one word to delete, dictation stripped by a guess is gone.
@@ -487,11 +489,11 @@ func filedInto(decision provider.RouteDecision, noteID string) provider.RouteDec
 // names, and how: the exact title rule first, then the longest name either
 // opens with, then, for an append the model was unsure of, the model's own
 // suggestion spoken as a name (spokenAsName). It applies to a "new" decision
-// and to an append under routeConfidenceThreshold; an append the model was
+// and to an append under routing.AppendConfidence; an append the model was
 // sure of stands. It is the pure half of preferExistingTitle, run again by
 // route()'s pre-create re-check without the title-match count.
 func existingNoteNamed(decision provider.RouteDecision, transcript string, active []model.NoteIndex) (string, string) {
-	if decision.Action == provider.RouteAppend && decision.Confidence >= routeConfidenceThreshold {
+	if decision.Action == provider.RouteAppend && decision.Confidence >= routing.AppendConfidence {
 		return "", ""
 	}
 	if decision.Action != provider.RouteNew && decision.Action != provider.RouteAppend {
@@ -574,11 +576,12 @@ func noteNames(n model.NoteIndex) []string {
 	return append([]string{n.Title}, append(append([]string(nil), n.Aliases...), n.Tags...)...)
 }
 
-// prefixRuleName is the guard on what may file a recording by opening it: two
-// words, or one of at least eight letters. "Roof", "list" and "test" open too
-// many sentences that are not about them.
+// prefixRuleName is the guard on what may file a recording by opening it or
+// by being spoken as a name: routing.MinNameWords words, or one of at least
+// routing.MinNameRunes letters, in NormalizeSpeech form. "Roof", "list" and
+// "test" open too many sentences that are not about them.
 func prefixRuleName(name string) bool {
-	return strings.Contains(name, " ") || utf8.RuneCountInString(name) >= 8
+	return len(strings.Fields(name)) >= routing.MinNameWords || utf8.RuneCountInString(name) >= routing.MinNameRunes
 }
 
 // titleNames reports which of n's names want, already in NormalizeSpeech
@@ -750,11 +753,12 @@ func candidateTokens(c routing.Candidate) float64 {
 // of what was said, so the row reads as the thought it holds. Until
 // 2026-09-21 it was "Voice note <UTC date and time>", which sat beside the
 // row's own local time and disagreed with it by the timezone offset (review
-// T40). Six words or forty characters, whichever comes first, trailing
-// punctuation dropped; only an empty transcript falls back to "Voice note
-// <date>", with no clock, because the row's own time already carries one.
+// T40). routing.FallbackTitleWords words or routing.FallbackTitleRunes
+// characters, whichever comes first, trailing punctuation dropped; only an
+// empty transcript falls back to "Voice note <date>", with no clock, because
+// the row's own time already carries one.
 func fallbackNoteTitle(content string, now time.Time) string {
-	const maxWords, maxRunes = 6, 40
+	const maxWords, maxRunes = routing.FallbackTitleWords, routing.FallbackTitleRunes
 	title := ""
 	for i, word := range strings.Fields(content) {
 		if i == maxWords {

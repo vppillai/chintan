@@ -8,23 +8,19 @@ import (
 	"context"
 	"log"
 	"log/slog"
+	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	lambdasvc "github.com/aws/aws-sdk-go-v2/service/lambda"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 
 	"github.com/vppillai/chintan/backend/internal/auth"
+	"github.com/vppillai/chintan/backend/internal/boot"
 	"github.com/vppillai/chintan/backend/internal/handler"
 	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/pipeline"
@@ -42,31 +38,111 @@ var lambdaAdapter *httpadapter.HandlerAdapterV2
 // have to wait for anyway.
 const warmTimeout = 5 * time.Second
 
-func init() {
+// deps is everything build wires that setup reads from the environment or
+// opens on AWS, as the interfaces the services take, so a test builds the
+// same API over fakes (TestBuildServesTheAPIOverFakes).
+type deps struct {
+	store   repository.Store
+	objects repository.Objects
+	// uploads is the tag-aware presigner. Without it the fallback signs
+	// untagged PUTs, the lifecycle rule never matches the object, and
+	// RetentionDays goes back to being a setting that is stored, returned,
+	// rendered in the UI, and read by nothing.
+	uploads upload.Presigner
+	// invoker is the one hand-off to the worker Lambda, on its live alias,
+	// shared by the capture retry/target, the whole-note clean and Ask.
+	// Without it a retry has nowhere to go and POST /v1/notes/{id}/clean
+	// answers 503.
+	invoker service.Invoker
+	// spend is the atomic counter the breaker enforces against. The API does
+	// not call a provider, so it cannot spend; it reads the same counter with
+	// the same cap, so a capped instance is told before it uploads rather
+	// than after the capture stalls.
+	spend          service.SpendCounter
+	spendCapMicros int64
+	// usage is the one usage store for both directions: the reader behind
+	// GET /v1/usage, and the counter that adds every authenticated request
+	// to the same month and day rows the worker's breaker writes spend to.
+	usage interface {
+		usage.Reader
+		usage.RequestCounter
+	}
+	// verifier checks bearer tokens; nil fails closed (middleware.Auth).
+	verifier auth.Verifier
+	// vapidPublic is the key GET /v1/push/key hands the browser, when the
+	// owner has made the pair (docs/design/push.md); empty answers 404.
+	vapidPublic   string
+	allowedOrigin string
+}
+
+// build wires the services and the router over d. The readiness service
+// comes back as well, for the warm-up and the test.
+func build(d deps) (http.Handler, *service.ReadinessService) {
+	notesService := service.NewNotesService(d.store, d.objects).WithInvoker(d.invoker)
+	settingsService := service.NewSettingsService(d.store)
+	// Ask writes the question row and hands it to the same worker; the
+	// retrieval and the model call never run here.
+	askService := service.NewAskService(d.store, d.invoker)
+	// WithNoteCreator lets a user resolve a needs_target capture by naming a
+	// new note.
+	captureService := service.NewCaptureService(d.store, d.objects).
+		WithUploads(d.uploads).
+		WithInvoker(d.invoker).
+		WithNoteCreator(notesService)
+	readiness := service.NewReadinessService(d.store, d.objects)
+
+	// There is no biometric-unlock wiring here any more. Cognito's managed
+	// login does passkeys natively (SignInPolicy.AllowedFirstAuthFactors on
+	// the user pool), which replaced the custom WebAuthn ceremony, the sealed
+	// refresh-token vault and the SSM vault key that used to be built here.
+	router := handler.New(handler.Deps{
+		Notes:          notesService,
+		Settings:       settingsService,
+		Captures:       captureService,
+		Search:         service.NewSearchService(notesService),
+		Tags:           service.NewTagsService(notesService),
+		Export:         service.NewExportService(notesService, captureService, settingsService, d.objects),
+		Readiness:      readiness,
+		Spend:          service.NewSpendGate(d.spend, d.spendCapMicros),
+		Usage:          d.usage,
+		Requests:       d.usage,
+		Storage:        service.NewStorageService(d.store),
+		Ask:            askService,
+		Devices:        service.NewDeviceService(d.store),
+		Push:           service.NewPushService(d.store),
+		PushPublicKey:  d.vapidPublic,
+		Store:          d.store,
+		Verifier:       d.verifier,
+		AllowedOrigin:  d.allowedOrigin,
+		SpendCapMicros: d.spendCapMicros,
+	})
+	return router, readiness
+}
+
+// setup reads the environment, opens AWS and builds the API. It is called
+// from main rather than from init so that the package is testable at all:
+// an init that calls log.Fatalf on a missing TABLE_NAME kills the test
+// binary before a single test runs, which is why this binary had no test
+// until 2026-10-01. The fail-fast property is unchanged: Lambda's init phase
+// runs main up to lambda.Start, so a missing variable still stops the cold
+// start rather than the first invocation.
+func setup() http.Handler {
 	// Structured logging is installed before anything can log, so no startup
 	// line escapes as unstructured text. cmd/worker does the same.
-	obs.Setup(logLevel())
+	obs.Setup(boot.LogLevel())
 
 	ctx := context.Background()
 
-	tableName := mustEnv("TABLE_NAME")
-	contentBucket := mustEnv("CONTENT_BUCKET")
-	allowedOrigin := mustEnv("ALLOWED_ORIGIN")
+	tableName := boot.MustEnv("TABLE_NAME")
+	contentBucket := boot.MustEnv("CONTENT_BUCKET")
+	allowedOrigin := boot.MustEnv("ALLOWED_ORIGIN")
 	// A wildcard origin alongside Allow-Credentials defeats the same-origin
 	// policy. Refuse to start rather than serve it.
 	if allowedOrigin == "*" {
 		log.Fatalf("ALLOWED_ORIGIN must be a concrete origin, not %q", allowedOrigin)
 	}
 
-	awsRegion := os.Getenv("AWS_REGION")
-
-	var cfg aws.Config
-	var err error
-	if awsRegion != "" {
-		cfg, err = config.LoadDefaultConfig(ctx, config.WithRegion(awsRegion))
-	} else {
-		cfg, err = config.LoadDefaultConfig(ctx)
-	}
+	cfg, err := boot.LoadAWS(ctx)
 	if err != nil {
 		log.Fatalf("Failed to load AWS config: %v", err)
 	}
@@ -74,78 +150,43 @@ func init() {
 	// Token verification is not optional. The API Gateway authorizer is not
 	// guaranteed to be the only ingress, so the service verifies for itself and
 	// refuses to start unconfigured — auth may not silently degrade.
-	clientID := mustEnv("USER_POOL_CLIENT_ID")
+	clientID := boot.MustEnv("USER_POOL_CLIENT_ID")
 	issuer := strings.TrimSpace(os.Getenv("COGNITO_ISSUER"))
 	if issuer == "" {
-		issuer = auth.NewCognitoIssuer(awsRegion, os.Getenv("USER_POOL_ID"))
+		issuer = auth.NewCognitoIssuer(os.Getenv("AWS_REGION"), os.Getenv("USER_POOL_ID"))
 	}
 	verifier, err := auth.NewCognitoVerifier(issuer, clientID, nil)
 	if err != nil {
 		log.Fatalf("Failed to build token verifier (set COGNITO_ISSUER or USER_POOL_ID, and USER_POOL_CLIENT_ID): %v", err)
 	}
 
-	dynamoClient := dynamodb.NewFromConfig(cfg)
-	s3Client := s3.NewFromConfig(cfg)
+	stores := boot.NewStores(cfg, tableName, contentBucket)
 
-	store := repository.NewDynamoStore(dynamoClient, tableName)
-	objects := repository.NewS3Objects(s3Client, contentBucket)
-
-	// One hand-off to the worker Lambda, on its live alias, shared by the
-	// capture retry/target and the whole-note clean. Without it a retry has
-	// nowhere to go and POST /v1/notes/{id}/clean answers 503.
-	invoker := pipeline.NewInvoker(lambdasvc.NewFromConfig(cfg), mustEnv("WORKER_FUNCTION_ARN"))
-
-	notesService := service.NewNotesService(store, objects).WithInvoker(invoker)
-	settingsService := service.NewSettingsService(store)
-	// Ask writes the question row and hands it to the same worker; the
-	// retrieval and the model call never run here.
-	askService := service.NewAskService(store, invoker)
-
-	// Three wirings, each of which is the difference between a feature working
-	// and a feature that only looks like it works:
-	//
-	//  - WithUploads installs the tag-aware presigner. Without it the fallback
-	//    signs untagged PUTs, the lifecycle rule never matches the object, and
-	//    RetentionDays goes back to being a setting that is stored, returned,
-	//    rendered in the UI, and read by nothing.
-	//  - WithInvoker hands captures to the worker Lambda, asynchronously, on
-	//    the worker's live alias. Without it a retry has nowhere to go.
-	//  - WithNoteCreator lets a user resolve a needs_target capture by naming a
-	//    new note.
-	captureService := service.NewCaptureService(store, objects).
-		WithUploads(upload.NewS3(s3Client, contentBucket)).
-		WithInvoker(invoker).
-		WithNoteCreator(notesService)
-
-	// The API does not call a provider, so it cannot spend. It reads the same
-	// atomic counter the breaker enforces against, with the same cap, so a
-	// capped instance is told before it uploads rather than after the capture
-	// stalls.
-	spendCapMicros := envInt64("DAILY_SPEND_CAP_MICROS", 0)
-	spendGate := service.NewSpendGate(pipeline.NewDynamoCounter(dynamoClient, tableName), spendCapMicros)
-
-	// There is no biometric-unlock wiring here any more. Cognito's managed
-	// login does passkeys natively (SignInPolicy.AllowedFirstAuthFactors on the
-	// user pool), which replaced the custom WebAuthn ceremony, the sealed
-	// refresh-token vault and the SSM vault key that used to be built here.
-	// One usage store for both directions: the reader behind GET /v1/usage,
-	// and the counter that adds every authenticated request to the same
-	// month and day rows the worker's breaker writes provider spend to.
-	usageStore := usage.NewDynamo(dynamoClient, tableName)
-
-	// The VAPID public key GET /v1/push/key hands the browser, when the owner
-	// has made the pair (docs/design/push.md). The one parameter this binary
-	// reads, and optional: without it the route answers 404 and the app's
-	// Notifications card explains the step.
-	vapidPublic, err := ssmparam.Optional(ctx, ssm.NewFromConfig(cfg), "VAPID_PUBLIC_KEY_PATH")
+	// The VAPID public key is the one parameter this binary reads, and
+	// optional: without it the route answers 404 and the app's Notifications
+	// card explains the step.
+	vapidPublic, err := ssmparam.Optional(ctx, stores.SSM, "VAPID_PUBLIC_KEY_PATH")
 	if err != nil {
 		log.Fatalf("Failed to read the VAPID public key: %v", err)
 	}
 
+	router, readiness := build(deps{
+		store:          stores.Store,
+		objects:        stores.Objects,
+		uploads:        upload.NewS3(stores.S3, contentBucket),
+		invoker:        pipeline.NewInvoker(lambdasvc.NewFromConfig(cfg), boot.MustEnv("WORKER_FUNCTION_ARN")),
+		spend:          stores.Counter,
+		spendCapMicros: boot.EnvInt64("DAILY_SPEND_CAP_MICROS", 0),
+		usage:          stores.Usage,
+		verifier:       verifier,
+		vapidPublic:    vapidPublic,
+		allowedOrigin:  allowedOrigin,
+	})
+
 	// The first request on a fresh container paid about 270 ms inside the
 	// handler — the JWKS fetch and the DynamoDB connection both opened there,
-	// not in init — and Home fans out five GETs, so an idle launch paid it on
-	// every container it spawned (review 2026-09-21, T26). Both are opened
+	// not at start-up — and Home fans out five GETs, so an idle launch paid it
+	// on every container it spawned (review 2026-09-21, T26). Both are opened
 	// here instead, concurrently, before the first invocation. The store half
 	// is the readiness probe itself: one GetItem on its sentinel partition and
 	// one S3 GetObject, which also opens the S3 client the first note open
@@ -154,7 +195,6 @@ func init() {
 	// above is a third round-trip on every cold start — a ParameterNotFound
 	// on a dormant instance — that is not in the 270 ms and has not been
 	// measured; measure it once the keys exist.
-	readiness := service.NewReadinessService(store, objects)
 	warmCtx, cancelWarm := context.WithTimeout(ctx, warmTimeout)
 	defer cancelWarm()
 	var warm sync.WaitGroup
@@ -173,65 +213,8 @@ func init() {
 			}
 		}
 	}()
-
-	router := handler.New(handler.Deps{
-		Notes:          notesService,
-		Settings:       settingsService,
-		Captures:       captureService,
-		Search:         service.NewSearchService(notesService),
-		Tags:           service.NewTagsService(notesService),
-		Export:         service.NewExportService(notesService, captureService, settingsService, objects),
-		Readiness:      readiness,
-		Spend:          spendGate,
-		Usage:          usageStore,
-		Requests:       usageStore,
-		Storage:        service.NewStorageService(store),
-		Ask:            askService,
-		Devices:        service.NewDeviceService(store),
-		Push:           service.NewPushService(store),
-		PushPublicKey:  vapidPublic,
-		Store:          store,
-		Verifier:       verifier,
-		AllowedOrigin:  allowedOrigin,
-		SpendCapMicros: spendCapMicros,
-	})
-	lambdaAdapter = httpadapter.NewV2(router)
 	warm.Wait()
-}
-
-func logLevel() slog.Level {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("LOG_LEVEL"))) {
-	case "debug":
-		return slog.LevelDebug
-	case "warn":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
-}
-
-func mustEnv(key string) string {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		log.Fatalf("%s environment variable is required", key)
-	}
-	return v
-}
-
-// envInt64 refuses to start on a malformed value. A spend cap that silently
-// reads as zero because somebody typed "10 USD" is a cap that does not exist.
-func envInt64(key string, fallback int64) int64 {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return fallback
-	}
-	v, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
-		log.Fatalf("%s must be a whole number of microdollars: %v", key, err)
-	}
-	return v
+	return router
 }
 
 func Handler(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
@@ -239,5 +222,6 @@ func Handler(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.AP
 }
 
 func main() {
+	lambdaAdapter = httpadapter.NewV2(setup())
 	lambda.Start(Handler)
 }

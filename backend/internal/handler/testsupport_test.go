@@ -277,6 +277,23 @@ func (w *recordingInvoker) InvokeRegenerateNote(_ context.Context, tenantID, not
 	return nil
 }
 
+// withoutExport is an instance built without the export service, the nil
+// guard's 503 on both export routes.
+func withoutExport() harnessOption {
+	return func(d *handler.Deps, _ *harness) {
+		d.Export = nil
+	}
+}
+
+// withoutIdempotencyStore is an instance with no store to record replays in:
+// a request carrying an Idempotency-Key is refused with 503 rather than run
+// twice (idempotent()).
+func withoutIdempotencyStore() harnessOption {
+	return func(d *handler.Deps, _ *harness) {
+		d.Store = nil
+	}
+}
+
 // withoutAsk builds the API the way an instance with no worker is built: the
 // ask service exists but has nowhere to send a question.
 func withoutAsk() harnessOption {

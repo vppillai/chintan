@@ -480,8 +480,8 @@ func TestParseRouteDecisionBoundsTitle(t *testing.T) {
 	if strings.ContainsAny(decision.Title, "\n\r\t") {
 		t.Errorf("title = %q, want a single line", decision.Title)
 	}
-	if n := len([]rune(decision.Title)); n > maxTitleLen {
-		t.Errorf("title length = %d, want <= %d", n, maxTitleLen)
+	if n := len([]rune(decision.Title)); n > routing.MaxTitleRunes {
+		t.Errorf("title length = %d, want <= %d", n, routing.MaxTitleRunes)
 	}
 }
 

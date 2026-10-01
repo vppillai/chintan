@@ -11,6 +11,7 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/httperr"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/routing"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
@@ -29,10 +30,10 @@ const (
 	// MaxSmallRequestBytes bounds every request that is not a note body.
 	MaxSmallRequestBytes = 64 << 10
 
-	// MaxTitleRunes bounds a title as the OpenAPI declares it. The store
-	// sanitises further; this is the point at which an over-long title is
-	// refused rather than quietly cut.
-	MaxTitleRunes = 200
+	// MaxTitleRunes bounds a title as the OpenAPI declares it: the one bound
+	// every title shares (routing.MaxTitleRunes). This is the point at which
+	// an over-long title is refused rather than quietly cut.
+	MaxTitleRunes = routing.MaxTitleRunes
 	// MaxAliases and MaxAliasRunes bound the alias list.
 	MaxAliases     = 32
 	MaxAliasRunes  = 120
