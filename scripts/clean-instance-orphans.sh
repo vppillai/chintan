@@ -24,11 +24,13 @@
 # attempt.
 #
 # Usage:
-#   scripts/clean-instance-orphans.sh --instance dev --environment staging
-#   scripts/clean-instance-orphans.sh --instance dev --environment staging --apply
+#   scripts/clean-instance-orphans.sh --instance dev --environment staging [--dry-run]
+#   scripts/clean-instance-orphans.sh --instance dev --environment staging --apply [--yes]
 #
-# Dry run is the default. Production requires --i-understand-this-deletes-data
-# in addition to --apply, because there the retained resources are usually real.
+# Dry run is the default. --apply asks you to type a phrase before it deletes;
+# --yes skips that prompt, as it does in teardown.sh and cleanup-aws.sh.
+# Production requires --i-understand-this-deletes-data in addition to --apply,
+# because there the retained resources are usually real.
 
 set -euo pipefail
 
@@ -57,6 +59,8 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --apply) APPLY=1 ;;
+        --dry-run) APPLY=0 ;;
+        --yes) export ASSUME_YES=1 ;;
         --i-understand-this-deletes-data) PROD_ACK=1 ;;
         -h | --help)
             awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"

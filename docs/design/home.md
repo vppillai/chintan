@@ -32,7 +32,7 @@ drawn in `Mark` (`components/Wordmark.tsx`) at 1 em in `currentColor`, so the
 ring's outer edge sits at the cap height and the mark follows the theme. The
 same `Mark` stands at 72 px above the name on the sign-in screen and on About.
 The launcher icon is the same ring with the bindu in the accent
-(`public/icon.svg`, rendered to the manifest's PNGs by `scripts/make-icons.mjs`;
+(`public/icon.svg`, rendered to the manifest's PNGs by `frontend/scripts/make-icons.mjs`;
 `public/favicon.svg` swaps to paper ink under a dark colour scheme). The design
 record, with the two directions not taken, is `docs/design/branding/`.
 
