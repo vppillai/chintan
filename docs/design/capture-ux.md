@@ -139,6 +139,13 @@ effects. The numbers are `holdTiming.ts`'s, measured from the press point:
   2026-10-01 a lock stayed on the bar, with Discard, Stop and Send in the
   tab slots (owner decision D1); the owner asked for the recording screen
   instead.
+- **A long take asks before it goes.** On `/capture`, Cancel or Discard on
+  a take of `DISCARD_CONFIRM_AFTER_MS` (10 s, `machine.ts`) or more opens
+  the app's `ConfirmDialog`, "Discard 0:42 of recording?", with Keep and
+  Discard; Escape, like Keep, keeps it. A shorter take is discarded at
+  once. This holds whether the take began from a tap or a locked hold
+  (owner, 2026-10-01, keeping the confirm the locked bar had). Close on a
+  failure with no audio to lose does not ask.
 - **Interruptions are releases, never discards.** `pointercancel`,
   `lostpointercapture`, a hidden page and, for a key hold, the window losing
   focus all count as a release. `/talk` discarded on blur. A locked

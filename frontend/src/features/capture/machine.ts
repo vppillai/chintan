@@ -65,6 +65,13 @@ export const DURATION_WARNING_MS = MAX_DURATION_MS - 60_000;
 export const MAX_BYTES = 32 * 1024 * 1024;
 export const SIZE_WARNING_BYTES = 28 * 1024 * 1024;
 
+/**
+ * A take at least this long asks once before Cancel or Discard throws it
+ * away; a shorter one is gone at once. Ten seconds of speech is worth one
+ * more tap, and a slip is not worth a dialog.
+ */
+export const DISCARD_CONFIRM_AFTER_MS = 10_000;
+
 export interface CaptureModel {
   state: CaptureState;
   /**

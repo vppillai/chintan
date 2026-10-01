@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { ROUTES } from '@/app/routes.ts';
 import { RESTORE_SCROLL } from '@/app/useScrollRestore.ts';
+import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { Icon, type IconName } from '@/components/Icon.tsx';
 import { useReducedMotion } from '@/hooks/useReducedMotion.ts';
 
@@ -12,6 +13,7 @@ import { TargetChooser } from './TargetChooser.tsx';
 import { Waveform } from './Waveform.tsx';
 import {
   canRetryUpload,
+  DISCARD_CONFIRM_AFTER_MS,
   formatElapsed,
   hasBufferedAudio,
   isCaptureBusy,
@@ -154,6 +156,16 @@ export function CaptureScreen() {
 
   // The envelope is read once per review, not per render: the recorder has
   // finished, so it will not change, and the player redraws on its own clock.
+  const [confirming, setConfirming] = useState(false);
+  // Read before the discard resets it: a take abandoned from inside a note
+  // goes back to that note.
+  const abandon = useCallback(() => {
+    const to = captureReturnPath(useCaptureStore.getState().model.noteId);
+    void discard().then(() => {
+      leave(to);
+    });
+  }, [discard, leave]);
+
   const reviewEnvelope = useMemo(
     () => (model.state === 'review' ? envelope() : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -285,18 +297,37 @@ export function CaptureScreen() {
         </p>
       )}
 
+      {/*
+        Escape, the backdrop and Keep are all the dialog's Cancel: only the
+        destructive button discards.
+      */}
+      <ConfirmDialog
+        open={confirming}
+        title={`Discard ${formatElapsed(model.elapsedMs)} of recording?`}
+        body="It has not been sent, and it is not saved anywhere else."
+        confirmLabel="Discard"
+        cancelLabel="Keep"
+        destructive
+        onConfirm={() => {
+          setConfirming(false);
+          abandon();
+        }}
+        onCancel={() => {
+          setConfirming(false);
+        }}
+      />
+
       <Controls
         model={model}
         onPause={pause}
         onResume={resume}
         onStop={() => void stop()}
         onDiscard={() => {
-          // Read before the discard resets it: a take abandoned from inside a
-          // note goes back to that note.
-          const to = captureReturnPath(model.noteId);
-          void discard().then(() => {
-            leave(to);
-          });
+          // A long take asks first, whether it began from a tap or a locked
+          // hold; Close on a failure with no audio to lose does not.
+          const losesAudio = model.state !== 'failed' || canRetryUpload(model);
+          if (losesAudio && model.elapsedMs >= DISCARD_CONFIRM_AFTER_MS) setConfirming(true);
+          else abandon();
         }}
         onRerecord={() => void rerecord()}
         onRestart={() => void start(model.noteId)}

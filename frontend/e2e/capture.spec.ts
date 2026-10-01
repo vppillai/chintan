@@ -725,9 +725,45 @@ test('a hold dragged up and then cancelled on the recording screen sends nothing
   await page.mouse.up();
   await expect(page).toHaveURL(/\/capture$/);
   await expect(page.locator('.capture__state')).toHaveText('Recording');
+  // Under ten seconds: gone at once, no question.
   await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page).toHaveURL(/\/$/);
   await page.waitForTimeout(800);
+  expect(api.captures).toHaveLength(0);
+  expect(sent).toHaveLength(0);
+});
+
+test('a locked take of ten seconds or more asks once before Cancel discards it; Escape keeps it', async ({
+  page,
+  api,
+}) => {
+  test.setTimeout(45_000);
+  const sent = puts(page);
+  await page.goto('/');
+  const { x, y } = await discCentre(page);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.waitForTimeout(HOLD_ARM_MS + 100);
+  await page.mouse.move(x, y - LOCK_DY_PX - 8, { steps: 8 });
+  await page.mouse.up();
+  await expect(page).toHaveURL(/\/capture$/);
+  // Past the line, by the screen's own clock.
+  await expect(page.locator('.capture__timer')).toHaveText('00:10', { timeout: 15_000 });
+
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  const dialog = page.getByRole('dialog', { name: /^Discard 00:1\d of recording\?$/ });
+  await expect(dialog).toBeVisible();
+  // Escape is the dialog's Cancel: the take goes on.
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator('.capture__state')).toHaveText('Recording');
+  await expect(page).toHaveURL(/\/capture$/);
+
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await dialog.getByRole('button', { name: 'Discard' }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await page.waitForTimeout(500);
   expect(api.captures).toHaveLength(0);
   expect(sent).toHaveLength(0);
 });
