@@ -822,11 +822,17 @@ describe('the note is panels under one strip', () => {
     // control wraps to the first, and Shift+Tab from the first to the last.
     expect(screen.getByRole('heading', { name: 'Share' })).toHaveFocus();
     const controls = within(dialog).getAllByRole('button');
-    controls.at(-1)?.focus();
+    // From the heading, which is not a control, Shift+Tab must not walk out
+    // into the note: it is the sheet's start, so it goes to the last control.
+    await user.tab({ shift: true });
+    expect(controls.at(-1)).toHaveFocus();
     await user.tab();
     expect(controls[0]).toHaveFocus();
     await user.tab({ shift: true });
     expect(controls.at(-1)).toHaveFocus();
+    screen.getByRole('heading', { name: 'Share' }).focus();
+    await user.tab();
+    expect(controls[0]).toHaveFocus();
 
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).toBeNull();

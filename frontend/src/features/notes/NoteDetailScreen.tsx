@@ -125,9 +125,12 @@ export function NoteDetailScreen() {
   /*
    * Opening takes the focus with it: the menuitem that asked has just
    * unmounted and the drawer is at the far end of the screen. Rendered
-   * synchronously so the target exists. Details lands on the language
-   * select — the control the meta line's fact came from — and Share on its
-   * heading, with its controls a Tab away.
+   * synchronously so the target exists — and so that the sheet's
+   * `useModalFocus` mount effect, which focuses its first control, has
+   * already run: `flushSync` flushes a sync render's passive effects before
+   * it returns, so the focus below is the last word. Details lands on the
+   * language select — the control the meta line's fact came from — and
+   * Share on its heading, with its controls a Tab away.
    */
   const openPanel = useCallback(
     (kind: NotePanelKind) => {

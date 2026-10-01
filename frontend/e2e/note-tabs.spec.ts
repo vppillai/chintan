@@ -132,8 +132,14 @@ for (const sheet of ['Details', 'Share'] as const) {
       await expect(dialog).toBeVisible();
       await expect(dialog).toHaveAttribute('aria-modal', 'true');
       if (where === 'control') await first.focus();
-      else if (where === 'heading') await page.getByRole('heading', { name: sheet }).focus();
-      else {
+      else if (where === 'heading') {
+        await page.getByRole('heading', { name: sheet }).focus();
+        // The heading is not a control: Shift+Tab from it stays in the sheet
+        // (its last control), not the note's textarea behind (review of #214).
+        await page.keyboard.press('Shift+Tab');
+        await expect(dialog.locator(':focus')).toHaveCount(1);
+        await page.getByRole('heading', { name: sheet }).focus();
+      } else {
         // Off the sheet altogether, as a tap on the note behind leaves it.
         await page.evaluate(() => {
           (document.activeElement as HTMLElement | null)?.blur();
