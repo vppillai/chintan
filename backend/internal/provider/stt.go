@@ -92,33 +92,31 @@ const (
 
 // NoSpeech reports that the recording held no dictation (R7-10c): the
 // transcript has no letter or digit in it (a 1.5 s tone came back as "."
-// and became a note called "Dictation"), or every segment is one Whisper
-// itself would have skipped as silence, or it is one of Whisper's stock
-// answers to silence (see silenceHallucination). A transcript without
+// and became a note called "Dictation"), or it is only Whisper's stock
+// answer to silence (see silenceHallucination), or every segment is one
+// Whisper itself would have skipped as silence. A transcript without
 // segments is judged by its text alone.
 func (t Transcription) NoSpeech() bool {
 	if strings.IndexFunc(t.Text, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsNumber(r) }) < 0 {
 		return true
 	}
+	// Whatever the scores (R7-10e): on prod, 3 s of digital silence came
+	// back as "Thank you." with no_speech_prob 0 and avg_logprob -0.29 on
+	// every segment, so no score can tell it from the words said. A
+	// recording that is only "Thank you." has nothing to file either way.
+	if silenceHallucination(t.Text) {
+		return true
+	}
 	if len(t.Segments) == 0 {
 		return false
 	}
-	skipped, doubtful := true, true
 	for _, s := range t.Segments {
-		skipped = skipped && s.NoSpeechProb > noSpeechThreshold && s.AvgLogprob <= logprobThreshold
-		doubtful = doubtful && s.NoSpeechProb > hallucinationNoSpeech
+		if s.NoSpeechProb <= noSpeechThreshold || s.AvgLogprob > logprobThreshold {
+			return false
+		}
 	}
-	return skipped || (doubtful && silenceHallucination(t.Text))
+	return true
 }
-
-// hallucinationNoSpeech is the no_speech_prob over which a stock silence
-// phrase is taken for silence (R7-10d). Whisper answers silence with a
-// fluent "Thank you." at a confident avg_logprob, so the -1 logprob test
-// above lets it through (three seconds of digital silence filed "Thank you."
-// 3 of 3 in QA), but the model still rates the window as likely silence.
-// Clearly spoken words sit near zero, so a "thank you" someone really said
-// is kept. Any segment under it counts as speech.
-const hallucinationNoSpeech = 0.3
 
 // silenceHallucinations are the transcripts Whisper is known to produce for
 // silence or room tone, learned from subtitled video, in normalizePhrase

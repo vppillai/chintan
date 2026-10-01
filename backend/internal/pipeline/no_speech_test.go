@@ -32,9 +32,18 @@ func TestARecordingWithNoSpeechEndsAsNoContent(t *testing.T) {
 			Text: " Thank you.", Duration: 3,
 			Segments: []provider.Segment{{End: 3, Text: " Thank you.", NoSpeechProb: 0.7, AvgLogprob: -0.2}},
 		}, model.StatusNoContent},
-		{"a thank you really said", provider.Transcription{
+		// R7-10e: what prod Whisper actually returned for that silence.
+		{"silence scored as confident speech", provider.Transcription{
+			Text: " Thank you.", Duration: 3,
+			Segments: []provider.Segment{{End: 3, Text: " Thank you.", NoSpeechProb: 0, AvgLogprob: -0.29}},
+		}, model.StatusNoContent},
+		{"a thank you really said, which has nothing to file", provider.Transcription{
 			Text: "Thank you.", Duration: 1.2,
 			Segments: []provider.Segment{{End: 1.2, Text: "Thank you.", NoSpeechProb: 0.05, AvgLogprob: -0.2}},
+		}, model.StatusNoContent},
+		{"thanks with a dictation", provider.Transcription{
+			Text: "Thank you. Buy milk.", Duration: 2,
+			Segments: []provider.Segment{{End: 2, Text: "Thank you. Buy milk.", AvgLogprob: -0.3}},
 		}, model.StatusAppended},
 		{"a short dictation", provider.Transcription{
 			Text: "Buy milk", Duration: 1.2,

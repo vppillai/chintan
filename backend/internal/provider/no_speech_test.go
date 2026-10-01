@@ -45,10 +45,10 @@ func TestNoSpeechUsesWhispersSegmentMeasures(t *testing.T) {
 	}
 }
 
-// R7-10d: three seconds of digital silence came back as "Thank you." with a
-// confident logprob and filed a note 3 of 3. A stock silence phrase over
-// hallucinationNoSpeech is no speech whatever the logprob; the same words
-// clearly spoken, and any other short dictation, are kept.
+// R7-10d/e: three seconds of digital silence came back as "Thank you." and
+// filed a note. On prod Whisper scored it no_speech_prob 0 and avg_logprob
+// -0.29, so a transcript that is only a stock silence phrase is no speech
+// whatever the scores; any other short dictation is kept.
 func TestNoSpeechCatchesWhispersSilenceHallucinations(t *testing.T) {
 	t.Parallel()
 
@@ -63,19 +63,18 @@ func TestNoSpeechCatchesWhispersSilenceHallucinations(t *testing.T) {
 		t    Transcription
 		want bool
 	}{
+		{"prod silence scores", one(" Thank you.", 0, -0.29), true},
 		{"silence heard as thank you", one(" Thank you.", 0.7, -0.2), true},
-		{"just over the line", one("Thank you.", 0.31, -0.1), true},
+		{"a thank you really said", one("Thank you.", 0.05, -0.2), true},
 		{"thanks for watching", one("Thanks for watching!", 0.45, -0.3), true},
 		{"lone you", one(" you", 0.5, -0.6), true},
 		{"subtitle credit", one("Subtitles by the Amara.org community", 0.4, -0.3), true},
-		{"repeated", Transcription{Text: "Thank you. Thank you.", Segments: []Segment{seg("Thank you.", 0.6, -0.2), seg("Thank you.", 0.5, -0.2)}}, true},
-		{"a thank you really said", one("Thank you.", 0.05, -0.2), false},
-		{"one segment spoken", Transcription{Text: "Thank you. Thank you.", Segments: []Segment{seg("Thank you.", 0.6, -0.2), seg("Thank you.", 0.1, -0.2)}}, false},
+		{"repeated", Transcription{Text: "Thank you. Thank you.", Segments: []Segment{seg("Thank you.", 0, -0.2), seg("Thank you.", 0, -0.2)}}, true},
+		{"no segments", Transcription{Text: "Thank you."}, true},
 		{"buy milk", one("Buy milk", 0.05, -0.3), false},
 		{"quiet buy milk", one("Buy milk", 0.7, -0.2), false},
-		{"thank you to someone", one("Thank you, Anu.", 0.7, -0.2), false},
-		{"thanks then a task", one("Thank you. Buy milk.", 0.7, -0.2), false},
-		{"no segments", Transcription{Text: "Thank you."}, false},
+		{"thank you to someone", one("Thank you, Anu.", 0, -0.2), false},
+		{"thanks then a task", one("Thank you. Buy milk.", 0, -0.2), false},
 	}
 	for _, tc := range cases {
 		if got := tc.t.NoSpeech(); got != tc.want {
