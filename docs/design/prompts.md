@@ -466,12 +466,20 @@ whether it did.
 
 ### Record and replay
 
+**Status: a manual, owner-run procedure.** Nothing in CI gates a prompt
+change today: the always-on checks are the prompt-wording unit tests and
+`TestEvalFixturesParse`; no workflow sets `LIVE_LLM`, `LLM_API_KEY` or
+`LLM_REPLAY`, and the recordings directory has never been committed, so
+`pipeline.TestRoutingEvalReplay` skips on every run (the AI key in GitHub
+secrets is owner decision D15 of the 1 October review; recording the set is
+R7-9). What follows is how the replay works once the owner records it.
+
 The live eval tests the model's reply; the worker's outcome is that reply
 through code — the span growth in `provider.Route`, then
 `pipeline.decide`: `preferExistingTitle`'s title, prefix and `spoken_name`
 rules and the 0.75 bar that parks an unsure append at `needs_target` (the
 pre-create re-check runs the same `existingNoteNamed`). Record and replay
-test the two together in CI without the key:
+are built to test the two together without the key:
 
 ```bash
 cd backend && LIVE_LLM=1 LLM_API_KEY=… LLM_RECORD=testdata/eval/recordings go test ./internal/provider -run 'TestLiveEval/route' -v -count=1
@@ -480,24 +488,28 @@ cd backend && LIVE_LLM=1 LLM_API_KEY=… LLM_RECORD=testdata/eval/recordings go 
 `LLM_RECORD=<dir>` makes every completion also write
 `<dir>/<sha256 of model, system prompt, user prompt>.json` (the raw reply and
 its token usage); the path is relative to the package, so the command above
-fills `backend/internal/provider/testdata/eval/recordings/`, which is
-committed. `LLM_REPLAY=<dir>` serves completions from those files and calls
-nothing. `pipeline.TestRoutingEvalReplay` replays every route case in
-`fixtures.json` through `decide()` and asserts the case's expectations on the
-outcome — `append` means filed without asking, `title_names` means the named
-note is where the recording went — and skips, printing the command above,
-while the directory is empty. Record with the default `LLM_MODEL`, which the
-replay also uses, and with `-count=1`: a key is one file, so under `-count=N`
-each run overwrites the last and only the final reply per case is kept.
-Both variables are read only in a test binary (`testing.Testing`), so a
-worker with either set still calls the model.
+fills `backend/internal/provider/testdata/eval/recordings/`, which is meant
+to be committed and is empty today (`testdata/eval` holds `fixtures.json`
+and `prod-battery.md`). `LLM_REPLAY=<dir>` serves completions from those
+files and calls nothing. `pipeline.TestRoutingEvalReplay` replays every
+route case in `fixtures.json` through `decide()` and asserts the case's
+expectations on the outcome — `append` means filed without asking,
+`title_names` means the named note is where the recording went — and skips,
+printing the command above, while the directory is empty, which it has
+always been. Record with the default `LLM_MODEL`, which the replay also
+uses, and with `-count=1`: a key is one file, so under `-count=N` each run
+overwrites the last and only the final reply per case is kept. Both
+variables are read only in a test binary (`testing.Testing`), so a worker
+with either set still calls the model.
 
-**A prompt change needs a re-record.** The key is the prompt's text, so after
-any change to `routing.SystemPrompt`, `routing.UserPrompt`, the model or a
-fixture's transcript or candidates, the replay misses and fails with the
-re-record command; re-record in the same PR as the change. A change to the
-rules alone (`decide`, span growth) needs no re-record: that is what the
-replay measures.
+**A prompt change needs a re-record, once a set exists.** The key is the
+prompt's text, so after any change to `routing.SystemPrompt`,
+`routing.UserPrompt`, the model or a fixture's transcript or candidates, the
+replay misses and fails with the re-record command; re-record in the same PR
+as the change. A change to the rules alone (`decide`, span growth) needs no
+re-record: that is what the replay measures. Until the set is recorded,
+none of this runs, and a prompt change is gated by the owner running the
+live eval by hand, as below.
 
 The procedure for a prompt change: run the eval on the current prompt for a
 baseline; change the prompt; run it again with `-count=3`; record the pass in
