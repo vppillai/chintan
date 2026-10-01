@@ -44,7 +44,6 @@
 .library-heading {
   display: grid;
   gap: var(--space-1);
-  inline-size: 100%;
 }
 
 /* "Notes", in the notes' own serif, with the count beside it. */

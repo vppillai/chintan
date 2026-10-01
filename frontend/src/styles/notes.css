@@ -247,7 +247,6 @@
 
 /* "Updated today 14:02 · house · 3 recordings" */
 .note-meta {
-  margin-block: var(--space-2) var(--space-4);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
   color: var(--color-muted);
@@ -262,7 +261,7 @@
  * banner: `.app__main` is the one thing that scrolls, so `inset-block-start: 0`
  * is that line. Pulled out to the gutters and painted in the ground colour so
  * the panel scrolling beneath does not show at the strip's sides. Same layer
- * as the action bar at the foot — under the sheets and the dialogs.
+ * as the drawer at the foot (`.note-drawer`) — under the dialogs.
  */
 .note-tabs {
   position: sticky;
