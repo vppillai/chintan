@@ -265,3 +265,47 @@ You approved items 1–21 of the review (performance, architecture, frontend, UX
    - The caret above a real keyboard.
 4. Still open from the review, each needing your call: storing the ring's own transcript as a fallback; a separate, stronger model for routing only; the AI key in GitHub secrets so the eval can run from CI; and the double-blind decisions from round 6, listed in the section above.
 5. Your 30 Sept feedback (nine points: deeper checklists, app-like Back, record while typing, swipe animation, push-to-talk on the record button with slide-to-lock and slide-to-cancel, the home-screen PTT, Split up's purpose, notification banners) is in design now as round 8; its specs and any taste calls will follow in their own section.
+
+## 30 Sept, evening — round 8: your nine points, shipped
+
+Each point had a design pass first, then an implementation, an independent review and a fix pass before merge. Every review asked for changes, and the PR bodies record them. The live QA on prod (`docs/reviews/2026-09-30/qa-r8-live.md`, #200) passed all nine at phone and desktop sizes in both themes, with no blocker and no bug. QA's three polish items are fixed in #201: a stale-version save on every Tidy, the "Slide to cancel" hint clipped at the screen edge, and "Clear all" flush with the tray edge.
+
+**What changed**
+- **Checklists go three levels deep** (#191, #194). Tab and Shift+Tab, the grip's arrows, and a sideways grip drag each move a row one level. The drag shows exactly where the row and its sub-items will land, and it can move several levels at once. Ticking a parent ticks everything under it, and reopening a sub-item reopens its parents. Deeper lines in an existing list are clamped, never dropped. Voice capture still adds items one level deep.
+- **Back is linear** (#197). Home is always the bottom of the stack: Back from You, About, Archive or a note leads to Home, then out of the app. Your own example now goes About → Back → You → Back → Home → Back → out.
+- **Recording while typing** (#198). A small mic appears at the right end of the top banner, only while the keyboard is up in a note. It covers no text, saves what you typed first, and records into that note.
+- **Tab swipe** (#196). The page follows your finger and fades a little, the next tab slides in from the side you pulled away from, and the tab highlight slides with it. Reduced motion settles instantly.
+- **Push-to-talk on the record button** (#193), replacing the separate PTT screen. On the tab-bar disc, anywhere:
+  - **Hold** to talk, **release** to send.
+  - **Slide left** to cancel.
+  - **Slide up** to lock and keep recording hands-free.
+  - **Tap** to open the full recorder.
+  - **Desktop:** click to record, hold Space on the button or hold R anywhere to talk, Esc to cancel.
+
+  Slide-to-cancel never worked before because the button was nearly as wide as the screen. It now measures from where you pressed, and a phone-sized test pins it.
+- **The home-screen PTT shortcut is gone** (#193). "Record a thought" stays as the only shortcut, and old /talk links go to Home.
+- **Split up is retired** (#195). A checklist shows Items · Recordings. **⋮ → Tidy up list** re-splits and groups a list in place, with a 6-second Undo. Turning a prose note into a list tidies it automatically. "Keep it updated" no longer rewrites checklists after each recording.
+- **Filing notices look like notices** (#190, #192). They sit in a recessed "Filing" tray, with a status icon per kind and an × you can always see. This also fixed a live bug where a receipt's title dropped below its arrow.
+- **Along the way** (#199): Regenerate's progress poll stalled while a recording was filing; it no longer does.
+
+**Taste calls I made — say if you want any reversed**
+1. **Push-to-talk on the main button.** This reverses your 27 Sept "PTT only on the widget"; your new feedback asked for it.
+2. **Tap and lock.** A tap opens the full recorder rather than starting a locked recording. A locked recording stays on the tab bar (Discard · Stop · Send) rather than moving to the recorder.
+3. **Desktop hold key and first-run hint.** The desktop hold key is R. A first-run hint, "Hold to talk · tap to record", shows for three launches.
+4. **Back from Home exits the app.**
+5. **Checklist depth.** Three levels, not four. Voice capture still adds items one level deep.
+6. **Tidy up list.** The label is "Tidy up list", and converting a prose note to a list tidies it automatically.
+7. **The Filing tray.**
+   - It is an inset tray headed "Filing", with no arrow on receipts.
+   - The × is always visible, reversing round 7's hidden ×.
+   - A "which note?" row has no ×, because that recording isn't in any note yet and hiding it could lose it.
+8. **Tab swipe.** No spring overshoot. The new tab starts at its top.
+
+**Needs you**
+1. **Phone checks.** Automated tests can't reach these:
+   - On iPhone, a long press on the record button must not bring up the text magnifier.
+   - The banner mic should appear while you type in a note (iOS sometimes pans the banner away; then it simply isn't there).
+   - The tab swipe shouldn't stutter with the keyboard up.
+   - In the installed Pixel app, Back from You should go to Home, and Back from Home should close the app.
+2. **DB6-9 is still yours.** It decides whether a sub-item after a blank line or another recording's marker belongs to the item above. Existing lists keep today's behaviour, with one known duplicate case recorded in the backlog.
+3. **Live eval.** With your key, run `TestLiveEval/(items|tasks) -count=3` to confirm the Tidy prompt keeps three-level lists intact.
