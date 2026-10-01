@@ -192,6 +192,31 @@ describe('pull to refresh', () => {
     });
   });
 
+  it('never arms for a drag anywhere on the note’s sheet, even where nothing scrolls (R8-S1)', () => {
+    const onRefresh = vi.fn(async () => {});
+    render(
+      <main className="app__main">
+        <PullToRefresh onRefresh={onRefresh} />
+        <div className="note-drawer">
+          <section className="note-panel">
+            <div className="note-panel__head">
+              <h2>Details</h2>
+            </div>
+          </section>
+        </div>
+      </main>,
+    );
+    const head = screen.getByText('Details');
+    const move = touch('touchmove', 250);
+    act(() => {
+      head.dispatchEvent(touch('touchstart', 100));
+      head.dispatchEvent(move);
+      head.dispatchEvent(touch('touchend', 250));
+    });
+    expect(move.defaultPrevented).toBe(false);
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+
   it('does not refresh twice while one refresh is still running', () => {
     let release: () => void = () => {};
     const onRefresh = vi.fn(

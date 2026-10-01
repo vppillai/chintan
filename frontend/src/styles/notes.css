@@ -509,11 +509,18 @@
 /* A raised sheet rising from the tab bar: a hairline and the sheet's shadow
    along its top, its top corners rounded. The disclosure used to have no
    edge of its own and read as the body cut off mid-line (T43). */
+/* A column of two rows: the head, which never moves, and the body, the one
+   part that scrolls (`.note-panel__body`). The sheet itself does not scroll,
+   so nothing can slide up under the head or show in the sheet's top padding
+   (owner, 2026-09-30). */
 .note-panel {
-  display: grid;
-  gap: var(--space-3);
-  /* A sheet, not a wall: at most three fifths of the screen, scrolling
-     inside itself. Content-height, Details took 715 of a phone's 915 px and
+  display: flex;
+  flex-direction: column;
+  /* The body's scroll timeline, named here so the head, its sibling, can
+     follow it. */
+  timeline-scope: --note-panel-body;
+  /* A sheet, not a wall: at most three fifths of the screen, its body
+     scrolling inside it. Content-height, Details took 715 of a phone's 915 px and
      hid the title, meta and tabs, and on a desktop climbed over the header's
      Back, Find and ⋮ (QA 2026-09-21, finding 7). With a keyboard up, what
      fits above it: the viewport less the keyboard, the tab bar, the banner
@@ -529,9 +536,7 @@
         2 * var(--layout-touch-target-min) - var(--safe-top) - var(--safe-bottom)
     )
   );
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: var(--space-2) var(--layout-gutter) var(--space-4);
+  padding-block-start: var(--space-2);
   background-color: var(--color-raised);
   border-block-start: 1px solid var(--color-line);
   border-start-start-radius: var(--radius-lg);
@@ -556,21 +561,63 @@
 }
 
 /* "DETAILS" as an eyebrow, the close control flush with the gutter line.
-   Stuck to the sheet's top while the content scrolls beneath it: once the
-   sheet was capped, a phone's Details scrolled Close away with the first
-   section, and Escape and ⋮ were the only ways left to put it away. A
-   sticky box rests inside its scroll container's padding, so the inset
-   takes the sheet's top padding back off and the head sits flush with the
-   sheet's edge, nothing showing above it. */
+   A fixed row above the scrolling body: once the sheet was capped, a
+   phone's Details scrolled Close away with the first section, and Escape
+   and ⋮ were the only ways left to put it away (QA 2026-09-21, finding 7).
+   A hairline under it says the body has scrolled beneath it; at the top
+   there is none, so a sheet at rest is one surface. */
 .note-panel__head {
-  position: sticky;
-  inset-block-start: calc(-1 * var(--space-2));
-  z-index: var(--z-content);
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  background-color: var(--color-raised);
+  padding-inline: var(--layout-gutter);
+  border-block-end: 1px solid transparent;
+}
+
+/* The hairline follows the body's scroll position where the browser can
+   (Chromium); elsewhere the body's scroll listener sets `data-scrolled` on
+   the sheet (`NoteDrawer.tsx`). A body with nothing to scroll has an
+   inactive timeline and so no hairline. It is a colour, not a movement, so
+   reduced motion leaves it as it is. */
+@supports (animation-timeline: scroll()) {
+  .note-panel__head {
+    animation: note-panel-head-edge linear both;
+    animation-timeline: --note-panel-body;
+    animation-range: 0 var(--space-2);
+  }
+}
+
+@supports not (animation-timeline: scroll()) {
+  .note-panel[data-scrolled] > .note-panel__head {
+    border-block-end-color: var(--color-line);
+  }
+}
+
+@keyframes note-panel-head-edge {
+  from {
+    border-block-end-color: transparent;
+  }
+  to {
+    border-block-end-color: var(--color-line);
+  }
+}
+
+/* The editors in a column. `min-block-size: 0` lets the body shrink under
+   the sheet's cap instead of pushing it taller. The top padding is the old
+   gap under the head, and room for the first control's focus ring, which
+   the scroller would otherwise clip. */
+.note-panel__body {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-timeline: --note-panel-body block;
+  padding: var(--space-3) var(--layout-gutter) var(--space-4);
 }
 
 .note-panel__heading {

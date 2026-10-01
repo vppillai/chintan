@@ -12,7 +12,8 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
  *
  * The gesture is armed only when the scroll container is at `scrollTop === 0`
  * when the finger lands, and never when the finger lands inside a scroller of
- * its own — the Details sheet, a transcript — that has something to scroll:
+ * its own — the Details sheet, a transcript — that has something to scroll,
+ * nor anywhere on the note's Details/Share sheet:
  * a downward drag there is that scroller's, whatever the page's position, and
  * the first prevented `touchmove` here used to cancel the sheet's native
  * scroll and pull the note down under it instead ("sometimes the note
@@ -70,11 +71,15 @@ function clientYOf(event: TouchEvent): number | null {
 /**
  * Whether something between the finger and the container scrolls on its own
  * and has room to: a drag that starts there belongs to it, not to the page.
- * A scroller with nothing to scroll is passed over, so a short Share sheet
- * still lets the note beneath it be pulled.
+ * A scroller with nothing to scroll is passed over. The note's Details/Share
+ * sheet (`.note-drawer`) is excluded whole, head and all, whether it has
+ * anything to scroll or not: a drag on a sheet is about the sheet, and
+ * refreshing the note behind it is a surprise (R8-S1). Its head is a fixed
+ * row outside the sheet's scroller, so the walk alone would let it arm.
  */
 function insideNestedScroller(target: EventTarget | null, container: HTMLElement): boolean {
   let element = target instanceof Element ? target : null;
+  if (element?.closest('.note-drawer')) return true;
   while (element && element !== container) {
     const overflowY = getComputedStyle(element).overflowY;
     if ((overflowY === 'auto' || overflowY === 'scroll') && element.scrollHeight > element.clientHeight) {

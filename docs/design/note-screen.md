@@ -176,13 +176,20 @@ Share (copy, download). A sheet at the foot of the scroll region: `position:
 sticky; inset-block-end: 0` inside `.app__main`, not fixed to the viewport —
 the tab bar owns the viewport's bottom row, and a sticky element is clipped by
 the region, so the sheet can cover nothing outside the note. Capped at
-`60dvh` and scrolling inside itself, with its head (the eyebrow and Close)
-sticky at its top; content-height, Details took 715 of a phone's 915 px (QA
-2026-09-21, finding 7). Opening it moves focus in: Details to the language
+`60dvh`; content-height, Details took 715 of a phone's 915 px (QA
+2026-09-21, finding 7). The sheet is a flex column of two rows: the head
+(the eyebrow and Close), which never moves, so Close is always in reach, and
+`.note-panel__body`, the only part that scrolls. The head used to be sticky
+inside a sheet that scrolled, and the content slid up under a bare band and
+could show in the sheet's top padding (owner, 2026-09-30, R8-S1). A hairline
+under the head appears once the body has left its top: a CSS scroll-driven
+animation on the body's named timeline where supported (Chromium), else a
+`data-scrolled` attribute the body's scroll listener sets on the sheet. A
+body with nothing to scroll (Share) has no hairline. Opening it moves focus in: Details to the language
 select, Share to its heading; Close hands focus back to the ⋮. Hidden while
 recordings are selected, and stepped aside while a conflict banner is up.
 
-`overscroll-behavior: contain` on the sheet holds in Chromium — measured at
+`overscroll-behavior: contain` on the sheet's body holds in Chromium — measured at
 412×915 and 412×700 (T2–T4): a drag past the sheet's end, a drag on the short
 Share sheet, and a drag on a Details that fits all left `.app__main` at its
 scroll position — so there is no body lock and no scrim. What did break was
@@ -194,9 +201,11 @@ scrolls, sometimes the details" (T1: `data-phase="armed"`, `--pull-offset:
 on `touchstart` the hook walks from the target up to the container and never
 arms inside an element with computed `overflow-y: auto|scroll` and more
 content than height. That covers the sheet and the transcript scrollers on
-the Recordings tab at once; a scroller with nothing to scroll is passed over,
-so the short Share sheet still lets the note be pulled. If an iPhone is ever
-seen to chain from that short sheet, the one-rule answer is
+the Recordings tab at once; a scroller with nothing to scroll is passed over.
+The note's sheet (`.note-drawer`) is excluded whole, head included and
+whether it scrolls or not: once the head became a fixed row outside the
+body's scroller, a drag on it armed the pull (R8-S1). If an iPhone is ever
+seen to chain from the short Share sheet, the one-rule answer is
 `.app__main:has(.note-drawer:not([hidden])) { overflow: hidden }`.
 
 ## The keyboard
