@@ -1,21 +1,17 @@
 name: Deploy Backend
 
-# Staging first, smoke-tested, then production.
-#
-# Every change reaches chintan-<instance>-staging first, and the smoke test
-# there — with its rollback when it fails — is the gate on the production job.
-# The `production` environment has no human reviewer (owner decision D1): the
-# gate is automatic, and this file says so. The order matters: a smoke
-# test run only after a production deploy would report a red build over a live
-# bad version with no way back.
+# Staging first, smoke-tested, then production: the staging smoke test and its
+# rollback are the production gate, and no human approves (README → Operate →
+# Release flow). The order matters: a smoke test run only after a production
+# deploy would report a red build over a live bad version with no way back.
 #
 # No test job: every commit on main arrived through a pull request whose
 # `CI passed` check the ruleset on main required at main's then-current tip
 # (scripts/dev/protect-main.sh: strict status checks, so a branch that fell
 # behind was updated and re-tested first), and a squash merge changes the sha,
-# not the tree, so the tree deploying here is the tree that run tested. A
-# `workflow_dispatch` on another ref deploys that ref as it stands; checking it
-# is the dispatcher's job.
+# not the tree, so the tree deploying here is the tree that run tested. Both
+# deploy environments accept a protected branch only, so a `workflow_dispatch`
+# runs from `main`; to redeploy an earlier sha, `gh run rerun` its run.
 #
 # All matrix and repository values reach the shell through `env:` rather than
 # through ${{ }} inside a run block. An expression interpolated into a script is

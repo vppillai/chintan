@@ -1,31 +1,31 @@
 # Metrics
 
-Every metric is in the CloudWatch namespace `Chintan`, emitted as EMF records in the Lambda logs through `backend/internal/obs` (`Count`, `CountWithRollup`, `Duration`, `Emit`). Every distinct dimension set is a billed metric identity, so counters keep one or two low-cardinality dimensions and a counter whose healthy value is zero often has none. Nine names are alarmed in `infrastructure/template.yaml` — `InboxKeyRefused`, `ProviderKeyRejected`, `SpendCapRejections`, `CaptureStageFailures`, `PushSendFailures`, `ExpiredNotesFailed`, `WorkerMessagesDiscarded`, `NoteCleanInvokeFailures`, `ProviderTimedOut` — and are emitted through `CountWithRollup`, so the alarm reads the dimensionless identity (`TestEveryAlarmedMetricIsRolledUp`). Every other emitted name is on this page with its reader; `TestEveryEmittedMetricIsAlarmedOrListed` (`backend/internal/obs/rollup_test.go`) enforces it, so a new counter is either alarmed, or added here with who reads it, or not added (decision D6, 2026-10-01).
+Every metric is in the CloudWatch namespace `Chintan`, emitted as EMF records in the Lambda logs through `backend/internal/obs` (`Count`, `CountWithRollup`, `Duration`, `Emit`). Every distinct dimension set is a billed metric identity, so counters keep one or two low-cardinality dimensions and a counter whose healthy value is zero often has none. Nine names are alarmed in `infrastructure/template.yaml` (`alarms.md` has each alarm's threshold and what to do) — `InboxKeyRefused`, `ProviderKeyRejected`, `SpendCapRejections`, `CaptureStageFailures`, `PushSendFailures`, `ExpiredNotesFailed`, `WorkerMessagesDiscarded`, `NoteCleanInvokeFailures`, `ProviderTimedOut` — and are emitted with a rollup (`CountWithRollup`; `EmitWithRollup` for `ExpiredNotesFailed`), so the alarm reads the dimensionless identity (`TestEveryAlarmedMetricIsRolledUp`). Every other emitted name is on this page with its reader; `TestEveryEmittedMetricIsAlarmedOrListed` (`backend/internal/obs/rollup_test.go`) enforces it, so a new counter is either alarmed, or added here with who reads it, or not added.
 
 ### API
 
 | Name | Dimensions | Emitted by | What it says, who reads it |
 |---|---|---|---|
 | `ApiRequests` | `{Status=2xx…5xx}` | `handler/metrics.go` | One per request by status class; the owner, in the console, beside the gateway 4xx/5xx alarms. |
-| `ApiLatency` | `{Status}` | `handler/metrics.go` | Request duration in ms; nobody today — the request log carries `duration_ms` per route (noted as droppable in the 2026-09-03 cost review). |
+| `ApiLatency` | `{Status}` | `handler/metrics.go` | Request duration in ms; nobody today — the request log carries `duration_ms` per route, which is where latency is read. |
 | `NotesListTruncated` | none | `service/notes.go` | A shelf listing hit the drain ceiling, so its order is over an incomplete set; the owner, when a list looks wrong (healthy value zero). |
 
 ### Captures and pipeline
 
 | Name | Dimensions | Emitted by | What it says, who reads it |
 |---|---|---|---|
-| `CapturesCreated` | `{Stage=created}` | `service/capture.go` | A recording was accepted; the weekly log review's volume line. |
-| `CaptureStageEntered` | `{Stage}` | `pipeline/status.go` | Each stage transition; the weekly log review derives stage durations from consecutive records (`docs/ops/log-review-2026-09-04.md`). |
-| `DuplicateDelivery` | `{Status}` | `pipeline/status.go` | Lambda delivered a capture already past that stage; the weekly log review (expected zero). |
+| `CapturesCreated` | `{Stage=created}` | `service/capture.go` | A recording was accepted; the owner, in the console, as the volume every failure counter is read against. |
+| `CaptureStageEntered` | `{Stage}` | `pipeline/status.go` | Each stage transition; nobody today — consecutive records give one capture's stage durations when it felt slow (the recipe at the end), and `chintanctl latency` gives a month's. |
+| `DuplicateDelivery` | `{Status}` | `pipeline/status.go` | Lambda delivered a capture already past that stage; nobody today (healthy value zero). |
 | `CaptureSpendCapped` | `{Stage}` | `pipeline/status.go` | A capture stopped by the daily cap, by stage; the owner, beside the spend-cap alarm, to see where the cap bit. |
 | `CapturePeaksMissing` | `{Stage}` | `pipeline/status.go` | The client uploaded no waveform peaks; nobody today; kept because it is the only sign a browser skipped the peaks upload. |
 | `CaptureRejectedOversize` | `{Stage=uploaded}` | `pipeline/pipeline.go` | An upload over the size ceiling was refused; the owner, when a recording never appears (healthy value zero). |
 | `CaptureOrphanObjectRemoved` | `{Stage=uploaded}` | `pipeline/pipeline.go` | An object arrived for a capture already deleted and was removed; the owner, as a storage-hygiene check (healthy value zero). |
-| `CaptureRetranscribedForNote` | none | `pipeline/pipeline.go` | The destination note asked for another language and the audio was transcribed again (`pipeline-deadlines.md`); the owner, as a cost signal. |
+| `CaptureRetranscribedForNote` | none | `pipeline/pipeline.go` | The destination note asked for another language and the audio was transcribed again (`note-screen.md`, "Transcribe again"); the owner, as a cost signal. |
 | `CaptureDestinationPurged` | none | `pipeline/pipeline.go` | The destination note was gone when the capture resumed, so it asks for a new one; the owner, when a capture sits at `needs_target`. |
-| `TranscribedLanguage` | `{Outcome}` | `pipeline/transcribe.go` | Whether the language detected matched the one sent (T10); the owner, when judging the language hint. |
-| `AppendResumedWithoutRewriting` | `{Stage=appending}` | `pipeline/append.go` | A retried append found its paragraph already written and did not write it twice; the weekly log review (expected zero). |
-| `AppendReplacedParagraph` | `{Stage=appending}` | `pipeline/append.go` | A re-transcribed capture replaced its earlier paragraph in place (`pipeline-deadlines.md`); the owner, with `CaptureRetranscribedForNote`. |
+| `TranscribedLanguage` | `{Outcome}` | `pipeline/transcribe.go` | Whether the language detected matched the one sent; the owner, when judging the language hint. |
+| `AppendResumedWithoutRewriting` | `{Stage=appending}` | `pipeline/append.go` | A retried append found its paragraph already written and did not write it twice; nobody today (healthy value zero). |
+| `AppendReplacedParagraph` | `{Stage=appending}` | `pipeline/append.go` | A re-transcribed capture replaced its earlier paragraph in place (`note-screen.md`, "Transcribe again"); the owner, with `CaptureRetranscribedForNote`. |
 | `CapturesMoved` | `{Stage}` | `service/capture_move.go` | A capture was moved to another note, by the stage it was in; nobody today; kept because a move is the one user action that rewrites two notes. |
 | `CaptureMoveRolledBack` | `{Stage}` | `service/capture_move.go` | A move failed half-way and was undone; the owner, when a note looks wrong after a move (healthy value zero). |
 | `CapturesDeleted` | `{Stage}` | `service/capture_edit.go` | A capture was deleted, by stage; nobody today; kept as the counterpart of `CapturesCreated`. |
@@ -34,7 +34,7 @@ Every metric is in the CloudWatch namespace `Chintan`, emitted as EMF records in
 
 | Name | Dimensions | Emitted by | What it says, who reads it |
 |---|---|---|---|
-| `RouterTitleMatchedExistingNote` | none | `pipeline/route.go` | The router or a rescue rule filed a recording into a note it named; the owner, in the console, when judging a routing prompt change (`prompts.md` §Routing, Metrics). |
+| `RouterTitleMatchedExistingNote` | none | `pipeline/route.go` | The router or a rescue rule filed a recording into a note it named; the owner, in the console, when judging a routing prompt change (`routing.md`, "The decision line"). |
 | `RouterNewNoteKind` | `{Kind=note\|checklist}` | `pipeline/route.go` | How often the model answers `checklist` for a new note; the owner, when judging a prompt change without a battery run. |
 | `RouterRetried` | `{Reason}` | `pipeline/route.go` | A routing call was retried and why; the owner, when a prompt change makes the model's answer stop parsing. |
 | `RouterTimedOut` | `{Attempt}` | `pipeline/route.go` | A routing attempt hit its deadline; the owner, beside `ProviderTimedOut` (which counts the transcribe, cleanup and clean-note stages, not routing) and `AskTimedOut`. |
@@ -96,9 +96,17 @@ Every metric is in the CloudWatch namespace `Chintan`, emitted as EMF records in
 
 | Name | Dimensions | Emitted by | What it says, who reads it |
 |---|---|---|---|
-| `CaptureQueueDelay` | `{Source=app\|device}` | `pipeline/pipeline.go` | Upload to first worker invocation, ms; the weekly log review, when a capture felt slow. |
-| `CapturePipelineDuration` | `{Outcome}` | `pipeline/pipeline.go` | One invocation's run, ms, by the status it ended in; the weekly log review and the stage deadlines' sizing (`pipeline-deadlines.md`). |
+| `CaptureQueueDelay` | `{Source=app\|device}` | `pipeline/pipeline.go` | Upload to first worker invocation, ms; the owner, with `chintanctl latency`, when a capture felt slow. |
+| `CapturePipelineDuration` | `{Outcome}` | `pipeline/pipeline.go` | One invocation's run, ms, by the status it ended in; the owner, when sizing the stage deadlines (`pipeline-deadlines.md`). |
 | `CaptureEndToEnd` | `{Source}` | `pipeline/pipeline.go` | Upload to terminal status, ms; the owner, as the number the capture screen's wait is judged by. |
-| `ProviderLatency` | `{Provider,Op,Outcome}` | `breaker/breaker.go` | One provider call, ms; the weekly log review and the stage deadlines' sizing. |
+| `ProviderLatency` | `{Provider,Op,Outcome}` | `breaker/breaker.go` | One provider call, ms; the owner, when sizing the stage deadlines (`pipeline-deadlines.md`). |
 
 To see a metric: CloudWatch → Metrics → `Chintan` in the console, or the EMF records in the Lambda log groups; the agent role cannot read metrics, so a review that needs numbers asks the owner.
+
+To read the records themselves — a capture's stage transitions, or the log lines around an alarm — tail the worker's log group for the stack, or query it (the API's is `/aws/lambda/chintan-api-<instance>-<environment>`):
+
+```bash
+aws logs tail /aws/lambda/chintan-worker-dev-prod --since 1h --follow --filter-pattern '{ $.capture_id = "<id>" }'
+aws logs start-query --log-group-name /aws/lambda/chintan-worker-dev-prod --start-time "$(( $(date +%s) - 86400 ))" --end-time "$(date +%s)" --query-string 'fields @timestamp, msg, stage, capture_id | filter capture_id = "<id>" | sort @timestamp asc'
+aws logs get-query-results --query-id <the id the line above printed>
+```

@@ -160,7 +160,7 @@ a device request is indistinguishable from the person's own (`inbox.md`).
 ## The pool
 
 `UserPool` admits nobody who is not created by an administrator
-(`AllowAdminCreateUserOnly: true`; `scripts/setup.sh` creates the owner).
+(`AllowAdminCreateUserOnly: true`; `scripts/invite-user.sh` creates every account).
 Passwords are at least 12 characters with upper, lower, digit and symbol,
 and a temporary one lives three days (`TemporaryPasswordValidityDays`).
 MFA is `OPTIONAL` with TOTP as the one method (`SOFTWARE_TOKEN_MFA`);

@@ -120,7 +120,7 @@ Pointer hygiene:
 - Track one `pointerId` and ignore a second finger.
 - `setPointerCapture` on down.
 - The disc gets `touch-action: none; -webkit-touch-callout: none; user-select: none`, and `contextmenu` is prevented. Today the disc has none of these. It sits outside `.app__main`, so pull-to-refresh is not involved.
-- **Tap happens in `onClick`, not in `pointerup`.** TalkBack and VoiceOver activation, and Enter, send only a click. After any hold, a `suppressClickUntil = now + 600 ms` ref swallows the click Chromium sends after a long press. That is QA observation B-1 in `docs/reviews/2026-09-27/qa-feedback-live.md:39`. The ref is reset on the next pointerdown.
+- **Tap happens in `onClick`, not in `pointerup`.** TalkBack and VoiceOver activation, and Enter, send only a click. After any hold, a `suppressClickUntil = now + 600 ms` ref swallows the click Chromium sends after a long press. That is QA observation B-1 in `docs/history/reviews/2026-09-27/qa-feedback-live.md:39`. The ref is reset on the next pointerdown.
 
 ### 2.5 What it looks like (412×915; see `mock-gestures-holding.svg` and `mock-gestures-locked.svg`)
 

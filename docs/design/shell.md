@@ -169,4 +169,4 @@ backstop, forces every animation and transition to 1 ms and one iteration.
 
 ## History
 
-`docs/backlog.md` and `docs/reviews/` hold the decisions behind these rules.
+`docs/backlog.md` and `docs/history/` hold the decisions behind these rules.

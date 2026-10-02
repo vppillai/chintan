@@ -3,20 +3,17 @@
 Dated review reports, and the owner's queue. A report describes the system as
 it was on the day its lenses ran, and the code has moved since; read
 `README.md` at the repository root for the system as it is, `docs/design/` for
-how each part is meant to work and `docs/backlog.md` for what is planned. One
-file here is maintained: `2026-09-21/morning-queue.md`, the owner-facing
-queue, kept current with what shipped, what waits on a decision and what was
-decided. Nothing else is.
+how each part is meant to work and `docs/backlog.md` for what is planned. The owner's queue is `../morning-queue.md`. Nothing here is maintained.
 
 | File | What it is |
 |---|---|
 | `2026-09-21/round-3.md` | Round 3: nine lenses on v0.5.16 and two verifiers, reconciled. The findings the 21 September batch worked from. |
-| `2026-09-21/morning-queue.md` | The owner's queue: what shipped, the decisions waiting, the round-4 section. Maintained. |
+| `../morning-queue.md` | The owner's queue, one section per round (moved out of this folder). |
 | `2026-09-21/smoke-checklist-capture.md` | Smoke test of checklist notes and the capture-screen controls on prod (#64, #65), phone and desktop, both themes: four findings (the "N+" Checklists chip, long items clipped in the Items tab, "Use this list" leaving the Split up tab stale, automation-only console noise) and what worked, with the exact commands. Committed on 1 October from the 21 September checkout. |
 | `2026-09-21/qa-final.md` | The final hands-on pass after round 3 on prod (`v0.5.23`, #74), four parallel streams at two viewports and two themes: fifteen findings led by a language change detaching every recording's marker (High), what worked per round-3 item, the measurements, the sign-out and purge. Committed on 1 October from the 21 September checkout. |
 | `2026-09-24/round-4.md` | Round 4: eight lenses on the ten merges of 24 September, verified live. Ten findings and the seven streams that fix them. |
 | `2026-09-24/qa-r4-live.md` | The round-4 fixes verified on prod on 26 September (`v0.5.34`, #96–#99), phone and desktop: pins and their grips, the filing banner and stage labels, the hold overlay and its end on page-hide, every row PASS; nine notes and two devices created and purged. |
-| `2026-09-26/round-5-proposals.md` | Round 5: seven lenses on the owner's 26 September feedback. The ten asks answered (§1), the 24 decisions (§2), the eleven streams that shipped as #111–#125 (§3), the async-updates position and the prompt audit. `r5/` holds the decision renders — logo marks, header variants, disc glyphs; 2.7 MB — to be pruned once the three branding decisions (logo mark and brand-row placement, open since 26 September: L10 in `2026-10-01/platform-review.md` §4) are taken; the other 21 of the 24 are. |
+| `2026-09-26/round-5-proposals.md` | Round 5: seven lenses on the owner's 26 September feedback. The ten asks answered (§1), the 24 decisions (§2), the eleven streams that shipped as #111–#125 (§3), the async-updates position and the prompt audit. `r5/` holds the measurement notes; its decision renders (logo marks, header variants, disc glyphs; 2.7 MB of PNG) were removed from the tree and are in git history (`git log --diff-filter=D -- docs/reviews/2026-09-26/r5/`). |
 | `2026-09-27/qa-decisions-live.md` | The round-5 decision PRs (#129 branding, #130 nesting, #132 device-key expiry, #133 Notifications card) verified on prod on 27 September: branding 13/13, nesting 30/30, device keys 10/10, console 10/10, the Notifications card 5/5; no product failure. |
 | `2026-09-27/qa-feedback-live.md` | The owner's 27 September feedback (#135 delete-asks-first, #136 PTT scope, #137 Devices fold) verified on prod: 28/28, 13/13 and 7/7 checks pass; the console clean for these PRs with one pre-existing error on You. |
 | `2026-09-27/qa-regenerate-live.md` | "Regenerate from recordings" live on prod (`v0.5.51`, #138): the API battery, the phone UI, `chintanctl regenerate`, and an aged-note check. Three findings: the note listing's captures carry `last_progress_at: null`, so a regeneration of a note older than ten minutes shows as stuck at once (F1); cleanup is weak on filler words (F2, prompt quality); minor (F3). |

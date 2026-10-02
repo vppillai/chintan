@@ -19,13 +19,10 @@ display_name: Chintan (staging)
 short_name: Chintan stg
 description: Speak a thought. It files itself.
 
-# Instance-wide, per-day provider spend ceiling in MICRODOLLARS: 1000000 = $1,
-# so this is $2/day — lower than prod because nothing here is user data and a smoke
-# test should never approach it. The worker reserves against one SPEND#<day>
-# counter before every paid call and fails a capture that would cross the line
-# with status spend_capped. Absent means the template default of $5/day; an
-# explicit 0 means count but never enforce, and leaves the spend-cap-tripped
-# alarm uncreated.
+# Per-day provider spend ceiling in MICRODOLLARS (1000000 = $1): $2/day, lower
+# than prod because nothing here is user data and a smoke test should never
+# approach it. What the cap does, and what absent or 0 means, is the
+# DailySpendCapMicros parameter description in infrastructure/template.yaml.
 #
 # The cap itself stays on here even with enable_alarms false: it is enforced in
 # the worker, costs nothing, and is the thing that actually stops a runaway
@@ -35,13 +32,10 @@ daily_spend_cap_micros: 2000000
 # No CloudWatch alarms here.
 #
 # CloudWatch's always-free allowance is ten alarm-months for the whole account,
-# and the account's other project holds alarms too. The template declares four
-# — API function errors, the worker dead-letter queue (a capture or a
-# scheduled or queued worker task — sweep-expired, aws-cost, storage-snapshot,
-# clean-note, ask — that exhausted its retries), a rejected provider key, and
-# the spend cap —
-# and this stack's copies would be billed at $0.10 each to duplicate alarms
-# that nobody is subscribed to and that watch no user data.
+# and the account's other projects hold alarms too. The template declares
+# thirteen (docs/ops/alarms.md), and this stack's copies would be billed at
+# $0.10 an alarm-month each to duplicate alarms that nobody is subscribed to
+# and that watch no user data.
 #
 # Staging is not left unwatched: every deploy reaches it before prod and its
 # smoke test gates the prod job, so a broken Lambda or template fails the

@@ -20,6 +20,8 @@
 #   web push    /chintan/<instance>/vapid_private_key and vapid_public_key exist,
 #               when the instance's config leaves web_push on (the default)
 #   stacks      which of the instance's stacks from config/instances/*.yaml exist
+#   sign-up     self sign-up is closed on each deployed stack's pool
+#               (AllowAdminCreateUserOnly), read from the live pool
 #
 # A check the current credentials are not allowed to make is reported as
 # "unknown" rather than as a failure; the bounded agent role, for example, may

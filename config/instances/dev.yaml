@@ -7,26 +7,18 @@ name: dev
 display_name: Chintan
 description: Speak a thought. It files itself.
 
-# Instance-wide, per-day provider spend ceiling in MICRODOLLARS: 1000000 = $1,
-# so this is $5/day — the same as the template default, written out so the
-# number is chosen here rather than inherited. One SPEND#<day> counter for the
-# whole instance; the worker reserves against it before every paid call and a
-# capture that would cross it fails with status spend_capped. An explicit 0
-# disables the cap: the template's HasSpendCap goes false and the
-# chintan-dev-prod-spend-cap-tripped alarm is never created, which leaves a
-# runaway provider loop bounded only by the monthly Budgets email.
+# Per-day provider spend ceiling in MICRODOLLARS (1000000 = $1): $5/day, the
+# template default written out so the number is chosen here. What the cap does,
+# and what 0 means, is the DailySpendCapMicros parameter description in
+# infrastructure/template.yaml.
 daily_spend_cap_micros: 5000000
 
-# Alarms default on: API function errors, the worker dead-letter queue (a
-# capture or a scheduled or queued worker task — sweep-expired, aws-cost,
-# storage-snapshot, clean-note, ask — that exhausted its retries), a rejected
-# provider key, and the spend cap above.
-# The address they e-mail comes from the ALARM_EMAIL repository secret, not from
-# this public file. The first user is created with scripts/invite-user.sh.
+# Alarms default on: thirteen per stack, each with its threshold and what to do
+# in docs/ops/alarms.md. The address they e-mail comes from the ALARM_EMAIL
+# repository secret, not from this public file. The first user is created with
+# scripts/invite-user.sh.
 
 # Web Push: a notification when a recording files, even with the app closed.
-# On (the default), scripts/setup.sh and scripts/bootstrap.sh install the VAPID
-# key pair under /chintan/dev/ when it is missing, and scripts/doctor.sh reports
-# one that is. false leaves the pair alone: the scripts neither create nor delete
-# it, and without one the app says notifications are not set up here.
+# On (the default) the setup scripts install the VAPID pair under /chintan/dev/;
+# README → Configure → Notifications has the rest.
 web_push: true

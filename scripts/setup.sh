@@ -189,13 +189,10 @@ ok "AWS_ACCOUNT_ID set; BUILD_ROLE_ARN and CFN_DEPLOY_ROLE_ARN set"
 # Environments
 # ---------------------------------------------------------------------------
 #
-# The production environment has no reviewer by default (owner decision D1):
-# the staging deploy's smoke test and rollback are the gate, and
-# deploy-backend.yaml orders prod behind them. The environment still exists for
-# the OIDC trust (the deploy role is trusted from it) and for its branch policy.
-# `--reviewer` adds a human approval for a fork that wants one; the rule the
-# ruleset puts on main (scripts/dev/protect-main.sh) is what makes a merge
-# tested, with or without it.
+# The production environment has no reviewer by default: the staging smoke test
+# is the gate (README → Operate → Release flow). The environment still exists
+# for the OIDC trust (the deploy role is trusted from it) and for its branch
+# policy. `--reviewer` adds a human approval for a fork that wants one.
 
 reviewer_ids="$(
     for login in ${REVIEWERS[@]+"${REVIEWERS[@]}"}; do

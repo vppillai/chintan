@@ -2,17 +2,17 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Chintan bootstrap — artifact bucket + GitHub Actions deploy and build roles.
   Reuses the account's existing GitHub OIDC provider (do not create a second one).
-  Role permissions are scoped to chintan-* only; passbook-* is out of reach.
+  Role permissions are scoped to chintan-* only; other projects in the account are out of reach.
 
 Metadata:
   cfn-lint:
     config:
       ignore_checks:
         # W3037 flags apigateway:TagResource / :UntagResource as unknown actions.
-        # They are real, and ApiGatewayV2's stage handler calls TagResource --
-        # removing them to satisfy this rule made every deploy fail with
-        # AccessDenied. cfn-lint's action list for this service is stale, so the
-        # rule is suppressed here rather than the grant being deleted again.
+        # They are real, and ApiGatewayV2's stage handler calls TagResource, so
+        # removing them to satisfy this rule fails every deploy with AccessDenied.
+        # cfn-lint's action list for this service is stale, so the rule is
+        # suppressed here rather than the grant deleted.
         - W3037
 
 Parameters:
@@ -304,7 +304,7 @@ Resources:
               # The permissions boundary does not contain it either: its ceiling
               # allows kms:*, its name-prefix deny lists no KMS ARNs, and its
               # tag-based deny lists no kms:* action. The template header's
-              # "passbook-* is out of reach" holds for every service whose ARNs
+              # "other projects are out of reach" holds for every service whose ARNs
               # are name-prefixed and does NOT hold for KMS, because a CMK ARN is
               # a UUID.
               #
