@@ -406,3 +406,22 @@ You asked whether the docs were current and comprehensive and said they must not
 **Found along the way, queued for the next code round:** the gateway's allowed CORS header list and the middleware's are out of step and nothing tests them; six code comments still cite "prompts.md §Routing" and round ids.
 
 Nothing here needs a decision from you.
+
+## 2 Oct, afternoon — round 12: your seven points
+
+All seven are built, reviewed against the code and merged; prod has them once the last deploy finishes. Three things want a minute of yours at the end.
+
+- **A typed note (F1).** A **+** at the end of Home's header offers Note or Checklist, creates it with a placeholder title and opens it with the title selected. Clear the title and the server keeps the placeholder until you type one. Back out without touching it and the note is discarded, so no "New note" rows pile up. Offline it says it needs a connection, because a note without a server id cannot be opened.
+- **Noise no longer files a note (F2).** Two findings on the way: the speech provider never reports the "no speech" score the old gate relied on, so that gate had never fired; and the three noise notes in prod all had log-probabilities far below any real dictation. The gate is now two rules: a recording whose loudness never crosses a floor is refused on the client's measurement without a provider call, and a transcript whose every segment is below Whisper's own confidence bound is refused as no speech. A refused recording shows in the Filing tray as "Nothing heard" with **Transcribe anyway** beside Dismiss, so a wrong refusal costs one tap. Honest caveat: the measured sample is 45 captures, all English; Malayalam is unmeasured. That is why the override exists, and why the bound gets re-checked after the probe below.
+- **Share drawer (F3).** Spec and before/after shots are in `docs/design/specs/2026-10-02/`. One primary action: **Share…** through the system share sheet where the browser has one, otherwise **Copy note** filled; Copy and Download below; one line naming what is copied.
+- **Empty item crossed off is removed (F4).** Focus moves to the row above.
+- **Checklist copy (F5).** The clipboard gets both plain text (title, then ☐ / ☑ lines, two spaces per level, done in place) and rich text (a real nested list with done struck through). Pastes as a list into Mail, Docs and Notes; as glyph lines into WhatsApp and Messages.
+- **Levels survive Tidy up (F6).** The cause was the model's reply through the tidy's output guard, which checked words and ticks but not depth. Now every surviving item goes back under its previous parent when that parent survived; an item the model regrouped under a new heading stays there. Eleven adversarial list shapes in review: never invents, never loses a line, always a valid tree. Ceiling: an item the model renames stays at the top level rather than guessing a parent.
+- **Drag the drawer header down to close (F7).** Threshold and flick velocity are the same constants as the note swipe; the close button and Escape stay; focus returns to ⋮.
+
+Also in: the routing decision line carries the capture id, the tidy path's receipt shows the tidied line, Find in an Items tab mirrors real rows, a repeated refusal is re-announced, reconcile stops flagging exports, and the CORS header lists are held in step by a test.
+
+**For you**
+1. Your AWS session on orb has expired. After `aws login` there, two one-command runs are owed: the noise probe (three generated clips plus, please, two or three short Malayalam clips of your own) and the live tidy eval with the four-level case. Both commands are in the backlog rows PR12-20 and PR12-7.
+2. Paste a copied checklist into WhatsApp and Messages once and say if the format reads right.
+3. The vm-threads Vitest pool stays off: two tests still fail under it (one jsdom `location` stub, one fake-indexeddb abort); a third off the wall time is available when those are fixed.
