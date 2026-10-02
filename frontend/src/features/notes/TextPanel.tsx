@@ -4,10 +4,10 @@ import { useAutoGrow } from '@/hooks/useAutoGrow.ts';
 import { useReducedMotion } from '@/hooks/useReducedMotion.ts';
 
 import { ChecklistEditor } from './ChecklistEditor.tsx';
-import { findMatches } from './find.ts';
+import { FIND_MATCH_CAP, findMatches, type FindMatch } from './find.ts';
 import { markMatches, useReportTotal, useScrollToActiveMatch, type FindTarget } from './FindBar.tsx';
 import { additionTo } from './autosave.ts';
-import { parseChecklist } from './checklist.ts';
+import { parseChecklist, type ChecklistItem } from './checklist.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
 
 /** A recording's addition to point at: the body from before it, and which Show this is. */
@@ -27,9 +27,9 @@ const FLASH_MS = 2000;
  * read-only mirror of the same text (`FindMirror`), because a `<mark>`
  * cannot be drawn inside a textarea. A recording's addition is pointed at the
  * same way (`FlashMirror`, the banner's Show). A checklist's body is items,
- * not a text: `ChecklistEditor` stands in for the textarea, and the find
- * mirror still serves the bar — the raw lines, marked — so a word in a long
- * list can still be found. Each mirror owns the focus it takes and hands
+ * not a text: `ChecklistEditor` stands in for the textarea, and its own
+ * mirror serves the bar (`ChecklistFindMirror`) — the rows with their boxes
+ * and words, marked — so a word in a long list can still be found. Each mirror owns the focus it takes and hands
  * back; the textarea is measured here, in the panel, so re-opening the Text
  * tab measures again: a hook in the screen would keep a ref to a textarea
  * that had left the document and never see the one that replaced it.
@@ -76,7 +76,9 @@ export function TextPanel({
       bodyRef={bodyRef}
       onDone={onFlashDone}
     >
-      {find ? (
+      {find && checklist ? (
+        <ChecklistFindMirror body={body} lang={lang} find={find} onDismiss={onDismissFind} />
+      ) : find ? (
         <FindMirror body={body} lang={lang} find={find} bodyRef={bodyRef} onDismiss={onDismissFind} />
       ) : checklist ? (
         <ChecklistEditor
@@ -184,6 +186,77 @@ function FindMirror({
       {markMatches(body, matches, find.active)}
     </section>
   );
+}
+
+/**
+ * The Items tab's mirror: one row per item with its box and its words, the
+ * task-list syntax left out, so Find on a list reads as the list does, at
+ * its levels, a done row struck through. The matches are the rows' words,
+ * numbered down the list, so "3 of 12" means what it means in the bar; a
+ * query spanning two rows is not found, as one spanning two text nodes is
+ * not in the cleaned view. No caret to give back: the rows are fields of
+ * their own, and leaving the bar shows them again.
+ */
+function ChecklistFindMirror({
+  body,
+  lang,
+  find,
+  onDismiss,
+}: {
+  body: string;
+  lang: string | undefined;
+  find: FindTarget;
+  onDismiss: () => void;
+}) {
+  const ref = useRef<HTMLElement>(null);
+  const { rows, total } = useMemo(() => checklistRows(body, find.query), [body, find.query]);
+  useReportTotal(find, total);
+  useScrollToActiveMatch(ref, find.active, total);
+  return (
+    // A tap goes back to the rows, as a tap on the text mirror goes back to
+    // the textarea; the mirror itself is text, not a control.
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions
+    <section
+      ref={ref}
+      className="note-body-mirror"
+      lang={lang}
+      aria-label="Items, read-only while finding"
+      onClick={onDismiss}
+    >
+      <ul className="note-body-mirror__list">
+        {rows.map(({ item, matches, first }, index) => (
+          <li
+            key={index}
+            className="note-body-mirror__item"
+            data-depth={item.depth || undefined}
+            data-done={item.done || undefined}
+            aria-level={item.depth + 1}
+          >
+            <span className="note-body-mirror__box" aria-hidden="true">
+              {item.done ? '☑' : '☐'}
+            </span>
+            <span>{markMatches(item.text, matches, find.active, first)}</span>
+            {item.done && <span className="visually-hidden">, done</span>}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** Each row of a checklist body with its matches, numbered after the rows above it, and the count. */
+function checklistRows(
+  body: string,
+  query: string,
+): { rows: { item: ChecklistItem; matches: FindMatch[]; first: number }[]; total: number } {
+  let total = 0;
+  const rows = parseChecklist(body).map((item) => {
+    const matches = findMatches(item.text, query, FIND_MATCH_CAP - total);
+    const first = total;
+    total += matches.length;
+    return { item, matches, first };
+  });
+  return { rows, total };
 }
 
 /**
