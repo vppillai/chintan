@@ -317,7 +317,7 @@ const DOT = 1.2;
  * strip carries the first and last day of the month beneath it and a caption
  * saying what the bars, the accent and the dots are (QA 12); the tallest
  * bar's value used to be printed above it too, and went with the other
- * operator-speak on this card (round-3 T20) — every bar still names its
+ * operator-speak on this card — every bar still names its
  * figure on hover.
  */
 function Sparkline({ usage }: { usage: UsageWire }) {

@@ -23,7 +23,7 @@ import { formatDollars } from './usage.ts';
 /**
  * The retention tiers the server stores. `settings_validate.go` rounds any
  * other number down to one of these, so the free number field this used to
- * be showed "45 days" while the audio went on day 30 (round-3 T5): the
+ * be showed "45 days" while the audio went on day 30: the
  * choice is now one of the five, and what is shown is what is stored.
  */
 export const RETENTION_TIERS = [0, 7, 30, 90, 365] as const;
@@ -58,7 +58,7 @@ const SAVED_TICK_MS = 2_500;
  * a title, one line on what it is for, its controls as rows, and one sentence
  * of footnote with the rest behind More — so the screen is a list of shapes
  * to scan rather than a column of prose with a control every few hundred
- * pixels, which is what it had grown into, twice (round-3 T20: the Usage
+ * pixels, which is what it had grown into, twice (the Usage
  * card alone was a third of a three-screen page, and now sits behind one row
  * that opens `/usage`).
  *
@@ -85,7 +85,7 @@ export function SettingsScreen() {
    * beside it. Once the PUT succeeds the cache holds what the server *stored*
    * (`useSaveSettings`), and that is what renders: the screen used to copy
    * the stored record into a draft exactly once, so a value the server had
-   * coerced stayed on screen as typed (round-3 T5).
+   * coerced stayed on screen as typed.
    */
   const draft: SettingsWire =
     (save.isPending || save.isError) && save.variables ? save.variables : (stored ?? DEFAULTS);
@@ -225,7 +225,7 @@ export function SettingsScreen() {
         {/*
           Under the language row because the owner's live default was
           Auto-detect, which re-scripted real Malayalam as Tamil and dropped
-          the Malayalam sentence from a mixed clip (round-3 T3). The app's
+          the Malayalam sentence from a mixed clip. The app's
           own copy had recommended it for exactly that case.
         */}
         <p className="you-card__note">
@@ -290,7 +290,7 @@ export function SettingsScreen() {
 
       {/* ---- About & support ----------------------------------------------- */}
       {/*
-        Usage is one row here rather than its own card (round-3 T20): the
+        Usage is one row here rather than its own card: the
         card was a third of the screen and buried Passkeys and About under
         it. The row carries the month's providers figure, and the whole card
         is a screen of its own at `/usage`.
