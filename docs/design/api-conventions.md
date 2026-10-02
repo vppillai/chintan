@@ -81,7 +81,8 @@ a cross-origin page could not read it (`TestEveryProblemCarriesTheCorrelationID`
   lease and what is replayed are idempotency.md's.
 - `Content-Type: application/json` on a body; `X-Correlation-Id` when the
   caller has one. The client's default timeout is `DEFAULT_TIMEOUT_MS`
-  (15 s).
+  (15 s). These four names are what `middleware.AllowedRequestHeaders`
+  advertises, and the CORS test below holds both lists to them.
 
 ## Bodies and bounds
 
@@ -138,11 +139,13 @@ gateway overwrites the CORS headers on the way out from its own list —
 `Authorization`, `Content-Type`, `Idempotency-Key`, `X-Correlation-Id`,
 `X-Amz-Date`, `X-Api-Key`, `X-Amz-Security-Token`; the six methods;
 `ExposeHeaders: X-Correlation-Id`; `MaxAge: 86400`. A header the client
-sends that is missing there fails the preflight with no clue which. The
-template's list and the middleware's `allowedRequestHeaders` are kept in
-step by hand; no test compares them (`TestCORS` covers the middleware).
-`X-Device-Key` is deliberately absent, so a browser page cannot present a
-device key.
+sends that is missing there fails the preflight with no clue which.
+`middleware.AllowedRequestHeaders` names the four the client sends, and
+`TestMiddlewareCORSHeadersAreInTheGatewaysList` (`handler/openapi_conformance_test.go`)
+reads the template's list and fails when the middleware names a header the
+gateway does not, or omits one the client sends (`TestCORS` covers the
+middleware's own behaviour). `X-Device-Key` is deliberately absent, so a
+browser page cannot present a device key.
 
 ## Versioning
 

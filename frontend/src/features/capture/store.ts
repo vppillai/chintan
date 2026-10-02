@@ -139,6 +139,7 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
         createdAt: Date.now(),
         uploadedAt: null,
         peaks: started ? null : (controller?.envelope() ?? null),
+        peak: started ? null : (controller?.peak() ?? null),
       }).catch(() => {
         /* Storage denied. The chunks are still on disk. */
       });
@@ -265,6 +266,7 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
           durationMs: model.elapsedMs,
           noteId: model.noteId,
           peaks: controller?.envelope() ?? [],
+          peak: controller?.peak(),
           // A Retry after a create that succeeded is a resume: the server
           // replays that create verbatim, presigned URL included, and only
           // the uploader's re-key branch can get past a credential that has

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { CAPTURE_STATUSES, isTerminalStatus } from '@/api/schema.ts';
 import { STUCK_CREATED_AT, capture } from '@/test/filing.tsx';
 
-import { STAGES, describeAgoShort, groupReceipts, noticeKind, stageIndex, tierCaptures } from './model.ts';
+import { STAGES, describe as describeRow, describeAgoShort, groupReceipts, noticeKind, stageIndex, tierCaptures } from './model.ts';
 
 describe('stageIndex', () => {
   it('lights a segment for every status the pipeline can leave a capture in', () => {
@@ -107,6 +107,21 @@ describe('describeAgoShort', () => {
     expect(ago(3 * 3_600_000)).toBe('3 h');
     expect(ago(4 * 86_400_000)).toBe('4 d');
     expect(describeAgoShort('not a date', now)).toBe('');
+  });
+});
+
+describe('describe', () => {
+  it('says "Nothing heard" for a recording a transcription gate ended, and keeps the instruction wording otherwise', () => {
+    // The gate is the one signal that tells silence or noise (the microphone
+    // never rose, or the provider was unsure of every word) from a
+    // recording that was heard and was only an instruction to the app.
+    expect(describeRow(capture({ status: 'no_content', gate: 'quiet' }), false)).toBe('Nothing heard');
+    expect(describeRow(capture({ status: 'no_content', gate: 'no_speech' }), false)).toBe('Nothing heard');
+    expect(describeRow(capture({ status: 'no_content', gate: 'hint_echo' }), false)).toBe('Nothing heard');
+    expect(describeRow(capture({ status: 'no_content', gate: null }), false)).toBe(
+      'Nothing to save from that recording',
+    );
+    expect(describeRow(capture({ status: 'no_content' }), false)).toBe('Nothing to save from that recording');
   });
 });
 

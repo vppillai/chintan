@@ -203,6 +203,36 @@ describe('an upload that has not landed, read on another device', () => {
   });
 });
 
+describe('a recording nothing was heard in', () => {
+  it('says "Nothing heard" and offers Transcribe anyway, which reaches /retranscribe', async () => {
+    // The gate is the recorder's or the provider's judgement; the person's
+    // outranks it, and a row with only Dismiss would make the judgement final.
+    const user = userEvent.setup();
+    const { calls } = mount([capture({ id: 'srv-quiet', status: 'no_content', gate: 'quiet' })]);
+
+    await screen.findByText('Nothing heard');
+    await user.click(await screen.findByRole('button', { name: 'Transcribe anyway' }));
+
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (call) =>
+            call.method === 'POST' && call.url.endsWith('/v1/captures/srv-quiet/retranscribe'),
+        ),
+      ).toBe(true);
+    });
+    // Still a way off the screen beside it.
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+  });
+
+  it('offers no Transcribe anyway on a recording that was heard and was only an instruction', async () => {
+    mount([capture({ id: 'srv-empty', status: 'no_content' })]);
+
+    await screen.findByText('Nothing to save from that recording');
+    expect(screen.queryByRole('button', { name: 'Transcribe anyway' })).toBeNull();
+  });
+});
+
 describe('every notice wears a glyph for its kind (F9)', () => {
   it('marks each row with data-kind and draws its glyph', async () => {
     mount([

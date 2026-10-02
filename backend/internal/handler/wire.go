@@ -265,9 +265,13 @@ type Capture struct {
 	// finding 2).
 	Language         *string `json:"language"`
 	LanguageDetected *string `json:"language_detected"`
-	HasSegments      bool    `json:"has_segments"`
-	HasPeaks         bool    `json:"has_peaks"`
-	Version          int64   `json:"version"`
+	// Gate is which transcription gate ended a no_content capture — quiet,
+	// no_speech or hint_echo (CaptureIndex.Gate) — and null otherwise, so
+	// a row can say "Nothing heard" rather than "Nothing to save".
+	Gate        *string `json:"gate"`
+	HasSegments bool    `json:"has_segments"`
+	HasPeaks    bool    `json:"has_peaks"`
+	Version     int64   `json:"version"`
 	// Targeted is true when a person chose the destination — the client
 	// named note_id at POST /v1/captures, or a person picked the note for a
 	// needs_target capture — and false when the router decided or nothing
@@ -371,6 +375,10 @@ func captureOf(c model.CaptureIndex) Capture {
 	if c.Excerpt != "" {
 		v := c.Excerpt
 		out.Excerpt = &v
+	}
+	if c.Gate != "" {
+		v := c.Gate
+		out.Gate = &v
 	}
 	return out
 }

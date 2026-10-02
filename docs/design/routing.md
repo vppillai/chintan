@@ -176,7 +176,7 @@ or bound ships only with a line in `bounds.go` and a recorded replay case
 | 10 same-second re-check before a create (`pipeline.route`) | 200 notes | `MaxCandidates` | sibling captures make one note |
 | 11 targeted-capture instruction gate (`MentionsInstruction`) | the `instructionCues` list | — | a capture into a note pays for a call only when it may hold an instruction |
 | 12 fallback title (`pipeline.fallbackNoteTitle`) | 6 words, 40 characters | `FallbackTitleWords`, `FallbackTitleRunes` | a row that reads as the thought it holds and fits a list line |
-| 13 no speech (`provider.Transcription.NoSpeech`) | 0.6; −1.0 | `NoSpeechThreshold`, `LogprobThreshold` | silence is not filed |
+| 13 nothing heard (`pipeline.transcribe`, `provider.Transcription.NoSpeech`) | 0.04 peak; −1.0 | `QuietPeakRMS`, `LogprobThreshold` | silence and room noise are not filed |
 | 14 hint echo and the short-dictation tidy (`pipeline.spellingHints`, `transcriptOutcome`, `isShortDictation`) | 1,500 ms; 50 notes; 12 words | `MinHintAudioMS`, `MaxHintNotes`, `ShortDictationWords` | note titles do not become dictation; a short dictation does not wait on a model |
 
 `MaxTitleRunes` (200) is the one bound that is not a rule's: every title,
@@ -186,7 +186,27 @@ dictated, typed or stored, is cut at it (`SanitizeTitle`,
 ## Before routing: the transcription gates
 
 Rules 13 and 14 run in the transcribe stage (`pipeline/transcribe.go`,
-`transcriptOutcome`), and a capture they end never reaches the router.
+`transcriptOutcome`), and a capture they end never reaches the router. A
+capture one of them ends is `no_content` with `gate` on its row and on the
+wire (`quiet`, `no_speech` or `hint_echo`; null for the instruction-only
+`no_content` the clean stage files), which is what lets the Filing tray and a
+note's Recordings tab say "Nothing heard" rather than "Nothing to save"
+(capture-ux.md). The transcript, when there is one, stays beside the audio,
+and Transcribe again on the Recordings tab lifts the gate: the row's
+`skip_gates` makes the next run send the audio whatever its peak and file the
+words whatever their scores, refusing only the prompt read back and a
+transcript with no letter or digit in it (`service.RetranscribeCapture`).
+
+**Quiet.** The app measures the recording's loudest moment while recording
+(`peaks.ts` `PeakCollector.max`, the RMS of one analyser frame in 0..1) and
+sends it as `peak` on `POST /v1/captures`. A capture whose peak is known and
+under `routing.QuietPeakRMS` (0.04) is filed as `no_content` with gate
+`quiet` before any provider call: the floor is the recorder's own
+`PEAK_FLOOR`, under which the live canvas never rose, so the person watched
+the bars stay flat while recording. An idle or muted microphone sits around
+0.01; someone speaking softly passes 0.05. A peak of zero — a device's inbox
+request, an app without the field — means nothing was measured and the gate
+does not apply.
 
 **Spelling hints.** Whisper takes a prompt that biases spelling
 (`prompts.md`, "Whisper's spelling prompt"). `spellingHints` supplies the
@@ -212,16 +232,32 @@ or digit; when every sentence of it is a stock silence phrase — "Thank you.",
 "Thanks for watching!", "you", "bye", a subtitle credit
 (`silenceHallucinations`, compared by words) — whatever the scores, because
 Whisper answers digital silence with "Thank you." at `no_speech_prob` 0; or
-when every segment is one Whisper itself would skip: `no_speech_prob` over
-`routing.NoSpeechThreshold` (0.6) and `avg_logprob` at or under
-`routing.LogprobThreshold` (−1.0), Whisper's own tuned pair rather than a
-number of ours, so a quiet but confidently heard "Buy milk" is kept. "Thank
-you, Anu." and "Thank you. Buy milk." are speech.
+when the model was unsure of every word of every segment, `avg_logprob` at
+or under `routing.LogprobThreshold` (−1.0), Whisper's own bound for a
+doubtful segment. Only that one of Whisper's two silence scores is read:
+Groq's `whisper-large-v3-turbo` reports `no_speech_prob` as 0 on every
+segment, so a gate that needed it could never fire. The numbers behind the
+bound, from the production worker's `transcribed capture` lines, which have
+carried scores since the line gained them: 45 of 45 scored captures carried
+`no_speech_prob_min` 0. Of the 45, thirty were the QA battery's identical
+English clips, eleven were real English dictations with `avg_logprob_max`
+between −0.08 and −0.604, one was a stock silence phrase at −0.88 that the
+phrase list caught, and three were recordings of room noise that became
+notes, at −1.35 (thirteen words in 1.6 s), −2.08 (one word, "Portuguese")
+and −2.56 (two words in 5.4 s). The bound is measured for English only: no
+Malayalam, Tamil or Hindi capture has been scored, and that is why Transcribe
+again lifts the gate rather than argues with it. "Thank you, Anu.", "Thank
+you. Buy milk." and a quiet but confidently heard "Buy milk" are speech. `TestLiveNoiseProbe` (`provider/live_stt_probe_test.go`) is how
+the gate is measured against the real provider: it transcribes every clip in
+`STT_PROBE_DIR` — generated pink noise, room tone and a fan, and a
+text-to-speech control — and prints each segment's three scores and text.
 
-The `transcribed capture` log line carries `gate` — `hint_echo`, `no_speech`
-or empty when the transcript goes on — and, when there are segments, the
-least silent segment's `no_speech_prob_min` and `avg_logprob_max`, so a
-silent capture that was filed can be judged from the log.
+The `transcribed capture` log line carries `gate` — `quiet`, `hint_echo`,
+`no_speech` or empty when the transcript goes on — `peak` when the app
+measured one, and, when there are segments, the least silent segment's
+`no_speech_prob_min` and `avg_logprob_max` and the most repetitive one's
+`compression_ratio_max`, so a silent capture that was filed can be judged
+from the log and the next tuning has its numbers.
 
 **The short-dictation tidy** (`pipeline/clean.go`). After routing, a
 dictation of fewer than `routing.ShortDictationWords` (12) words makes no
@@ -243,7 +279,8 @@ from the extraction (`checklists.md`).
 `route` logs one INFO line `routing decided` per routed capture
 (`logRoutingDecision`), written once the branch is final so a deduped capture
 reads as deduped, counts and enumerations only, so a week of routes can be
-judged from the log alone: `action` (append|new), `confidence`, `matched_by`
+judged from the log alone: `capture_id` (an opaque id, as on every other line
+of `route`), `action` (append|new), `confidence`, `matched_by`
 (model|title|alias|tag|prefix_title|prefix_transcript|spoken_name|none —
 `model` when the model's own append stood, `none` for a new note nothing
 matched), `outcome` (append|needs_target|new|deduped|new_after_missing),

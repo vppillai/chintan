@@ -516,6 +516,37 @@ test('a failed capture offers a retry that reaches the API', async ({ page, api 
     .toBe(true);
 });
 
+test('a recording nothing was heard in says so and offers Transcribe anyway', async ({ page, api }) => {
+  api.captures.push({
+    id: 'cap-quiet',
+    status: 'no_content',
+    gate: 'quiet',
+    created_at: new Date().toISOString(),
+    version: 1,
+  });
+
+  await page.goto('/');
+
+  const filing = page.getByRole('region', { name: 'Filing' });
+  await expect(filing.getByText('Nothing heard')).toBeVisible();
+  const anyway = filing.getByRole('button', { name: 'Transcribe anyway' });
+  await expect(anyway).toBeVisible();
+  const box = await anyway.boundingBox();
+  expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+  await anyway.click();
+
+  await expect
+    .poll(() =>
+      api.requests.some(
+        (request) =>
+          request.method === 'POST' && request.url === '/v1/captures/cap-quiet/retranscribe',
+      ),
+    )
+    .toBe(true);
+  // The row follows the run rather than vanishing.
+  await expect(filing.getByText('Filing your recording')).toBeVisible({ timeout: 10_000 });
+});
+
 /**
  * Where the app thinks a recording goes.
  *

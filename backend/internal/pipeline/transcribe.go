@@ -29,6 +29,26 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		return err
 	}
 
+	// Quiet (rule 13's first test): the recorder measured the loudest
+	// moment, and it never crossed the floor under which the app's own
+	// canvas stayed flat (routing.QuietPeakRMS). Nothing is sent to the
+	// provider: Whisper answers room tone with words, confidently, and
+	// three such recordings became notes. The capture ends as no_content
+	// with gate quiet, under the same log line as a transcribed one, and
+	// the person's Transcribe again lifts the gate (SkipGates).
+	if capture.Peak != nil && *capture.Peak < routing.QuietPeakRMS && !capture.SkipGates {
+		obs.Log(ctx).Info("transcribed capture",
+			slog.String("capture_id", capture.ID),
+			slog.Int64("duration_ms", capture.DurationMS),
+			slog.Int("segments", 0),
+			slog.String("gate", "quiet"),
+			slog.Float64("peak", *capture.Peak))
+		capture.Status = model.StatusNoContent
+		capture.Gate = "quiet"
+		capture.Error = ""
+		return p.persist(ctx, capture)
+	}
+
 	// A presigned GET, not the bytes. Pulling the whole object into the Lambda
 	// heap and re-POSTing it would make the heap — rather than the microphone —
 	// the real cap on how long a recording can be.
@@ -90,7 +110,7 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	if err != nil {
 		return fmt.Errorf("pipeline: raw key: %w", err)
 	}
-	verdict := transcriptOutcome(result, hints)
+	verdict := transcriptOutcome(result, hints, capture.SkipGates)
 	segmentsKey := ""
 	var segments []byte
 	if !verdict.echoed && (len(result.Segments) > 0 || len(result.Words) > 0) {
@@ -129,6 +149,7 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		capture.Language = language
 		capture.LanguageDetected = result.Language
 		capture.Status = model.StatusNoContent
+		capture.Gate = verdict.gate
 		capture.Error = ""
 		return p.persist(ctx, capture)
 	}
@@ -150,15 +171,22 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		slog.String("gate", verdict.gate),
 		slog.Any("raw", rawShape),
 	}
+	if capture.Peak != nil {
+		attrs = append(attrs, slog.Float64("peak", *capture.Peak))
+	}
 	if len(result.Segments) > 0 {
 		// The silence gate's inputs, as numbers: when three seconds of
 		// silence filed "Thank you." the log could not say which test it
-		// passed (R7-10d). The least silent segment decides the gate.
-		noSpeechMin, logprobMax := result.Segments[0].NoSpeechProb, result.Segments[0].AvgLogprob
+		// passed (R7-10d). The least silent segment decides the gate; the
+		// compression ratio is logged for the next tuning, not read.
+		noSpeechMin, logprobMax, ratioMax := result.Segments[0].NoSpeechProb, result.Segments[0].AvgLogprob, result.Segments[0].CompressionRatio
 		for _, s := range result.Segments[1:] {
-			noSpeechMin, logprobMax = min(noSpeechMin, s.NoSpeechProb), max(logprobMax, s.AvgLogprob)
+			noSpeechMin, logprobMax, ratioMax = min(noSpeechMin, s.NoSpeechProb), max(logprobMax, s.AvgLogprob), max(ratioMax, s.CompressionRatio)
 		}
-		attrs = append(attrs, slog.Float64("no_speech_prob_min", noSpeechMin), slog.Float64("avg_logprob_max", logprobMax))
+		attrs = append(attrs,
+			slog.Float64("no_speech_prob_min", noSpeechMin),
+			slog.Float64("avg_logprob_max", logprobMax),
+			slog.Float64("compression_ratio_max", ratioMax))
 	}
 	obs.Log(ctx).Info("transcribed capture", attrs...)
 	obs.Count(ctx, "TranscribedLanguage", map[string]string{"Outcome": languageOutcome(sent, result.Language)})
@@ -176,6 +204,7 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		capture.DurationMS = ms
 	}
 	capture.Status = verdict.status
+	capture.Gate = verdict.gate
 	capture.Error = ""
 	if capture.NoteID == "" && capture.Status == model.StatusTranscribed {
 		// Routing is next, and its setStatus is the very next call. A
@@ -195,9 +224,10 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 type transcriptVerdict struct {
 	status model.CaptureStatus
 	// gate names the gate that ended the capture — hint_echo (R7-10b) or
-	// no_speech (R7-10c) — on the "transcribed capture" log line, "" when
-	// the transcript goes on; the two had counters until D6 (2026-10-01)
-	// and would otherwise be one status in prod.
+	// no_speech (R7-10c); quiet is decided before the call, in transcribe —
+	// on the "transcribed capture" log line and on the row (CaptureIndex.Gate),
+	// "" when the transcript goes on; the gates had counters until D6
+	// (2026-10-01) and would otherwise be one status in prod.
 	gate   string
 	echoed bool
 }
@@ -214,13 +244,16 @@ type transcriptVerdict struct {
 //   - no speech (R7-10c, provider.Transcription.NoSpeech): nothing was said,
 //     so there is nothing to route or file; left to go on, a tone became a
 //     new note called "Dictation" whose body was ".". no_content; the
-//     transcript and segments stay stored beside the audio;
+//     transcript and segments stay stored beside the audio. skipGates is a
+//     person's Transcribe again over that answer (CaptureIndex.SkipGates):
+//     the scores and the silence phrases stand aside and the words are
+//     filed, unless there is no letter or digit in them to file;
 //   - otherwise transcribed, and routing or cleanup is next.
-func transcriptOutcome(result provider.Transcription, hints []string) transcriptVerdict {
+func transcriptOutcome(result provider.Transcription, hints []string, skipGates bool) transcriptVerdict {
 	switch {
 	case echoesHints(result.Text, hints):
 		return transcriptVerdict{status: model.StatusNoContent, gate: "hint_echo", echoed: true}
-	case result.NoSpeech():
+	case result.NoSpeech() && (!skipGates || !provider.HasLetterOrDigit(result.Text)):
 		return transcriptVerdict{status: model.StatusNoContent, gate: "no_speech"}
 	default:
 		return transcriptVerdict{status: model.StatusTranscribed}

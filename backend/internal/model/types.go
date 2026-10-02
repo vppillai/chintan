@@ -404,8 +404,10 @@ const (
 	// note is uncertain, so the user has to confirm before anything is written.
 	StatusNeedsTarget CaptureStatus = "needs_target"
 	// StatusNoContent means the recording was nothing but an instruction to the app,
-	// such as "create a note called test123", or held no speech at all
-	// (provider.Transcription.NoSpeech), so there was no dictation to write.
+	// such as "create a note called test123", or nothing was heard in it —
+	// the recorder's peak never rose, the provider was unsure of every word,
+	// or it read its prompt back (CaptureIndex.Gate) — so there was no
+	// dictation to write.
 	StatusNoContent CaptureStatus = "no_content"
 
 	// The five below arrived with the asynchronous pipeline and lived in
@@ -502,6 +504,26 @@ type CaptureIndex struct {
 	DurationMS  int64  `json:"duration_ms,omitempty"`
 	SegmentsKey string `json:"segments_key,omitempty"`
 	PeaksKey    string `json:"peaks_key,omitempty"`
+	// Peak is the loudest moment of the recording as the app measured it
+	// while recording (frontend peaks.ts: the RMS of one analyser frame,
+	// 0..1), sent with POST /v1/captures. The transcribe stage files a
+	// capture whose peak never crossed routing.QuietPeakRMS as no_content
+	// without a provider call. Nil when the sender measured nothing — a
+	// device's inbox request, an app without the field — and 0 when it
+	// measured and heard nothing at all; the two are different answers.
+	Peak *float64 `json:"peak,omitempty"`
+	// Gate names the transcription gate that ended the capture as
+	// no_content — quiet, no_speech or hint_echo (pipeline.transcribe) —
+	// and is empty on every other row, the instruction-only no_content
+	// included. Promoted beside excerpt, so the Filing tray and a note's
+	// Recordings tab say "Nothing heard" rather than "Nothing to save".
+	Gate string `json:"gate,omitempty"`
+	// SkipGates is set by a person's Transcribe again on a gated capture
+	// (service.RetranscribeCapture): the recording is transcribed and filed
+	// whatever the peak and the scores say, because the person knows they
+	// spoke. The hint echo and a transcript with no letter in it are still
+	// refused; there is nothing in them to file.
+	SkipGates bool `json:"skip_gates,omitempty"`
 	// Language is the language the transcript at RawKey was asked for:
 	// LanguageAuto or the ISO-639-1 code sent to the provider, written in
 	// the same persist as RawKey. It is what tells a retry that the

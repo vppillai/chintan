@@ -1,3 +1,4 @@
+import { useTranscribeAnyway } from '@/api/queries/captures.ts';
 import { isTerminalStatus, type CaptureWire } from '@/api/schema.ts';
 import { Icon, type IconName } from '@/components/Icon.tsx';
 import { SwipeRow } from '@/components/SwipeRow.tsx';
@@ -122,6 +123,27 @@ export function NoticeGlyph({ kind }: { kind: NoticeKind }) {
 }
 
 /** The ×. One name everywhere, "Dismiss", and always drawn (F9 supersedes R7-7a's hidden ×). */
+/**
+ * The override on a "Nothing heard" row. A component of its own so the
+ * mutation hook is mounted only for the row that needs it, since the row's
+ * body is a plain function shared with the receipt branch.
+ */
+function TranscribeAnywayButton({ captureId }: { captureId: string }) {
+  const transcribeAnyway = useTranscribeAnyway();
+  return (
+    <div className="filing-row__actions">
+      <button
+        type="button"
+        className="filing-row__action"
+        onClick={() => transcribeAnyway.mutate(captureId)}
+        disabled={transcribeAnyway.isPending}
+      >
+        <span>{transcribeAnyway.isPending ? 'Sending…' : 'Transcribe anyway'}</span>
+      </button>
+    </div>
+  );
+}
+
 function DismissButton({ onDismiss }: { onDismiss: () => void }) {
   return (
     <button type="button" className="filing-row__dismiss" aria-label="Dismiss" onClick={onDismiss}>
@@ -210,6 +232,10 @@ function captureBody({
   // waits until the server will take it — see `retryAccepted`.
   const actionable = failed || stuck;
   const retryable = failed || retryAccepted(capture);
+  // "Nothing heard" is the recorder's or the provider's judgement; the
+  // person's outranks it. The same /retranscribe as the Recordings tab's
+  // Transcribe again, with the server lifting its gates for the run.
+  const unheard = capture.status === 'no_content' && Boolean(capture.gate);
   const needsTarget = capture.status === 'needs_target';
   // Another device's upload that has not landed: its title says so, and the
   // strip's "Upload" is not appended to it.
@@ -270,6 +296,8 @@ function captureBody({
             </button>
           </div>
         )}
+
+        {unheard && <TranscribeAnywayButton captureId={capture.id} />}
 
         {retryError && (
           <p className="filing-row__error" role="alert">

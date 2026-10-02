@@ -823,7 +823,8 @@ func TestRoutingDecisionIsLoggedAsCountsOnly(t *testing.T) {
 			t.Fatalf("run: %v", err)
 		}
 		want(t, decided(t, "corr-append"), map[string]any{
-			"action": "append", "confidence": 0.95, "matched_by": "model", "outcome": "append", "candidates": 1.0,
+			"capture_id": "c_1",
+			"action":     "append", "confidence": 0.95, "matched_by": "model", "outcome": "append", "candidates": 1.0,
 			"transcript_words": 12.0, "title_words": 0.0, "spans": 1.0, "removed_words": 7.0,
 			"checklist": false, "source": "app",
 		})

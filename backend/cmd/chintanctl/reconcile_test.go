@@ -118,6 +118,9 @@ func TestReconcileReportsNewArtifactsWithoutDeletingThem(t *testing.T) {
 	// attribute names yet. Deleting it would be data loss, so it is reported.
 	blobs.seed(t, "tenants/tenantA/captures/c1/embeddings.bin", "\x01\x02", "application/octet-stream")
 	blobs.seed(t, "tenants/tenantA/somewhere/else.txt", "x", "text/plain")
+	// An export snapshot is an object no row names and the lifecycle rule
+	// expires; it is not unknown and not a finding (T55-r).
+	seedExport(t, blobs, "tenantA")
 
 	res, err := runReconcile(ctx, e, nil, true, nil)
 	if err != nil {
@@ -126,11 +129,12 @@ func TestReconcileReportsNewArtifactsWithoutDeletingThem(t *testing.T) {
 	if got := findingsOfKind(res, findingUnreferencedObject); len(got) != 1 {
 		t.Errorf("unreferenced_object findings = %d, want 1 (%+v)", len(got), got)
 	}
-	if got := findingsOfKind(res, findingUnknownObject); len(got) != 1 {
-		t.Errorf("unknown_object findings = %d, want 1 (%+v)", len(got), got)
+	if got := findingsOfKind(res, findingUnknownObject); len(got) != 1 || !strings.HasSuffix(got[0].Key, "somewhere/else.txt") {
+		t.Errorf("unknown_object findings = %+v, want the one stray key and no export", got)
 	}
 	if !blobs.has("tenants/tenantA/captures/c1/embeddings.bin") ||
-		!blobs.has("tenants/tenantA/somewhere/else.txt") {
+		!blobs.has("tenants/tenantA/somewhere/else.txt") ||
+		!blobs.has("tenants/tenantA/exports/e1/export.json") {
 		t.Error("--apply deleted an object it does not understand")
 	}
 }

@@ -227,11 +227,12 @@ type groqTranscription struct {
 	Language string  `json:"language"`
 	Duration float64 `json:"duration"`
 	Segments []struct {
-		Start        float64 `json:"start"`
-		End          float64 `json:"end"`
-		Text         string  `json:"text"`
-		NoSpeechProb float64 `json:"no_speech_prob"`
-		AvgLogprob   float64 `json:"avg_logprob"`
+		Start            float64 `json:"start"`
+		End              float64 `json:"end"`
+		Text             string  `json:"text"`
+		NoSpeechProb     float64 `json:"no_speech_prob"`
+		AvgLogprob       float64 `json:"avg_logprob"`
+		CompressionRatio float64 `json:"compression_ratio"`
 	} `json:"segments"`
 	Words []struct {
 		Word  string  `json:"word"`
@@ -254,7 +255,7 @@ func decodeTranscription(r io.Reader) (Transcription, error) {
 	for _, s := range parsed.Segments {
 		out.Segments = append(out.Segments, Segment{
 			Start: s.Start, End: s.End, Text: s.Text,
-			NoSpeechProb: s.NoSpeechProb, AvgLogprob: s.AvgLogprob,
+			NoSpeechProb: s.NoSpeechProb, AvgLogprob: s.AvgLogprob, CompressionRatio: s.CompressionRatio,
 		})
 	}
 	for _, w := range parsed.Words {

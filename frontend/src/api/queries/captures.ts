@@ -14,6 +14,8 @@ import {
 } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef } from 'react';
 
+import { announce } from '@/components/StatusRegion.tsx';
+
 import { useApi } from '../ApiProvider.tsx';
 import { ApiError } from '../problem.ts';
 import type { ChintanApi } from '../endpoints.ts';
@@ -487,6 +489,31 @@ export function useRetryCapture(): UseMutationResult<CaptureWire, Error, string>
     onSuccess: (capture) => {
       queryClient.setQueryData(queryKeys.capture(capture.id), capture);
       void queryClient.invalidateQueries({ queryKey: ['captures'] });
+    },
+  });
+}
+
+/**
+ * Transcribe anyway, on a "Nothing heard" row: the same `/retranscribe` the
+ * Recordings tab's Transcribe again calls. The server lifts its gates for
+ * the run (`skip_gates`), so the person's word wins over the recorder's
+ * peak and the provider's scores. The 202 carries the capture back at
+ * `transcribing`, which replaces the row and lets the poll follow it; the
+ * two fixed sentences go through the one live region, since the row's own
+ * status text is about to change under it.
+ */
+export function useTranscribeAnyway(): UseMutationResult<CaptureWire, Error, string> {
+  const api: ChintanApi = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (captureId: string) => api.retranscribeCapture(captureId),
+    onSuccess: (capture, captureId) => {
+      queryClient.setQueryData(queryKeys.capture(captureId), capture);
+      void queryClient.invalidateQueries({ queryKey: ['captures'] });
+      announce('Transcribing again.');
+    },
+    onError: () => {
+      announce('Could not transcribe that again.');
     },
   });
 }

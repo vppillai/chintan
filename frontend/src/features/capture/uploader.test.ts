@@ -122,6 +122,42 @@ describe('a successful upload', () => {
       expect.objectContaining({ content_type: 'audio/webm', duration_ms: 12_000 }),
       'cap-1',
     );
+    // No peak was measured, so none is claimed: the worker's quiet floor
+    // reads an absent peak as "not measured", never as silence.
+    expect(h.api.createCapture).not.toHaveBeenCalledWith(
+      expect.objectContaining({ peak: expect.anything() }),
+      expect.anything(),
+    );
+  });
+
+  it('sends the loudest frame as peak, to three places, when the recorder measured one', async () => {
+    const h = harness();
+
+    await uploadCapture(h.api, { ...REQUEST, peak: 0.0523456 }, emitInto(h.events), h.deps);
+
+    expect(h.api.createCapture).toHaveBeenCalledWith(
+      expect.objectContaining({ peak: 0.052 }),
+      'cap-1',
+    );
+  });
+
+  it('sends peak 0 for a recording the analyser heard nothing in, and no peak when it collected no frames', async () => {
+    // 0 and absent are different answers to the worker: 0 is "measured,
+    // nothing heard" and files as quiet; absent is "not measured" and is
+    // transcribed. A session without analyser frames has no envelope either.
+    const heardNothing = harness();
+    await uploadCapture(heardNothing.api, { ...REQUEST, peak: 0 }, emitInto(heardNothing.events), heardNothing.deps);
+    expect(heardNothing.api.createCapture).toHaveBeenCalledWith(
+      expect.objectContaining({ peak: 0 }),
+      'cap-1',
+    );
+
+    const unmeasured = harness();
+    await uploadCapture(unmeasured.api, { ...REQUEST, peaks: [], peak: 0 }, emitInto(unmeasured.events), unmeasured.deps);
+    expect(unmeasured.api.createCapture).not.toHaveBeenCalledWith(
+      expect.objectContaining({ peak: expect.anything() }),
+      expect.anything(),
+    );
   });
 
   it('reports the server capture id so the progress card can take over', async () => {

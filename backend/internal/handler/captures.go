@@ -16,6 +16,9 @@ type captureCreateRequest struct {
 	NoteID      string `json:"note_id"`
 	DurationMS  int64  `json:"duration_ms"`
 	SizeBytes   int64  `json:"size_bytes"`
+	// Peak is the recorder's loudest moment in 0..1 (model.CaptureIndex.Peak);
+	// a pointer, since 0 (nothing heard) and absent (nothing measured) differ.
+	Peak *float64 `json:"peak"`
 }
 
 // captureTargetRequest is the OpenAPI CaptureTarget schema.
@@ -102,6 +105,10 @@ func (rt *router) beginCapture(w http.ResponseWriter, r *http.Request) {
 		httperr.BadRequest(w, r, "size_bytes and duration_ms must not be negative")
 		return
 	}
+	if req.Peak != nil && (*req.Peak < 0 || *req.Peak > 1) {
+		httperr.BadRequest(w, r, "peak must be between 0 and 1")
+		return
+	}
 
 	// The budget is checked before the URL is issued. Without this a capped
 	// tenant uploads a recording, watches the capture sit at spend_capped, and
@@ -115,6 +122,7 @@ func (rt *router) beginCapture(w http.ResponseWriter, r *http.Request) {
 		ContentType: req.ContentType,
 		SizeBytes:   req.SizeBytes,
 		DurationMS:  req.DurationMS,
+		Peak:        req.Peak,
 	})
 	if err != nil {
 		fail(w, r, err)

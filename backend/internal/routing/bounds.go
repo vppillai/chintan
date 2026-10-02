@@ -7,8 +7,8 @@ import (
 
 // The bounds of the deterministic routing rules, in one place.
 //
-// Fourteen rules rescue or refuse what the router answers (prompts.md
-// §Routing; the table is TestRoutingBoundsAreRegistered). Every number one
+// Fourteen rules rescue or refuse what the router answers (routing.md
+// §The bounds; the table is TestRoutingBoundsAreRegistered). Every number one
 // of them reads lives here, with why it is that number and the rule that
 // reads it — the two rules whose numbers belong to the transcription and the
 // cleanup (13: the silence scores; 14: the hint and short-dictation bounds)
@@ -102,14 +102,36 @@ const (
 	// itself (maxFieldLen).
 	MaxTitleRunes = 200
 
-	// NoSpeechThreshold and LogprobThreshold are Whisper's own silence
-	// thresholds, the defaults of its reference transcribe(): a segment is
-	// skipped as silence when no_speech_prob is over 0.6 unless avg_logprob
-	// is over -1, i.e. the model is also unsure of the words (rule 13;
-	// provider.Transcription.NoSpeech). Its tuned pair rather than a number
-	// of ours, so a quiet but confidently heard "Buy milk" is kept.
-	NoSpeechThreshold = 0.6
-	LogprobThreshold  = -1.0
+	// LogprobThreshold is the one of Whisper's two silence scores that is live
+	// on this provider (rule 13; provider.Transcription.NoSpeech): a segment
+	// whose avg_logprob is at or under it is one the model was unsure of
+	// every word of, and a recording made only of such segments is noise
+	// heard as words. It is Whisper's own number, the bound its reference
+	// transcribe() keeps a doubtful segment by. Whisper's other score,
+	// no_speech_prob, is not read: Groq's whisper-large-v3-turbo reported it
+	// as 0 on every one of the 45 production captures that carried scores
+	// (scores are logged since 2026-09-30; the 192 earlier lines have none),
+	// so a gate that needed it over 0.6 could never fire, and three noise
+	// recordings (one, two and thirteen words at avg_logprob -2.08, -2.56
+	// and -1.35) each became a note. Of the other 42: thirty were the QA
+	// battery's identical English clips, eleven were real English dictations
+	// whose least confident was -0.604, and one was a stock silence phrase at
+	// -0.88 that the phrase list caught. The bound is measured for English
+	// only — no Malayalam, Tamil or Hindi capture has been scored — which is
+	// why a person's Transcribe again lifts it (CaptureIndex.SkipGates).
+	LogprobThreshold = -1.0
+
+	// QuietPeakRMS is the recorder's own line for "nothing heard" (rule 13;
+	// pipeline.transcribe): the loudest analyser frame of the recording, as
+	// RMS of the time-domain signal in 0..1, under which the app's live
+	// canvas never rose above its floor (frontend peaks.ts PEAK_FLOOR, the
+	// same number for the same reason). An idle or muted microphone sits
+	// around 0.01; someone speaking softly passes 0.05. A capture whose
+	// peak never crossed it is filed as no_content without a transcription
+	// call, and the person saw the bars stay flat while recording. Zero
+	// means the client measured nothing (a device, an older app) and the
+	// gate does not apply.
+	QuietPeakRMS = 0.04
 
 	// MinHintAudioMS is the shortest recording that gets a spelling prompt
 	// (rule 14; pipeline.spellingHints). Whisper can answer near-silence by

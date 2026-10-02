@@ -132,7 +132,7 @@ export function filedLabel(capture: CaptureWire): string {
     case 'spend_capped':
       return 'Spending cap reached';
     case 'no_content':
-      return 'Nothing to save';
+      return capture.gate ? 'Nothing heard' : 'Nothing to save';
     default:
       return 'Filing…';
   }

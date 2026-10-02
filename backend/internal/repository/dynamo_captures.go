@@ -58,6 +58,8 @@ func captureItemAttrs(c model.CaptureIndex) (map[string]types.AttributeValue, er
 		// (R7-7b, R7-7c); a note's banner reads them through the same overlay.
 		"excerpt":      strAttr(c.Excerpt),
 		"created_note": boolAttr(c.CreatedNote),
+		// gate is what lets a note's Recordings tab say "Nothing heard".
+		"gate": strAttr(c.Gate),
 	}
 	// Indexed even when NoteID is empty. A capture awaiting disambiguation has
 	// no destination note, and leaving it out of the index entirely is what made
@@ -110,6 +112,9 @@ func captureFromItem(m map[string]types.AttributeValue) (model.CaptureIndex, err
 	}
 	if _, ok := m["created_note"]; ok {
 		c.CreatedNote = readBool(m, "created_note")
+	}
+	if _, ok := m["gate"]; ok {
+		c.Gate = readString(m, "gate")
 	}
 	return c, nil
 }
@@ -285,7 +290,7 @@ func (s *DynamoStore) hydrateUnprojectedCaptureFields(ctx context.Context, tenan
 		})
 	}
 	// SOURCE is a DynamoDB reserved word, hence the placeholder.
-	items, err := s.batchGet(ctx, keys, "sk, #source, last_progress_at, excerpt, created_note", map[string]string{"#source": "source"})
+	items, err := s.batchGet(ctx, keys, "sk, #source, last_progress_at, excerpt, created_note, gate", map[string]string{"#source": "source"})
 	if err != nil {
 		return fmt.Errorf("dynamo hydrate capture fields: %w", err)
 	}
@@ -305,6 +310,9 @@ func (s *DynamoStore) hydrateUnprojectedCaptureFields(ctx context.Context, tenan
 		}
 		if _, has := item["created_note"]; has {
 			captures[i].CreatedNote = readBool(item, "created_note")
+		}
+		if _, has := item["gate"]; has {
+			captures[i].Gate = readString(item, "gate")
 		}
 	}
 	return nil

@@ -49,10 +49,14 @@ type Segment struct {
 	End   float64 `json:"end"`
 	Text  string  `json:"text"`
 	// NoSpeechProb and AvgLogprob are Whisper's own confidence that the
-	// segment is silence and in the words it chose; see NoSpeech. Zero when
-	// the provider does not report them, which reads as speech.
-	NoSpeechProb float64 `json:"no_speech_prob,omitempty"`
-	AvgLogprob   float64 `json:"avg_logprob,omitempty"`
+	// segment is silence and in the words it chose, and CompressionRatio is
+	// how repetitive the text is (a looping hallucination runs past 2.4).
+	// Zero when the provider does not report them, which reads as speech;
+	// NoSpeech reads AvgLogprob alone, since Groq reports no_speech_prob as
+	// 0 on every segment, and the other two are logged for the next tuning.
+	NoSpeechProb     float64 `json:"no_speech_prob,omitempty"`
+	AvgLogprob       float64 `json:"avg_logprob,omitempty"`
+	CompressionRatio float64 `json:"compression_ratio,omitempty"`
 }
 
 // Word is one timestamped word of the raw transcript.
@@ -86,11 +90,15 @@ func (t Transcription) DurationMS() int64 {
 // NoSpeech reports that the recording held no dictation (R7-10c): the
 // transcript has no letter or digit in it (a 1.5 s tone came back as "."
 // and became a note called "Dictation"), or it is only Whisper's stock
-// answer to silence (see silenceHallucination), or every segment is one
-// Whisper itself would have skipped as silence. A transcript without
-// segments is judged by its text alone.
+// answer to silence (see silenceHallucination), or the model was unsure of
+// every word of every segment — avg_logprob at or under
+// routing.LogprobThreshold — which is noise heard as words: in production
+// three noise recordings scored -1.35, -2.08 and -2.56 and each became a
+// note, while speech never went under -0.88. Whisper's no_speech_prob is
+// not consulted; this provider reports it as 0 for every segment. A
+// transcript without segments is judged by its text alone.
 func (t Transcription) NoSpeech() bool {
-	if strings.IndexFunc(t.Text, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsNumber(r) }) < 0 {
+	if !HasLetterOrDigit(t.Text) {
 		return true
 	}
 	// Whatever the scores (R7-10e): on prod, 3 s of digital silence came
@@ -104,11 +112,18 @@ func (t Transcription) NoSpeech() bool {
 		return false
 	}
 	for _, s := range t.Segments {
-		if s.NoSpeechProb <= routing.NoSpeechThreshold || s.AvgLogprob > routing.LogprobThreshold {
+		if s.AvgLogprob > routing.LogprobThreshold {
 			return false
 		}
 	}
 	return true
+}
+
+// HasLetterOrDigit reports that text holds something that can be filed: a
+// letter or a digit in any script. Punctuation alone ("." for a tone) is not
+// dictation; the pipeline's override reads it too.
+func HasLetterOrDigit(text string) bool {
+	return strings.IndexFunc(text, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsNumber(r) }) >= 0
 }
 
 // silenceHallucinations are the transcripts Whisper is known to produce for

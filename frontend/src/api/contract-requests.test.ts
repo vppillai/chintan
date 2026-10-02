@@ -213,6 +213,7 @@ describe('the requests the frontend actually sends', () => {
           note_id: NOTE_ID,
           duration_ms: 12_000,
           size_bytes: 1_048_576,
+          peak: 0.21,
         },
         'capture-local-1',
       ),
