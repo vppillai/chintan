@@ -60,6 +60,8 @@ export interface StoredCapture {
   /** Set once the server has confirmed the upload; until then, never pruned. */
   uploadedAt: number | null;
   peaks: number[] | null;
+  /** The loudest frame, unscaled (`PeakCollector.max`); absent on records written before it was kept. */
+  peak?: number | null;
 }
 
 export interface CaptureChunkRecord {

@@ -2164,6 +2164,19 @@ components:
             The filing row gates Retry on it: a capture untouched for longer
             than the worker's 900 s timeout has no live worker.
         duration_ms: { type: integer, nullable: true }
+        gate:
+          type: string
+          nullable: true
+          enum: [quiet, no_speech, hint_echo, null]
+          description: >
+            For a `no_content` capture that the transcription stage ended,
+            which gate ended it: `quiet` (the recorder's peak never crossed
+            the floor; nothing was sent to the provider), `no_speech` (the
+            provider was unsure of every word it heard, or heard only its
+            stock answer to silence) or `hint_echo` (it read its spelling
+            prompt back). Null otherwise, a recording that was only an
+            instruction included. A row says "Nothing heard" for the three;
+            `POST /v1/captures/{captureId}/retranscribe` lifts the gate.
         language:
           type: string
           nullable: true
@@ -2240,6 +2253,17 @@ components:
           type: integer
           minimum: 0
           description: Used to bound the presigned upload's content-length range; 0 or absent means the API's own cap.
+        peak:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: >
+            The loudest moment of the recording as the app measured it while
+            recording: the RMS of one analyser frame, 0..1. A recording whose
+            peak never crossed the worker's quiet floor is filed as
+            `no_content` with `gate: quiet` and no transcription call. 0 means
+            the recorder measured and heard nothing; omit when nothing was
+            measured, which the worker reads as "not quiet".
 
     CaptureCreated:
       type: object

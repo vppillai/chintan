@@ -75,6 +75,7 @@ export function ResumePrompt() {
         durationMs: record.durationMs,
         noteId: record.noteId,
         peaks: record.peaks ?? [],
+        peak: record.peak ?? undefined,
         // What makes this a resume rather than a first attempt: the server
         // already minted a capture for these bytes, so its answer to another
         // create is a stored one, credential included.

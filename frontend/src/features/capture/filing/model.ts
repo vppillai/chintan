@@ -97,7 +97,10 @@ export function describe(capture: CaptureWire, stuck: boolean, recordedHere = tr
     case 'needs_target':
       return 'Which note should this go in?';
     case 'no_content':
-      return 'Nothing to save from that recording';
+      // A gate heard nothing: the microphone never rose, or the provider
+      // was unsure of every word. Otherwise the recording was an
+      // instruction to the app, which is nothing to save but was heard.
+      return capture.gate ? 'Nothing heard' : 'Nothing to save from that recording';
     case 'spend_capped':
       return 'Daily spending cap reached';
     case 'failed':

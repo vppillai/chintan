@@ -234,7 +234,18 @@ glyph says the kind (`noticeKind` in `filing/model.ts`, `data-kind` on the
 row): the Bindu mark for a row still moving, `route` for "which note?",
 `alert` (`--color-notice-alert`) for failed, capped, stuck or a failed upload
 — muted for `no_content`, where nothing went wrong — `check` for a receipt
-and the fold, `plus` for a note the recording started. The glyphs are
+and the fold, `plus` for a note the recording started. A `no_content` row's
+title is "Nothing heard" when a transcription gate ended it (the wire's
+`gate`: the microphone never rose above the recorder's floor, the provider
+was unsure of every word, or it read its prompt back; routing.md, "Before
+routing") and "Nothing to save from that recording" when the recording was
+heard and was only an instruction to the app; a recording is never dropped
+without a row. A "Nothing heard" row has Transcribe anyway beside its × — a
+44 px control on the same `/retranscribe` the Recordings tab's Transcribe
+again uses, which lifts the gate so the person's word wins; the row says
+"Transcribing again." or "Could not transcribe that again." through the live
+region — and the same two labels are the Recordings tab's
+(`recordings/labels.ts` `filedLabel`). The glyphs are
 `aria-hidden`; the title says the same in words. An e2e check holds the title
 and the × to one line (`layout.spec.ts`).
 

@@ -222,7 +222,8 @@
       "content_type": "audio/webm",
       "note_id": "contract-note",
       "duration_ms": 12000,
-      "size_bytes": 1048576
+      "size_bytes": 1048576,
+      "peak": 0.21
     }
   },
   {

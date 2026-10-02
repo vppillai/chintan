@@ -364,6 +364,18 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		h.do(t, http.MethodGet, "/v1/captures/"+started.ID, contractUser, nil))
 	add("captureDownload", "PresignedDownloadWire", "GET /v1/captures/{captureId}/download?kind=audio → 200",
 		h.do(t, http.MethodGet, "/v1/captures/"+failed.ID+"/download?kind=audio", contractUser, nil))
+	// A recording nothing was heard in: the recorder's peak never crossed
+	// the floor, so the row carries gate quiet and the tray says "Nothing
+	// heard" with Transcribe anyway beside Dismiss.
+	quietPeak := 0.01
+	quiet := h.putCapture(t, model.CaptureIndex{
+		ID: "c_quiet", UserID: contractUser, Status: model.StatusNoContent, CreatedAt: model.Now(),
+		AudioKey: "tenants/user1/captures/c_quiet/audio.webm", DurationMS: 4_200, Peak: &quietPeak, Gate: "quiet",
+	})
+	add("captureNothingHeard", "CaptureWire",
+		"GET /v1/captures/{captureId} → 200 for a recording the quiet gate refused before any transcription call: "+
+			"`gate` is `quiet`, so the row says \"Nothing heard\" and offers Transcribe anyway.",
+		h.do(t, http.MethodGet, "/v1/captures/"+quiet.ID, contractUser, nil))
 	add("captureFromDevice", "CaptureWire",
 		"GET /v1/captures/{captureId} → 200 for a capture a device dropped into the inbox as text: "+
 			"`source` names the device (GET /v1/devices has its name) and `has_audio` is false, so the row shows the transcript and no player.",
@@ -379,7 +391,7 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 	add("captureCreated", "CaptureCreatedWire",
 		"POST /v1/captures → 201. upload.headers reaches the client verbatim; x-amz-tagging is inside the signature, so dropping it makes the PUT 403.",
 		tagged2.do(t, http.MethodPost, "/v1/captures", contractUser, map[string]any{
-			"content_type": "audio/webm", "size_bytes": 4 << 20, "duration_ms": 12_000,
+			"content_type": "audio/webm", "size_bytes": 4 << 20, "duration_ms": 12_000, "peak": 0.21,
 		}))
 
 	// ---- recording edits: delete, move, and the download manifest

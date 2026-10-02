@@ -66,7 +66,7 @@ three that are promoted only and never in the blob: `search_text` (up to
 when set, so their absence is the zero value (pins.md). A capture's promoted attributes
 are its status, timestamps, the append bookkeeping (`append_token`,
 `append_claimed_at`, `appended_at`), `duration_ms`, `error`, `source`,
-`last_progress_at`, `excerpt`, `created_note` and the six object keys
+`last_progress_at`, `excerpt`, `created_note`, `gate` and the six object keys
 (`audio_key`, `raw_key`, `routed_key`, `clean_key`, `segments_key`,
 `peaks_key`). The per-stage timing record (`stage_at`) lives in the blob
 alone (inbox.md).
@@ -126,13 +126,13 @@ populated table is an outage of the note screen.
 
 ### The hydrate step
 
-Four capture attributes a note's page needs are not in the projection:
+Five capture attributes a note's page needs are not in the projection:
 `source` (which device sent the recording), `last_progress_at` (what the
-app's poll cadence and stuck rule run on), `excerpt` and `created_note`
-(what the filing banner says). `ListCapturesByNote` overlays them on each
-page with one `BatchGetItem` keyed off the projected ids
-(`hydrateUnprojectedCaptureFields`, projection
-`sk, #source, last_progress_at, excerpt, created_note`), and a row that
+app's poll cadence and stuck rule run on), `excerpt`, `created_note` and
+`gate` (what the filing banner and the Recordings tab say). `ListCapturesByNote`
+overlays them on each page with one `BatchGetItem` keyed off the projected
+ids (`hydrateUnprojectedCaptureFields`, projection
+`sk, #source, last_progress_at, excerpt, created_note, gate`), and a row that
 has no such attribute keeps what the index gave. One extra read per page is
 cheaper than a second index, a two-step deploy and a switch of the index
 name, so this is the design, not a stopgap; fold the four into

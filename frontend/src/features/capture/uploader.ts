@@ -60,6 +60,12 @@ export interface UploadRequest {
   noteId: string | null;
   peaks: number[];
   /**
+   * The loudest frame of the recording, unscaled, 0..1 (`PeakCollector.max`).
+   * Sent as `peak`; the worker refuses a recording whose peak never crossed
+   * the quiet floor without transcribing it. Absent when nothing measured it.
+   */
+  peak?: number | undefined;
+  /**
    * The capture the server already minted for these bytes.
    *
    * Set only on a resume. Its presence is what tells this function that the
@@ -189,6 +195,12 @@ export async function uploadCapture(
     note_id: request.noteId,
     duration_ms: Math.round(request.durationMs),
     size_bytes: blob.size,
+    // Only when the analyser collected frames: then 0 means the recorder
+    // heard nothing, and an absent peak means nothing measured. Three
+    // places is what peaks.json keeps too; the floor is 0.04.
+    ...(request.peak !== undefined && request.peaks.length > 0
+      ? { peak: Math.round(request.peak * 1000) / 1000 }
+      : {}),
   };
 
   let created: CaptureCreatedWire;
@@ -268,6 +280,7 @@ export async function uploadCapture(
       createdAt: Date.now(),
       uploadedAt: null,
       peaks: request.peaks,
+      peak: request.peak ?? null,
     })
     .catch(() => {
       /* A failed bookkeeping write must not abort a good upload. */

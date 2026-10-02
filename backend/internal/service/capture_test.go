@@ -458,6 +458,9 @@ func TestRetranscribeCaptureResetsAFinishedCaptureAndHandsItToTheWorker(t *testi
 		{"appended, asked for ml", appended, "ml", false, false, nil},
 		{"appended, no language: the note's applies", appended, "", false, false, nil},
 		{"failed at transcription, asked for auto", model.CaptureIndex{Status: model.StatusFailed, Error: "x", CreatedAt: model.FormatTime(now)}, "auto", false, false, nil},
+		// "Nothing heard" and the person knows they spoke: the gate is
+		// lifted for the run that follows (pipeline.transcribe, SkipGates).
+		{"refused as quiet, asked for again", model.CaptureIndex{Status: model.StatusNoContent, Gate: "quiet", Peak: new(float64), CreatedAt: model.FormatTime(now)}, "", false, false, nil},
 		{"a language that is not a code", appended, "klingon", false, false, ErrInvalidLanguage},
 		{"still transcribing a minute ago", model.CaptureIndex{Status: model.StatusTranscribing, CreatedAt: model.FormatTime(now), LastProgressAt: model.FormatTime(now.Add(-time.Minute))}, "ml", false, false, ErrCaptureInFlight},
 		{"the audio has expired", appended, "ml", true, false, ErrCaptureAudioExpired},
@@ -520,6 +523,9 @@ func TestRetranscribeCaptureResetsAFinishedCaptureAndHandsItToTheWorker(t *testi
 			}
 			if got.NoteID != "n1" {
 				t.Errorf("note_id = %q, want the destination kept", got.NoteID)
+			}
+			if got.Gate != "" || got.SkipGates != (tc.capture.Gate != "") {
+				t.Errorf("gate = %q skip_gates = %v after a Transcribe again on a row gated %q; want the gate cleared and lifted only when there was one", got.Gate, got.SkipGates, tc.capture.Gate)
 			}
 			if got.LastProgressAt != model.FormatTime(now) {
 				t.Errorf("last_progress_at = %q, want the hand-off stamped", got.LastProgressAt)

@@ -138,6 +138,9 @@ type CaptureRequest struct {
 	// DurationMS is what the recorder measured. The worker overwrites it with the
 	// provider's figure once the audio is transcribed.
 	DurationMS int64
+	// Peak is the recorder's loudest moment, CaptureIndex.Peak; nil when the
+	// sender measured nothing.
+	Peak *float64
 	// Language is a language the requester chose for this recording alone
 	// (model.LanguageAuto or a code), which outranks the note's and the
 	// default as a /retranscribe choice does; "" chooses nothing.
@@ -290,6 +293,7 @@ func (s *CaptureService) newCaptureRow(ctx context.Context, userID string, req C
 		NoteID:            req.NoteID,
 		Status:            model.StatusUploaded,
 		DurationMS:        req.DurationMS,
+		Peak:              req.Peak,
 		CreatedAt:         model.Now(),
 		RequestedLanguage: language,
 		Source:            req.Source,
@@ -589,6 +593,11 @@ func (s *CaptureService) RetranscribeCapture(ctx context.Context, userID, captur
 	// The excerpt was cut from the transcript being replaced, so it goes
 	// with it, and the new one is written when the new transcript is.
 	capture.Excerpt = ""
+	// A person asking again over "Nothing heard" knows they spoke: the quiet
+	// floor and the silence scores stand aside for this run, and the gate
+	// that ended it is cleared with the transcript it judged.
+	capture.SkipGates = capture.Gate != ""
+	capture.Gate = ""
 	// The claim is what stops a second append; this one is meant to write
 	// the body again, so the earlier claim and completion are released and
 	// the worker takes a fresh claim, finds the marker, and replaces.

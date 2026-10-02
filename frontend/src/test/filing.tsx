@@ -63,6 +63,9 @@ export function mount(
     if (url.includes('/v1/captures/') && url.endsWith('/retry')) {
       return retry ?? json(capture({ status: 'transcribing' }));
     }
+    if (url.includes('/v1/captures/') && url.endsWith('/retranscribe')) {
+      return json(capture({ status: 'transcribing' }), 202);
+    }
     if (url.includes('/v1/captures/') && url.endsWith('/target')) {
       return json(capture({ status: 'appending' }));
     }

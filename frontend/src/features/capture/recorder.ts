@@ -371,6 +371,11 @@ export class RecorderController {
     return this.session?.peaks.envelope() ?? [];
   }
 
+  /** The loudest frame of the recording, unscaled, for the create's `peak`. */
+  peak(): number {
+    return this.session?.peaks.max() ?? 0;
+  }
+
   private attachTrackHandlers(stream: MediaStream): void {
     for (const track of stream.getAudioTracks()) {
       // An incoming call ends the track. Left unhandled, the recording

@@ -36,6 +36,14 @@ describe('transcribing a recording again', () => {
   });
 });
 
+describe('a recording nothing was heard in', () => {
+  it('is labelled "Nothing heard" when a gate ended it, and "Nothing to save" when it was only an instruction', () => {
+    expect(filedLabel({ ...CAPTURE, status: 'no_content', gate: 'quiet' })).toBe('Nothing heard');
+    expect(filedLabel({ ...CAPTURE, status: 'no_content', gate: 'no_speech' })).toBe('Nothing heard');
+    expect(filedLabel({ ...CAPTURE, status: 'no_content' })).toBe('Nothing to save');
+  });
+});
+
 describe('a recording still being made into this note', () => {
   it('says nothing about a row that is filed, and names every other state', () => {
     expect(filedLabel(CAPTURE)).toBe('');

@@ -67,6 +67,17 @@ export class PeakCollector {
     return this.samples.length;
   }
 
+  /**
+   * The loudest frame so far, unscaled, in 0..1. It goes to the server with
+   * the capture (`peak` on the create): a recording whose peak never crossed
+   * `PEAK_FLOOR` — the same floor under which the live canvas stays flat — is
+   * one in which nothing was heard, and the worker files it as "Nothing
+   * heard" without a transcription call.
+   */
+  max(): number {
+    return this.peak;
+  }
+
   /** The divisor both views normalise by: the loudest moment so far, floored. */
   private scale(): number {
     return Math.max(this.peak, PEAK_FLOOR);

@@ -377,6 +377,14 @@ export interface CaptureWire {
    */
   language?: string | null;
   language_detected?: string | null;
+  /**
+   * Which transcription gate ended a `no_content` capture — `quiet` (the
+   * recorder's peak never rose; nothing was sent), `no_speech` (the provider
+   * was unsure of every word) or `hint_echo` — and null otherwise, an
+   * instruction-only recording included. A row says "Nothing heard" for the
+   * three; Transcribe again lifts the gate.
+   */
+  gate?: 'quiet' | 'no_speech' | 'hint_echo' | null;
   has_segments?: boolean;
   has_peaks?: boolean;
   /** True when a person chose the note (`note_id` at create, or `/target`); false when the router decided. Optional only until every backend sends it. */
@@ -412,6 +420,8 @@ export interface CaptureCreateWire {
   note_id?: string | null;
   duration_ms?: number;
   size_bytes?: number;
+  /** The recorder's loudest frame, 0..1; under the worker's floor the capture is filed as "Nothing heard" unheard. */
+  peak?: number;
 }
 
 export interface PresignedUploadWire {

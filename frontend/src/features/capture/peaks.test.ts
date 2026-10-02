@@ -69,6 +69,20 @@ describe('the live view and the envelope share one scale', () => {
     expect(Math.max(...envelope)).toBe(1);
   });
 
+  it('reports the loudest frame unscaled, which is what the create sends as peak', () => {
+    // A square wave of swing s has RMS s/128; the floor plays no part here,
+    // so a recording of room tone reports a peak under PEAK_FLOOR and the
+    // worker files it as "Nothing heard".
+    const peaks = new PeakCollector();
+    expect(peaks.max()).toBe(0);
+    peaks.push(frame(2));
+    expect(peaks.max()).toBeCloseTo(2 / 128, 5);
+    expect(peaks.max()).toBeLessThan(PEAK_FLOOR);
+    peaks.push(frame(120));
+    peaks.push(frame(30));
+    expect(peaks.max()).toBeCloseTo(120 / 128, 5);
+  });
+
   it('rescales what has already been drawn when something louder arrives', () => {
     // The scale is the running peak, so the same early frame shrinks as the
     // recording finds its level — which is what the envelope will show too.
