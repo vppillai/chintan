@@ -401,6 +401,14 @@
   min-inline-size: 0;
 }
 
+/* The + for a typed note, at the row's end after the count: a 44 px disc at
+   the meta colour like a row's ⋮, well away from the record disc on the tab
+   bar. The count moves up against it. No negative margin to the gutter line:
+   the layout fence reads an overflowing wrapper as a sideways scroller. */
+.library-header > .library-heading {
+  margin-inline-start: auto;
+}
+
 .library .library-heading__title {
   font-family: var(--font-sans);
   font-size: var(--font-size-sm);

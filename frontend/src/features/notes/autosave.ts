@@ -201,7 +201,10 @@ export function patchFor(model: EditorModel): NoteUpdateWire {
   const { draft, server } = model;
   return {
     version: model.version,
-    ...(draft.title !== server.title ? { title: draft.title } : {}),
+    // A blank title is never sent: the server refuses it, and a placeholder
+    // cleared to be typed over would otherwise show that refusal as the save
+    // status. The server keeps its title until there is a new one.
+    ...(draft.title !== server.title && draft.title.trim() !== '' ? { title: draft.title } : {}),
     ...(draft.body !== server.body ? { body: draft.body } : {}),
     ...(sameList(draft.aliases, server.aliases) ? {} : { aliases: draft.aliases }),
     ...(sameList(draft.tags, server.tags) ? {} : { tags: draft.tags }),

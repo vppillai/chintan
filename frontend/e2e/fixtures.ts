@@ -5,6 +5,7 @@ import type {
   CaptureWire,
   NoteCleanQueuedWire,
   NoteCleanedWire,
+  NoteCreateWire,
   NoteDetailWire,
   NoteWire,
   Page as PageWire,
@@ -655,6 +656,30 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       return;
     }
 
+    // A typed note from Home: the row the server would mint, with the kind
+    // and placeholder title the client sent; the id counts up so a second
+    // one is a second note.
+    if (path === '/v1/notes' && method === 'POST') {
+      const body = request.postDataJSON() as NoteCreateWire;
+      const id = `typed-${Object.keys(state.notes).length + 1}`;
+      const note: NoteRecord = {
+        id,
+        title: body.title,
+        body: body.body ?? '',
+        snippet: body.body ?? '',
+        tags: body.tags ?? [],
+        aliases: body.aliases ?? [],
+        kind: body.kind ?? 'note',
+        updated_at: new Date().toISOString(),
+        version: 1,
+        archived: false,
+        captures: [],
+      };
+      state.notes[id] = note;
+      await json(route, note satisfies NoteWire, 201);
+      return;
+    }
+
     /*
      * The pinned order after a drag: `index × 1000` over the listed notes,
      * which must all be pinned. Matched before the single-note route below,
@@ -777,6 +802,11 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
           return;
         }
         const body = request.postDataJSON() as Record<string, unknown>;
+        // As `handler/body.go` `checkTitle` answers a blank title.
+        if (typeof body['title'] === 'string' && body['title'].trim() === '') {
+          await problem(route, 400, { title: 'That request was not valid', detail: 'title is required' });
+          return;
+        }
         if (typeof body['title'] === 'string') note.title = body['title'];
         if (typeof body['body'] === 'string' && body['body'] !== note.body) {
           note.body = body['body'];

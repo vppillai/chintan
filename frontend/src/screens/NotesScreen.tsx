@@ -22,6 +22,7 @@ import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNotes, whenIdle } from '@/offline/useNotesCache.ts';
 
 import { LibraryField } from './library/LibraryField.tsx';
+import { NewNote } from './library/NewNote.tsx';
 import { LibraryList } from './library/LibraryList.tsx';
 import { useLibraryParams } from './library/useLibraryParams.ts';
 
@@ -72,6 +73,8 @@ export function NotesScreen() {
   const listId = useId();
   const askPanelId = useId();
   const online = useOnline();
+  // What the + could not do — no connection, a refused create — under the header.
+  const [newNoteNotice, setNewNoteNotice] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   /*
@@ -276,7 +279,13 @@ export function NotesScreen() {
         <p className="library-brand">
           <Wordmark />
         </p>
+        <NewNote onNotice={setNewNoteNotice} />
       </header>
+      {newNoteNotice && (
+        <p className="screen__count" role="status">
+          {newNoteNotice}
+        </p>
+      )}
 
       <LibraryField
         {...params}
