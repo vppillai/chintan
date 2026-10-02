@@ -9,8 +9,8 @@ name: CI
 # production gate are README → Operate → Release flow.
 #
 # Go tests run with -race; golangci-lint, govulncheck, cfn-lint, shellcheck and
-# shfmt, the log-hygiene and env-contract checks, and the frontend typecheck,
-# lint and tests each catch a class of defect none of the others does. A gate
+# shfmt, the log-hygiene, env-contract and docs-current checks, and the frontend
+# typecheck, lint and tests each catch a class of defect none of the others does. A gate
 # that is not in this file is a gate that does not exist.
 #
 # Every action is pinned to a full commit SHA with the release in a trailing
@@ -56,6 +56,7 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
       backlog: ${{ steps.filter.outputs.backlog }}
+      docs: ${{ steps.filter.outputs.docs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -65,23 +66,28 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          code=false; backlog=false
+          code=false; backlog=false; docs=false
           if [ "$EVENT" != "pull_request" ]; then
-            code=true; backlog=true
+            code=true; backlog=true; docs=true
           else
             while IFS= read -r f; do
               [ -n "$f" ] || continue
               case "$f" in
                 docs/backlog.md|docs/backlog-open.md|scripts/backlog-view.py) backlog=true ;;
               esac
+              # The current documents and the files the docs check reads:
+              # the configs and script headers are code too, so both flags.
               case "$f" in
-                *.md|docs/design/*|docs/history/*|docs/ops/*) ;;
+                *.md|docs/design/*|docs/ops/*|config/instances/*|scripts/*.sh|scripts/check-docs-current.py) docs=true ;;
+              esac
+              case "$f" in
+                *.md|docs/design/*|docs/history/*|docs/ops/*|scripts/check-docs-current.py) ;;
                 *) code=true ;;
               esac
             done < <(git diff --name-only --no-renames HEAD^1 HEAD)
           fi
-          echo "code=$code; backlog=$backlog"
-          printf 'code=%s\nbacklog=%s\n' "$code" "$backlog" >> "$GITHUB_OUTPUT"
+          echo "code=$code; backlog=$backlog; docs=$docs"
+          printf 'code=%s\nbacklog=%s\ndocs=%s\n' "$code" "$backlog" "$docs" >> "$GITHUB_OUTPUT"
 
   backend-test:
     name: Go test (race)
@@ -503,6 +509,20 @@ jobs:
             exit 1
           fi
 
+  # The current documents — docs/design (not its dated specs), docs/ops, the
+  # README, CLAUDE.md, the instance configs and the script headers — describe
+  # the system as it is; dates, round and backlog ids, pull request numbers and
+  # "no longer"/"used to" belong in docs/backlog.md and docs/history/. The
+  # check runs on a docs-only pull request, which is where such a line arrives.
+  docs-current:
+    name: Documents are current
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: python3 scripts/check-docs-current.py --self-test && python3 scripts/check-docs-current.py
+
   # The one check the ruleset on main requires. `always()` so it reports when
   # the matrix skipped itself; it fails on any needed job that failed or was
   # cancelled, and `changes` is in the list so a broken filter is a failure,
@@ -510,7 +530,7 @@ jobs:
   ci-passed:
     name: CI passed
     runs-on: ubuntu-latest
-    needs: [changes, backend-test, backend-lint, backend-vuln, infrastructure-lint, shell, log-hygiene, vite-env, instance-configs, frontend, contract, e2e, backlog-view]
+    needs: [changes, backend-test, backend-lint, backend-vuln, infrastructure-lint, shell, log-hygiene, vite-env, instance-configs, frontend, contract, e2e, backlog-view, docs-current]
     if: always()
     steps:
       - env:
