@@ -86,10 +86,15 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 		if err != nil {
 			return fmt.Errorf("pipeline: clean key: %w", err)
 		}
-		if err := p.cfg.Objects.Put(ctx, cleanKey, []byte(tidyDictation(source)), "text/plain"); err != nil {
+		tidied := tidyDictation(source)
+		if err := p.cfg.Objects.Put(ctx, cleanKey, []byte(tidied), "text/plain"); err != nil {
 			return fmt.Errorf("pipeline: store clean text: %w", err)
 		}
 		capture.CleanKey = cleanKey
+		// The tidy is this recording's clean text, so the excerpt is cut from
+		// it as it is from the model's: a receipt reads "The bins go out on
+		// Wednesday night.", the line that was filed, not the transcript.
+		capture.Excerpt = model.CaptureExcerpt(tidied)
 		capture.Status = model.StatusCleaned
 		capture.Error = ""
 		return p.deferPersist(capture)
