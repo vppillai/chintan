@@ -392,3 +392,17 @@ You said "go ahead" with your AWS session on orb, so every open decision from th
 - **Gate and tooling (#225).** CI runs on every pull request and ends in one required check, `CI passed`, which skips the eleven jobs for a docs-only change and fails on any failure or cancellation. The `main` ruleset is applied: pull request only, squash only, `CI passed` green on an up-to-date branch. The production environment no longer names you as reviewer, so a merge deploys to staging, smokes, and goes to prod on its own; the rollback is the gate. The merge drivers, the conflict resolver and the QA harness live in `scripts/dev` and `scripts/qa`, and a 37-line `CLAUDE.md` at the root holds the gates and gotchas. The round-8 specs are under `docs/design/specs/2026-09-30/`.
 
 **Still yours, unchanged:** the branding and domain decisions from round 5, C6 (new notes default to checklists?), R7-14a (an explicit "always a new note" target), and the custom-domain question that D11's CSP waits on. The bundle budget sits at the 540 kB default from this afternoon.
+
+## 2 Oct, morning — round 11: the docs describe the implementation
+
+You asked whether the docs were current and comprehensive and said they must not read as a dev log. Two audits measured it: 93% of the design docs' concrete claims were true, but about a fifth of the corpus narrated change instead of describing state, three dated-report folders sat beside the runbooks, and nine parts of the system had no owner doc. Four PRs fixed that, each reviewed against the code before merge (the reviews re-checked roughly 1,100 claims and sent back 38 false ones, all fixed).
+
+**Design docs (#227, #228).** Every doc is now present tense, one home per fact, every number and name checked against the code, with history confined to the backlog and `docs/history/`. `async-updates.md` is gone (push.md owns Web Push), routing has its own doc split out of prompts, and checklists, capture, note screen, usage accounting and home were rewritten from the current model outward. Nine new docs cover what nothing owned: the data model (for a restore operator), sign-in and the Cognito pool, the worker and its queue, search, offline, navigation, the app shell and PWA, You and About, and the API conventions. The index at `docs/design/README.md` lists 25 docs.
+
+**Operator docs (#229).** The dated reports moved under `docs/history/` (the 2.7 MB of round-5 renders were pruned; they remain in git history), this diary with them. New `docs/ops/alarms.md` names all thirteen alarms with threshold, meaning and action; `docs/ops/backup-restore.md` is a procedure that runs as written on the VM, including the tenant-id remap a restore into a new user pool needs. README now has a costs table with sources (about half a dollar a month idle), numbered tear-down steps including the GitHub side, and the steps for a second instance. Fifteen duplicated facts have one home each.
+
+**The guard (#230).** `scripts/check-docs-current.py` fails CI when a design or ops doc, the README, CLAUDE.md, a config comment or a script header carries a round id, a backlog id, a PR number, a date, or "no longer / used to / until". It ran at 312 hits against main at the start of the round and zero at the end.
+
+**Found along the way, queued for the next code round:** the gateway's allowed CORS header list and the middleware's are out of step and nothing tests them; six code comments still cite "prompts.md §Routing" and round ids.
+
+Nothing here needs a decision from you.
