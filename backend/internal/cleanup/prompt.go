@@ -2,6 +2,7 @@ package cleanup
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/vppillai/chintan/backend/internal/llm"
@@ -186,9 +187,10 @@ var ErrNotATaskList = fmt.Errorf("cleanup: the model did not return a task list"
 // lines, two spaces of indent per level, at most MaxDepth — and how many
 // items were dropped. Tidy up list writes this answer over the body
 // (useTidyList, with only a 6 s Undo for a preview), so the prompt's
-// promises are checked rather than trusted, in two pure steps: dropInvented
-// takes out what the model made up, tickSafety refuses an answer that lost
-// a line or a tick. Nothing left after the drops is ErrEmptyNoteOutput.
+// promises are checked rather than trusted, in three pure steps: dropInvented
+// takes out what the model made up, restoreLevels hands back the levels a
+// flat answer lost, tickSafety refuses an answer that lost a line or a tick.
+// Nothing left after the drops is ErrEmptyNoteOutput.
 func SplitOutput(raw, body string) (text string, dropped int, err error) {
 	out, err := NoteOutput(raw)
 	if err != nil {
@@ -202,6 +204,7 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 	if len(kept) == 0 {
 		return "", dropped, ErrEmptyNoteOutput
 	}
+	kept = restoreLevels(kept, body)
 	reopenParents(kept)
 	if err := tickSafety(kept, body); err != nil {
 		return "", dropped, err
@@ -233,6 +236,110 @@ func dropInvented(items []Item, body string) (kept []Item, dropped int) {
 	}
 	kept = keep(items)
 	return kept, dropped
+}
+
+// restoreLevels puts back the levels a Split up lost. The prompt asks for
+// every item at the level it has, and a model tidying a deep list can answer
+// it flat — every word kept, so dropInvented and tickSafety have nothing to
+// refuse, and the owner's four levels come back as one. So the tree is
+// repaired from the body: an answer item whose words the body had under a
+// parent, standing in the answer at the top or under one of its body
+// ancestors, goes back under its body parent when that parent survived, its
+// own answer children with it, after the children the model left there, in
+// body order. An item the model put under another group stays there — that
+// is the regrouping the prompt allows ("chicken from costco" under Costco) —
+// and one whose parent did not survive stays where it is, since there is
+// nothing to hang it from. Words match as everywhere here (llm.FoldWords),
+// the first item with them on either side; nothing is dropped or re-ticked,
+// so the tick checks that follow see the same items. The result is clamped
+// to MaxDepth as a parsed reply is, in case the model nested a parent deeper
+// than the body had it.
+//
+// ponytail: words match exactly, so an item the model renamed ("Costco" to
+// "Costco run") finds no parent and stays flat; the upgrade is a
+// VerifySubsequence match that still tells "Costco" from "Costco run".
+func restoreLevels(kept []Item, body string) []Item {
+	type node struct {
+		item     Item
+		parent   *node
+		children []*node
+	}
+	bodyParent := map[string]string{}
+	bodyAncestors := map[string]map[string]bool{}
+	var order []string
+	var walk func(items []Item, chain []string)
+	walk = func(items []Item, chain []string) {
+		for _, it := range items {
+			w := llm.FoldWords(it.Text)
+			if _, seen := bodyAncestors[w]; !seen {
+				anc := map[string]bool{}
+				for _, a := range chain {
+					anc[a] = true
+				}
+				bodyAncestors[w] = anc
+				if len(chain) > 0 {
+					bodyParent[w] = chain[len(chain)-1]
+				}
+				order = append(order, w)
+			}
+			walk(it.Children, append(chain, w))
+		}
+	}
+	walk(ItemsFromLines(body), nil)
+	if len(bodyParent) == 0 {
+		return kept
+	}
+	byWords := map[string]*node{}
+	var build func(items []Item, parent *node) []*node
+	build = func(items []Item, parent *node) []*node {
+		out := make([]*node, 0, len(items))
+		for _, it := range items {
+			n := &node{item: Item{Text: it.Text, Done: it.Done}, parent: parent}
+			n.children = build(it.Children, n)
+			if w := llm.FoldWords(it.Text); byWords[w] == nil {
+				byWords[w] = n
+			}
+			out = append(out, n)
+		}
+		return out
+	}
+	roots := build(kept, nil)
+	under := func(n, of *node) bool {
+		for p := n; p != nil; p = p.parent {
+			if p == of {
+				return true
+			}
+		}
+		return false
+	}
+	for _, w := range order {
+		pw, nested := bodyParent[w]
+		n, p := byWords[w], byWords[pw]
+		if !nested || n == nil || p == nil || n.parent == p || under(p, n) {
+			continue
+		}
+		if n.parent != nil && !bodyAncestors[w][llm.FoldWords(n.parent.item.Text)] {
+			continue
+		}
+		siblings := &roots
+		if n.parent != nil {
+			siblings = &n.parent.children
+		}
+		*siblings = slices.DeleteFunc(*siblings, func(c *node) bool { return c == n })
+		n.parent = p
+		p.children = append(p.children, n)
+	}
+	var render func(nodes []*node) []Item
+	render = func(nodes []*node) []Item {
+		var out []Item
+		for _, n := range nodes {
+			it := n.item
+			it.Children = render(n.children)
+			out = append(out, it)
+		}
+		return out
+	}
+	return clampItems(render(roots), 0, MaxDepth)
 }
 
 // tickSafety is the second check on a Split up, over the body's lines and

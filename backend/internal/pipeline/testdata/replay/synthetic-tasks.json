@@ -1,0 +1,6 @@
+{
+  "_comment": "Hand-written, not eval data: one Tidy up list reply in the LLM_RECORD format — a four-level list answered flat, every word kept — which TestTasksReplayRestoresTheLevelsAFlatAnswerLost files under the key of today's tasks prompt to prove the replay path and restoreLevels end to end.",
+  "model": "MiniMax-M3",
+  "reply": "{\"items\":[{\"text\":\"Party\"},{\"text\":\"Costco\"},{\"text\":\"Plates\"},{\"text\":\"Paper ones\",\"done\":true},{\"text\":\"Cups\"},{\"text\":\"Candles\"},{\"text\":\"Milk\"},{\"text\":\"Eggs\"},{\"text\":\"Call the plumber\"}]}",
+  "usage": {"InputTokens": 1100, "OutputTokens": 90}
+}
