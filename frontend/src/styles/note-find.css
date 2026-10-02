@@ -171,6 +171,47 @@
   padding: var(--space-3);
 }
 
+/* The Items tab's mirror: the list as rows, the box a glyph, a sub-item set
+   in by the same step as its row in `checklist.css`, a done row struck as
+   there. The mirror's own padding is the box; the rows add none. */
+.note-body-mirror__list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.note-body-mirror__item {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+}
+
+.note-body-mirror__item[data-depth='1'] {
+  padding-inline-start: var(--space-6);
+}
+
+.note-body-mirror__item[data-depth='2'] {
+  padding-inline-start: calc(2 * var(--space-6));
+}
+
+.note-body-mirror__item[data-depth='3'] {
+  padding-inline-start: calc(3 * var(--space-6));
+}
+
+.note-body-mirror__item[data-done] {
+  color: var(--color-faint);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--color-line-strong);
+}
+
+.note-body-mirror__box {
+  flex: none;
+  color: var(--color-muted);
+}
+
 /* An inline fact in the meta line that opens the Details panel. The line is
    thirteen pixels tall; the target is not — the padding reaches the 44 px
    minimum and the negative margin gives the line its height back. */

@@ -29,6 +29,13 @@ export const SETTLE_MS = 2_500;
 export interface CopyButtonProps {
   /** Produced on click, not on render: the note is still being edited. */
   text: () => string;
+  /**
+   * The same thing as HTML, for a field that keeps structure — a checklist's
+   * nested list (`checklistClipboard`). Written beside the text in one
+   * clipboard item where the API allows, so a rich field gets the list and
+   * a plain one the text; left out, the text alone is written.
+   */
+  html?: () => string;
   /** Names what is being copied. "Copy" on its own is never enough here. */
   label: string;
   className?: string;
@@ -80,11 +87,25 @@ function copyViaSelection(value: string): boolean {
  * worked. Exported for a copy that is a menu item rather than a button — the
  * recording row's — which reports its outcome on its own status line.
  */
-export async function copyText(value: string): Promise<boolean> {
+export async function copyText(value: string, html?: string): Promise<boolean> {
   // Absent entirely on an insecure origin, so this is not merely a rejected
   // promise — it is a missing API, and the fallback runs inside the gesture.
   if (!navigator.clipboard?.writeText) return copyViaSelection(value);
   try {
+    // An empty html is no structure to write: the text alone, as without it.
+    if (html && typeof ClipboardItem === 'function') {
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/plain': new Blob([value], { type: 'text/plain' }),
+            'text/html': new Blob([html], { type: 'text/html' }),
+          }),
+        ]);
+        return true;
+      } catch {
+        // A browser with the constructor but not the rich write: the text alone.
+      }
+    }
     await navigator.clipboard.writeText(value);
     return true;
   } catch {
@@ -92,7 +113,7 @@ export async function copyText(value: string): Promise<boolean> {
   }
 }
 
-export function CopyButton({ text, label, className }: CopyButtonProps) {
+export function CopyButton({ text, html, label, className }: CopyButtonProps) {
   /*
    * The outcome is stamped with the label it belongs to. A control renamed
    * under a stale "Copied" — the transcript toggle switching from raw to
@@ -124,10 +145,10 @@ export function CopyButton({ text, label, className }: CopyButtonProps) {
 
   const onClick = useCallback(() => {
     const value = text();
-    void copyText(value).then((copied) => {
+    void copyText(value, html?.()).then((copied) => {
       settle(copied ? 'copied' : 'failed');
     });
-  }, [text, settle]);
+  }, [text, html, settle]);
 
   return (
     <div className="copy">

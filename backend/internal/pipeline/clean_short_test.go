@@ -46,6 +46,11 @@ func TestAShortDictationSkipsTheCleanupModel(t *testing.T) {
 			if err != nil || string(clean) != tc.want {
 				t.Errorf("clean text = %q, %v; want %q", clean, err, tc.want)
 			}
+			// The receipt's excerpt is the filed line on both paths, the
+			// tidy's as much as the model's, never the raw transcript.
+			if final.Excerpt != tc.want {
+				t.Errorf("excerpt = %q, want the clean text %q", final.Excerpt, tc.want)
+			}
 			body, _ := h.objects.Get(ctx, "tenants/user1/notes/note1/note.md")
 			if !strings.Contains(string(body), tc.want) {
 				t.Errorf("note body %q lacks %q", body, tc.want)

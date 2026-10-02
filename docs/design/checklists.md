@@ -398,14 +398,18 @@ Enter at the end of a parent starts its first sub-item (`insertItemAfter`),
 where the eye is; a top-level line there would take the parent's sub-items
 for its own. Deleting a parent — Backspace in its emptied field, the menu's
 Delete, the × under Done — brings its sub-items up a level (`removeItem`):
-the job is gone, not its first part. Moving a parent from the grip moves its
-block (`moveItem`): Move down and the down arrow step past its own children,
-a block that ends the list cannot move down, a row dropped on a sub-item's
-slot becomes one and a sub-item dropped on a top-level slot comes out, and a
-move that changes the level is said ("Now a sub-item" / "Now a top-level
-item") because neither the menu nor the arrows offered one. A parent dropped
-one slot down stands on its own sub-item's slot, which nothing can mean, and
-goes back where it was.
+the job is gone, not its first part. Ticking a row with no words removes it
+the same way (`toggle` in `ChecklistEditor.tsx`; nothing is said, since the
+save word takes the one region at once, and focus stepping back to the row
+above is the signal): there is nothing to finish, and a blank line under
+Done would only be deleted by hand later. Moving a parent from the grip
+moves its block (`moveItem`): Move down and the down arrow step past its own
+children, a block that ends the list cannot move down, a row dropped on a
+sub-item's slot becomes one and a sub-item dropped on a top-level slot comes
+out, and a move that changes the level is said ("Now a sub-item" / "Now a
+top-level item") because neither the menu nor the arrows offered one. A
+parent dropped one slot down stands on its own sub-item's slot, which
+nothing can mean, and goes back where it was.
 
 ### Done, and the one Undo rule
 
@@ -487,7 +491,19 @@ note every 1.5 s, until `cleanSettled`, then one of four things happens:
 
 There is no preview before it lands; the Undo is the preview, and
 `SplitOutput`'s guards refuse an answer that drops, invents or re-ticks an
-item. The result is applied only by the device that asked, and only while
+item. The levels survive it: a model tidying a deep list can answer it flat
+or partly flat, every word kept, which no guard can refuse, so
+`restoreLevels` (`cleanup/prompt.go`) repairs the tree from the body before
+the tick checks run — an answer item the body had under a parent, standing
+at the top or under one of its body ancestors, goes back under that parent
+when the parent survived (words matched with `llm.FoldWords`), its own
+answer children with it, after the children the model left there. An item
+the model put under another group stays there, which is the regrouping the
+prompt allows, and one whose parent did not survive stays where it is.
+`TestSplitOutputRestoresTheLevelsAFlatAnswerLost` pins the rule and
+`pipeline.TestTasksReplayRestoresTheLevelsAFlatAnswerLost` runs a recorded
+flat answer through the provider's replay and the same checks; the live
+eval's last tasks case is the owner's four-level list. The result is applied only by the device that asked, and only while
 the list is unchanged; elsewhere it sits unused in `cleaned_body`.
 
 **Prose to list.** The Details switch (`NoteDrawer.tsx`) PATCHes
@@ -497,6 +513,25 @@ tidy, because a dictated paragraph is otherwise one long item. Its toast
 reads "Made a checklist: N paragraphs → M items.", and Undo gives back the
 paragraph items. A list turned back into prose before the answer lands drops
 it.
+
+### Copying a list
+
+Copy note in the Share drawer (`NoteDrawer.tsx`, `CopyButton.tsx`) puts a
+checklist on the clipboard in both forms a paste can take, from
+`checklistClipboard` (`features/notes/checklistClipboard.ts`): text/plain
+for a messaging app or a plain field — the title, a blank line, then one
+line per item as `☐ Milk` / `☑ Eggs`, two spaces of indent per level — and
+text/html for a rich field — the title in bold and a real `<ul>` with nested
+lists, a done item struck through. Both are written in one `ClipboardItem`
+where the browser allows it; a browser without the rich write gets the text.
+The box glyphs rather than `[ ]` / `[x]`, because every current phone font
+has them, they read as a list rather than as code, and the apps that strip
+symbols show `[x]` as four characters anyway. (They are outside GSM-7, so a
+text message carrying them goes as UCS-2 segments — as any Malayalam text
+does; a messaging app is unaffected.) Done items stay in place, in
+body order, because a done sub-item moved to the end would come out from
+under its parent; an item with no words is left out. The shape is pinned by
+`checklistClipboard.test.ts`, the two-type write by `CopyButton.test.tsx`.
 
 ## Why the body stays the single source of truth
 

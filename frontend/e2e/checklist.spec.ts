@@ -94,6 +94,25 @@ test('the Items tab ticks, adds, edits and deletes items through the note’s ow
   expect(box?.width).toBeGreaterThanOrEqual(44);
 });
 
+test('ticking an item with no words removes the line instead of filing it under Done', async ({ page, api }) => {
+  seedShopping(api);
+  await page.goto('/notes/shopping');
+  const items = page.getByRole('list', { name: 'Items' });
+  await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
+
+  // Enter under Milk starts an empty Item 2; its box, ticked, deletes it.
+  await items.getByRole('textbox', { name: 'Item 1' }).press('Enter');
+  await expect.poll(() => values(items)).toEqual(['Milk', '', 'Bread and butter', '']);
+  await expect(page.getByText('1 of 4 done')).toBeVisible();
+  await items.getByRole('checkbox', { name: 'Item 2' }).click();
+  await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
+  await expect(page.getByText('1 of 3 done')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Done (1)' })).toBeVisible();
+  // The removal saves, and the list is as it was seeded.
+  await expect.poll(() => saves(api)).toBeGreaterThanOrEqual(1);
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [x] Eggs\n- [ ] Bread and butter');
+});
+
 test('Details turns a note into a checklist and back, sending kind with the converted body', async ({
   page,
   api,

@@ -329,7 +329,9 @@ cannot be drawn inside a textarea, so while the bar has a query the Text
 panel shows a read-only **mirror** of the body in the same box
 (`FindMirror`, `TextPanel.tsx`); closing the bar, or tapping the mirror,
 brings the textarea back with the caret on the match that was current. On a
-checklist the mirror shows the raw lines, marked. The Recordings tab is not
+checklist the mirror is the rows (`ChecklistFindMirror`): the box as a
+glyph, the words marked, a sub-item set in by its level, a done row struck
+through, and none of the task-list syntax. The Recordings tab is not
 searchable; the bar stays, greyed, and says so. Enter is next, Shift+Enter
 previous, Escape closes.
 

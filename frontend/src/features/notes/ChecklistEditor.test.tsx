@@ -142,6 +142,20 @@ describe('ChecklistEditor', () => {
     expect(within(doneSection()).queryByRole('checkbox', { name: 'Eggs' })).toBeNull();
   });
 
+  it('ticking an item with no words removes it instead of filing it under Done', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount('- [ ] Milk\n- [ ] \n- [ ] Bread');
+
+    await user.click(screen.getByRole('checkbox', { name: 'Item 2' }));
+    expect(body()).toBe('- [ ] Milk\n- [ ] Bread');
+    expect(log.saves).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByRole('heading', { name: /Done/ })).toBeNull();
+    expect(screen.queryByText(/done$/, { selector: '.toast__text' })).toBeNull();
+    // Nothing said — the save word owns the region — and focus steps back.
+    expect(screen.queryByText('Marked done')).toBeNull();
+    expect(screen.getByRole('textbox', { name: 'Item 1' })).toHaveFocus();
+  });
+
   it('Enter starts a new item under this one and puts the caret in it', async () => {
     const user = userEvent.setup();
     const { body } = mount(LIST);

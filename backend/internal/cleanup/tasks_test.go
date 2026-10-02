@@ -241,9 +241,12 @@ func TestSplitOutputKeepsFourLevels(t *testing.T) {
 	if want := "- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n      - [x] Cups\n      - [ ] Milk"; err != nil || got != want {
 		t.Errorf("a five-level reply = %q, %v; want %q", got, err, want)
 	}
+	// An invented second-level parent is dropped and its children lifted to
+	// its level (dropInvented), then handed back to their own parent, which
+	// survived beside it (restoreLevels): the list comes out as it was.
 	got, dropped, err = cleanup.SplitOutput(`{"items":[{"text":"Party","children":[{"text":"Walmart","children":[{"text":"Plates"},{"text":"Cups","done":true}]},{"text":"Costco"},{"text":"Candles"}]},{"text":"Milk"}]}`, body)
-	if want := "- [ ] Party\n  - [ ] Plates\n  - [x] Cups\n  - [ ] Costco\n  - [ ] Candles\n- [ ] Milk"; err != nil || dropped != 1 || got != want {
-		t.Errorf("a dropped second-level parent = %q, %d, %v; want %q", got, dropped, err, want)
+	if err != nil || dropped != 1 || got != body {
+		t.Errorf("a dropped second-level parent = %q, %d, %v; want the body", got, dropped, err)
 	}
 	// The invented group taking the list's own group with it is a lost open
 	// item, not a drop.
@@ -260,6 +263,52 @@ func TestSplitOutputKeepsFourLevels(t *testing.T) {
 // item is open, because a done item has no open descendant. Both of the
 // item's bodies: the model reopening the group itself is accepted, and the
 // model leaving it done over an open child is stored open.
+// A four-level list the model answers flat, or partly flat, every word
+// kept: the guards have nothing to refuse, and the levels come back from the
+// body — each item under its old parent, the done one still done, the
+// dictated sentence split at the top where it stood. An item the model put
+// under another group stays there, and a child the model kept with its
+// parent is not moved.
+func TestSplitOutputRestoresTheLevelsAFlatAnswerLost(t *testing.T) {
+	body := "- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n      - [x] Paper ones\n    - [ ] Cups\n  - [ ] Candles\n- [ ] buy milk and call the plumber"
+	want := "- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n      - [x] Paper ones\n    - [ ] Cups\n  - [ ] Candles\n- [ ] Milk\n- [ ] Call the plumber"
+	for name, reply := range map[string]string{
+		"flat":   `{"items":[{"text":"Party"},{"text":"Costco"},{"text":"Plates"},{"text":"Paper ones","done":true},{"text":"Cups"},{"text":"Candles"},{"text":"Milk"},{"text":"Call the plumber"}]}`,
+		"partly": `{"items":[{"text":"Party","children":[{"text":"Costco"},{"text":"Plates","children":[{"text":"Paper ones","done":true}]},{"text":"Cups"},{"text":"Candles"}]},{"text":"Milk"},{"text":"Call the plumber"}]}`,
+		"intact": `{"items":[{"text":"Party","children":[{"text":"Costco","children":[{"text":"Plates","children":[{"text":"Paper ones","done":true}]},{"text":"Cups"}]},{"text":"Candles"}]},{"text":"Milk"},{"text":"Call the plumber"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, dropped, err := cleanup.SplitOutput(reply, body)
+			if err != nil || dropped != 0 || got != want {
+				t.Errorf("SplitOutput = %q dropped=%d err=%v\nwant %q", got, dropped, err, want)
+			}
+		})
+	}
+
+	// Candles under Costco is the model regrouping, which the prompt allows;
+	// Cups at the top, under nothing, goes back under its parent Costco.
+	moved := `{"items":[{"text":"Party","children":[{"text":"Costco","children":[{"text":"Plates","children":[{"text":"Paper ones","done":true}]},{"text":"Candles"}]}]},{"text":"Cups"},{"text":"Milk"},{"text":"Call the plumber"}]}`
+	got, _, err := cleanup.SplitOutput(moved, body)
+	if want := "- [ ] Party\n  - [ ] Costco\n    - [ ] Plates\n      - [x] Paper ones\n    - [ ] Candles\n    - [ ] Cups\n- [ ] Milk\n- [ ] Call the plumber"; err != nil || got != want {
+		t.Errorf("SplitOutput = %q err=%v\nwant %q", got, err, want)
+	}
+
+	// Two parents whose names share a prefix: each child goes back under its
+	// own, by exact words, whichever the answer names first.
+	near := "- [ ] Costco\n  - [ ] Meat\n- [ ] Costco run\n  - [ ] Gas"
+	got, _, err = cleanup.SplitOutput(`{"items":[{"text":"Costco run"},{"text":"Gas"},{"text":"Costco"},{"text":"Meat"}]}`, near)
+	if want := "- [ ] Costco run\n  - [ ] Gas\n- [ ] Costco\n  - [ ] Meat"; err != nil || got != want {
+		t.Errorf("SplitOutput = %q err=%v\nwant %q", got, err, want)
+	}
+
+	// A list with no levels is left exactly as the model answered it.
+	flatBody := "- [ ] Milk\n- [x] Eggs"
+	got, _, err = cleanup.SplitOutput(`{"items":[{"text":"Milk"},{"text":"Eggs","done":true}]}`, flatBody)
+	if err != nil || got != flatBody {
+		t.Errorf("SplitOutput = %q err=%v, want the body", got, err)
+	}
+}
+
 func TestSplitOutputReopensADoneParentThatGainsAnOpenChild(t *testing.T) {
 	const body = "- [x] Costco\n  - [x] Meat\n- [ ] chicken from costco"
 	const want = "- [ ] Costco\n  - [x] Meat\n  - [ ] Chicken"
