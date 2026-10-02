@@ -5,17 +5,15 @@
 #
 # WHY THIS EXISTS
 #
-# The deploy script exported VITE_USER_POOL_CLIENT_ID, named after the
-# CloudFormation output UserPoolClientId. frontend/src/config/env.ts reads
-# VITE_CLIENT_ID. Nothing connected the two, and nothing could fail:
-# `required()` returns an empty string for a missing variable and only warns
-# under import.meta.env.DEV, so the bundle compiled, the deploy went green, and
-# the only symptom would have been a user unable to sign in on a phone.
+# The names are a contract with no compiler: the deploy script exports them
+# (scripts/ci-build-site.sh) and frontend/src/config/env.ts reads them, and
+# `required()` returns an empty string for a missing variable, warning only
+# under import.meta.env.DEV. A misspelt name therefore compiles, deploys green
+# and shows up as a user unable to sign in on a phone.
 #
-# Both directions are checked. A variable read but not exported is the bug above.
-# A variable exported but not read is a contract nobody honours — it was
-# VITE_ENVIRONMENT and VITE_DISPLAY_NAME, invented by the pipeline and consumed
-# by nothing.
+# Both directions are checked. A variable read but not exported is that bug. A
+# variable exported but not read is a contract nobody honours: a value the
+# pipeline invents and nothing consumes.
 #
 # A "read" is any of the three places a VITE_* value can be consumed at build
 # time: `import.meta.env.VITE_X` in the bundle's source, `%VITE_X%` in

@@ -9,56 +9,18 @@
 # cannot go stale because it was never true; a single reader is what keeps the
 # schema below honest.
 #
-# Schema — every field except `name`, `display_name` and `description` has a
-# default:
+# Schema: `name`, `display_name` and `description` are required; `environment`,
+# `region`, `site_path`, `short_name`, `api_host`, `app_host`, `dns_zone_id`
+# and `web_push` have defaults. What each field means, its default and the
+# rules it is checked against are the Instance configuration table in the
+# README (Configure); this script is where those rules are enforced.
 #
-#   name          instance name; the <instance> in chintan-<instance>-<env>.
-#                 Required. Lowercase letters, digits and hyphens, <= 32 chars.
-#   environment   prod | staging | dev. Default: prod.
-#   region        AWS region. Default: $AWS_REGION, else us-west-2.
-#   site_path     GitHub Pages sub-path for this instance's bundle.
-#                 Default: <name> for prod, <name>-<environment> otherwise.
-#   display_name  What the app calls itself: the document title, the manifest's
-#                 `name`, the shell's wordmark, the About heading. Required.
-#   short_name    The home-screen label under the installed icon. At most 12
-#                 characters, which is what launchers show before truncating.
-#                 Default: display_name — which must then fit.
-#   description   One sentence: <meta name="description">, the manifest's
-#                 `description`, the lede on About. Required.
-#   api_host      Custom hostname for this stack's API, e.g. api.example.com.
-#                 Optional; a bare lowercase hostname, no scheme, no path. The
-#                 stack then fronts the HTTP API with it under a free ACM
-#                 certificate and its ApiEndpoint output — so the bundle's
-#                 VITE_API_URL and the Devices card — becomes https://<api_host>.
-#                 Reaches the template as ApiHost.
-#   app_host      The GitHub Pages custom domain the bundles are served from,
-#                 e.g. app.example.com. Optional. Pages has ONE domain per
-#                 site, so every config sets the same value or none does; a
-#                 mix is refused. Sets every stack's Cognito callback URLs and
-#                 CORS origin (scripts/ci-deploy-stack.sh) and makes
-#                 scripts/ci-build-site.sh build for the site root. GitHub is
-#                 told the domain by scripts/setup.sh, because Pages ignores a
-#                 CNAME file published from a workflow.
-#   dns_zone_id   Route 53 hosted zone that holds api_host. Optional; set, the
-#                 stack writes the certificate's validation record and the API
-#                 alias itself. Refused without api_host. Reaches the template
-#                 as DnsZoneId.
-#   web_push      true | false. Default: true. On, scripts/setup.sh and
-#                 scripts/bootstrap.sh install the instance's VAPID key pair
-#                 (scripts/vapid-keys.sh --apply) when it is missing, and
-#                 scripts/doctor.sh reports a missing pair. Off, none of them
-#                 touch it, and an instance without a pair answers
-#                 GET /v1/push/key 404 so the app offers no switch; a pair
-#                 already in SSM is not deleted. The pair lives under
-#                 /chintan/<name>/, so every config sharing a `name` must agree.
-#                 Not a template parameter; emitted as the entry's `web_push`.
-#
-# None of the three may contain ", <, > or &. Vite writes them into
-# frontend/index.html by plain substitution (%VITE_APP_NAME% in <title>, the
-# other two in attribute values) with no HTML escaping, so any of those
-# characters would end the title, the attribute or the element and the page
-# would ship broken — or, in a fork whose configs are not its own, with
-# markup nobody wrote. Refused here, where every config is read.
+# None of `display_name`, `short_name` and `description` may contain ", <, > or
+# &. Vite writes them into frontend/index.html by plain substitution
+# (%VITE_APP_NAME% in <title>, the other two in attribute values) with no HTML
+# escaping, so any of those characters would end the title, the attribute or
+# the element and the page would ship broken — or, in a fork whose configs are
+# not its own, with markup nobody wrote. Refused here, where every config is read.
 #
 # The identity fields reach the bundle as VITE_APP_NAME, VITE_APP_SHORT_NAME
 # and VITE_APP_DESCRIPTION, exported by scripts/ci-build-site.sh. Colours are
@@ -68,19 +30,10 @@
 # An unknown field fails the run. The whole point of a single reader is that a
 # field which nothing reads cannot sit in a config looking as though it works.
 #
-# Optional CloudFormation parameters, each with a template default so omitting
-# them is always safe:
-#
-#   alarm_email                    subscribed to the alarm topic and the budget
-#   monthly_budget_usd             AWS Budgets limit for this stack
-#   log_retention_days             CloudWatch retention
-#   daily_spend_cap_micros         INSTANCE-WIDE daily provider spend ceiling,
-#                                  in MICRODOLLARS (1000000 = $1). Absent means
-#                                  the template default, $5/day; an explicit 0
-#                                  disables the cap (the breaker records and
-#                                  enforces nothing, and the spend-cap alarm is
-#                                  not created) — do that only deliberately
-#   refresh_token_validity_days    Cognito refresh token lifetime
+# `alarm_email`, `monthly_budget_usd`, `log_retention_days`,
+# `daily_spend_cap_micros`, `enable_alarms` and `refresh_token_validity_days`
+# pass through as CloudFormation parameters, each with a template default so
+# omitting them is always safe; the README table has their meanings.
 #
 # Two files may share a `name` as long as their `environment` differs: that is
 # exactly how a staging copy of an instance is expressed, and it is why the stack
@@ -370,7 +323,7 @@ for path in sorted(config_dir.glob("*.yaml")):
         "DailySpendCapMicros": doc.get("daily_spend_cap_micros"),
         "RefreshTokenValidityDays": doc.get("refresh_token_validity_days"),
         # CloudWatch bills alarms beyond ten alarm-months for the account, and
-        # this template declares up to six per stack, so a second environment
+        # this template declares thirteen per stack, so a second environment
         # with alarms on crosses into the paid band. Absent means the template
         # default, true.
         "EnableAlarms": doc.get("enable_alarms"),

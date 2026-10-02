@@ -5,7 +5,7 @@ step script can be re-run on its own while the app is being poked. A pass is a
 set of step scripts that `require('./qaw1-lib.js')`, each run as
 `node <step>.js` with the environment below; their logs, screenshots and
 request dumps land in `QA_HOME` and are not committed. The reports they
-produce live under `docs/reviews/<date>/`.
+produce live under `docs/history/reviews/<date>/`.
 
 | File | What it is |
 |---|---|

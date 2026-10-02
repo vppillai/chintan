@@ -849,10 +849,9 @@ Resources:
   # NotificationConfiguration), the API's retry and target endpoints invoke it
   # with InvocationType Event, and Lambda's own asynchronous retry — twice,
   # about a minute and then two minutes apart, per WorkerLambdaEventInvokeConfig
-  # — replaces the visibility-timeout redelivery. That removed the coupling the
-  # 2026-09-03 review found under its one Critical: a 960 s visibility timeout
-  # forced by the 900 s function timeout, forcing a 16-minute redelivery that
-  # landed inside the 20-minute append claim lease.
+  # — replaces the visibility-timeout redelivery. A queue in front would need a
+  # visibility timeout longer than the 900 s function timeout, and a redelivery
+  # that late lands inside the 20-minute append claim lease.
   #
   # What remains is the destination for an invocation that failed all three
   # attempts. Lambda writes the original payload and the error here through its
@@ -1152,12 +1151,11 @@ Resources:
         - Key: Application
           Value: Chintan
 
-  # Execution roles: one per function, since 2026-09-05.
+  # Execution roles: one per function.
   #
-  # Both functions ran under one role, so the API — the function every browser
-  # can reach — held the worker's grants: both provider keys through SSM,
-  # dynamodb:Scan across every tenant, sqs:SendMessage, budgets:ViewBudget
-  # (review 2026-09-05, S7). cmd/api/main.go wires no Scan, SQS or Budgets
+  # One role for both would hand the API — the function every browser can
+  # reach — the worker's grants: both provider keys through SSM, dynamodb:Scan
+  # across every tenant, budgets:ViewBudget. cmd/api/main.go wires no Scan, SQS or Budgets
   # client; what it uses is item operations and Query on the table, objects
   # under the tenant prefixes, one asynchronous invoke of the worker's live
   # alias, and — since Web Push (docs/design/push.md) — one SSM read of the
@@ -1438,9 +1436,8 @@ Resources:
       Timeout: 29
       # A single page load fires this many requests near-simultaneously on its
       # own — usePendingCaptures alone polls four capture statuses in parallel,
-      # plus /settings — so 5 left no headroom even
-      # for one person with one tab open: chintan-dev-prod-api-throttles
-      # tripped from exactly that on 2026-08-17. 50 is well above any realistic
+      # plus /settings — so 5 leaves no headroom even for one person with one
+      # tab open, and a page load trips a throttle. 50 is well above any realistic
       # single-tenant burst while still bounded, unlike the worker's five,
       # which really is sized for concurrent provider round-trips.
       ReservedConcurrentExecutions: 50
@@ -1819,8 +1816,8 @@ Resources:
         # answers preflights on its own. HTTP API auto-answers an OPTIONS
         # request only when NO route matches it, and `$default` below matches
         # everything and carries the JWT authorizer, so a preflight that
-        # reached it would be answered 401 — measured on staging on 2026-09-05
-        # when #51 removed the OPTIONS route (reverted by #54; backlog R8b).
+        # reached it would be answered 401 (removing the OPTIONS route proves it
+        # on staging: every preflight fails).
         # What actually happens: `OptionsRoute` sends `OPTIONS /{proxy+}` to the
         # Lambda with no authorizer, backend/internal/middleware/cors.go answers
         # 204, and on the way out the gateway OVERWRITES the CORS headers of
@@ -2210,8 +2207,7 @@ Resources:
       EvaluationPeriods: 1
       # Five in five minutes, not one. The Errors metric counts the function
       # faulting — a panic, a timeout, an init failure — never an application
-      # 5xx, and the one-error threshold this had until 2026-09 fired only
-      # during development. One fault from a provider blip is the retry's
+      # 5xx, and a one-error threshold fires on development noise. One fault from a provider blip is the retry's
       # problem; five in a window is an outage.
       Threshold: 5
       ComparisonOperator: GreaterThanOrEqualToThreshold
@@ -2229,14 +2225,13 @@ Resources:
   # at one route's ceiling for the whole five-minute window reaches the
   # handler 300 + 10 = 310 times, and all three routes together at most 930.
   # Those are admitted requests: the gateway's own 429s also land in this
-  # metric, so a flood above the throttle crosses 300 sooner. The thousand
-  # this had until 2026-10 was out of reach of the admitted requests alone
-  # (review 2026-10-01, OPS-13); 300 is the count a single saturated route
+  # metric, so a flood above the throttle crosses 300 sooner. A thousand would
+  # be out of reach of the admitted requests alone; 300 is the count a single saturated route
   # produces in one window, and still some twelve times anything the app
   # produces, so the alarm says one thing only — a public route is being
   # hammered — and stays quiet through a stale token or a mistyped key.
   # ApiId alone is the dimension the gateway publishes without detailed
-  # metrics (review 2026-09-24, R4-7).
+  # metrics.
   ApiClientErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Condition: AlarmsEnabled
@@ -2296,12 +2291,12 @@ Resources:
   # counts every inbox request it refuses as Chintan/InboxKeyRefused — a
   # counter, no key material — through the same rollup ProviderKeyRejected
   # uses, so this reads the dimensionless identity and is a plain metric
-  # alarm: the sixth per stack, $0.10 an alarm-month once the account is
-  # past its free ten. Twenty-five in fifteen minutes is far above one
+  # alarm: one of the thirteen per stack, $0.10 an alarm-month once the
+  # account is past its free ten. Twenty-five in fifteen minutes is far above one
   # wrong header and far below the flood: it is the shape of a device that
   # keeps posting with a key its owner revoked, or of somebody walking key
-  # ids. Until the metric is emitted (the handler half of this change)
-  # the metric does not exist, which notBreaching reads as healthy.
+  # ids. Before the first refusal the metric does not exist, which
+  # notBreaching reads as healthy.
   InboxKeyRefusedAlarm:
     Type: AWS::CloudWatch::Alarm
     Condition: AlarmsEnabled
@@ -2331,11 +2326,10 @@ Resources:
   # five minutes, trips on a single 500 in ten requests. The 4xx and 5xx
   # alarms above are counts with thresholds one stray request does not reach,
   # which is why they earn their alarm-months and a rate does not. Thirteen
-  # alarms exist (decision D6, 2026-10-01, added the five failure counters
-  # below the capture-failures alarm), and none notifies on OK: an OK transition is not something
-  # anyone needs an e-mail about. InboxKeyRefusedAlarm above earns its slot as
-  # the only signal between one mistyped header and the thousand-in-five-
-  # minutes flood: a device left posting with a revoked key is invisible to
+  # alarms exist (docs/ops/alarms.md), and none notifies on OK: an OK
+  # transition is not something anyone needs an e-mail about. InboxKeyRefusedAlarm above earns its slot as
+  # the only signal between one mistyped header and the three-hundred-in-
+  # five-minutes flood: a device left posting with a revoked key is invisible to
   # every other alarm here and costs a billed request per attempt.
   #
   # A single message here is one recording the user believes was filed and was
@@ -2441,11 +2435,11 @@ Resources:
       AlarmActions:
         - !Ref AlarmTopic
 
-  # The five failure counters that page beside CaptureFailuresAlarm (decision
-  # D6, 2026-10-01; the sixth is that alarm): each was
-  # emitted and read by nobody, so the failure it counts was invisible until
-  # the person noticed. All six emit through obs.CountWithRollup, which the
-  # obs rollup test holds them to, and each threshold is set where one
+  # The five failure counters that page beside CaptureFailuresAlarm (the sixth
+  # is that alarm): each counts a failure that nothing else surfaces, so
+  # without its alarm the fault is invisible until the person notices. All
+  # six emit with a rollup (obs.CountWithRollup; obs.EmitWithRollup for the
+  # purge's count), which the obs rollup test holds them to, and each threshold is set where one
   # occurrence is the retry's business and the number here is the fault
   # continuing.
 

@@ -10,7 +10,7 @@ CI shellchecks and shfmt-checks every `*.sh` here.
 1. **Brief.** One shared brief for every stream: the environment, the gates
    (`CLAUDE.md`), the branch prefix `rN/<slug>`, the backlog heading and the
    id range each stream owns, and the owner decisions being applied, quoted by
-   their D-ids from the latest `docs/reviews/<date>/` ruling.
+   their D-ids from the latest `docs/history/reviews/<date>/` ruling.
 2. **Streams.** Each stream is one agent, one worktree
    (`git -C <main checkout> worktree add -B rN/<slug> <wt-root>/wt-rN-<slug> origin/main`),
    one pull request. The main checkout is never edited. Streams own disjoint
@@ -38,13 +38,11 @@ CI shellchecks and shfmt-checks every `*.sh` here.
    CI checks), the morning queue for the owner, and the review ledger's
    outcome rows.
 
-## The gate (D1)
+## The gate
 
-`protect-main.sh` is the ruleset on `main` and the `production` environment,
-as code: a pull request, squash-merged, with the one `CI passed` check green;
-no reviewers, no bypass, no force-push, no deletion; production has no human
-approver because the staging smoke test and its rollback are the gate.
-The status check is strict — the head must be at main's current tip — because
+`protect-main.sh` is the merge rule (README → Operate → Release flow) as code:
+the ruleset on `main` and the `production` environment, no reviewers, no
+bypass, no force-push, no deletion. The status check is strict — the head must be at main's current tip — because
 nothing else tests the tree that lands: no push-to-main CI run, no deploy-time
 test. The cost is one CI run (~9 minutes, Playwright's wall clock) per queued
 pull request each time main moves under it; `merge-seq.sh` pays it by updating
@@ -69,7 +67,7 @@ worktrees are its siblings):
 | `CHINTAN_GH_REPO` | the checkout's origin | `protect-main.sh` |
 
 `resolve-known.py` takes no paths: it runs inside the worktree being rebased,
-keeps both sides of `docs/backlog.md`, `docs/reviews/README.md`,
+keeps both sides of `docs/backlog.md`, `docs/history/reviews/README.md`,
 `frontend/src/styles/index.css` and `frontend/src/components/Icon.tsx`
 (dropping lines that appear on both sides and a second table header), takes
 main's contract fixtures (CI regenerates and diffs them, so a wrong pick fails

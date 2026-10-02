@@ -29,10 +29,10 @@
 # PATH defaults to backend/internal/provider, backend/internal/pipeline,
 # backend/internal/service and backend/internal/handler — the adapters, the
 # two packages whose slog lines carry the most context about a capture and so
-# are the likeliest places for a transcript to be added to a message (review
-# 2026-09-05, S18), and the handler, which holds a device key exactly as the
-# caller presented it (`raw` in inbox.go) between the header and Authenticate
-# — the one place a key could be logged whole (review 2026-09-24, R4-37).
+# are the likeliest places for a transcript to be added to a message, and the
+# handler, which holds a device key exactly as the caller presented it (`raw`
+# in inbox.go) between the header and Authenticate — the one place a key could
+# be logged whole.
 
 # shellcheck source-path=SCRIPTDIR source=lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"

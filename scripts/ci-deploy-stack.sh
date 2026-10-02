@@ -4,8 +4,8 @@
 #
 # This exists as a script rather than as a `run: |` block so that the lint and
 # format gates cover it like everything else in scripts/, and so the staging and
-# production jobs cannot drift apart — they were identical thirty-line blocks, and
-# identical blocks stop being identical.
+# production jobs cannot drift apart: two copies of a thirty-line block stop
+# being identical.
 #
 # Every input arrives through the environment. A ${{ }} expression interpolated
 # into a run block is substituted before bash parses the line, so a value

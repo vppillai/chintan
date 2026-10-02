@@ -28,10 +28,6 @@ info:
     3. **Pagination.** Every collection is cursor-paginated. There is no
        unbounded list.
 
-    Breaking changes from v1: the `X-User-ID` header is rejected and ignored;
-    capture completion is asynchronous; list endpoints return an envelope rather
-    than a bare array.
-
     `info.version` is the version of this contract and moves only when the
     contract does; it is independent of the application release tag
     (`vX.Y.Z`, cut by the deploy pipeline on every production deploy).
@@ -1703,13 +1699,11 @@ components:
           type: string
           deprecated: true
           description: |
-            The per-recording cleanup mode (`faithful` or `polished`) until
-            2026-09-27. Every recording is now cleaned faithfully — what was
-            clearly misheard is fixed and the speaker's words are kept — and
-            the whole-note `polished` view (`Note.cleaned_mode`) is where a
-            rewrite belongs. Accepted on PUT for compatibility and ignored,
-            never returned; a value stored before the change is dropped on
-            read.
+            Deprecated and ignored: accepted on PUT, never returned, and a
+            stored value is dropped on read. Every recording is cleaned
+            faithfully — what was clearly misheard is fixed and the speaker's
+            words are kept — and the whole-note `polished` view
+            (`Note.cleaned_mode`) is where a rewrite belongs.
         retention_days:
           type: integer
           minimum: 0
@@ -1773,9 +1767,7 @@ components:
             on the usage screen next to the month's spend; the app mentions
             it on About, if anywhere. A value sent on PUT is accepted for
             compatibility and ignored; the response carries the instance
-            value, which is how a client learns its own did not take. Until
-            2026-09 this was a per-tenant cap stored in the settings record,
-            and the breaker enforced the lower of the two.
+            value, which is how a client learns its own did not take.
 
     Note:
       type: object
@@ -2167,11 +2159,10 @@ components:
           nullable: true
           description: >
             When the capture last moved: the pipeline's last write to it, or
-            the API's last hand-off to the worker. Null on captures from
-            before it was recorded (2026-09-05), which a client reads as
-            `created_at`. The filing row gates Retry on it: a capture
-            untouched for longer than the worker's 900 s timeout has no live
-            worker.
+            the API's last hand-off to the worker. Null on a capture written
+            before the field existed, which a client reads as `created_at`.
+            The filing row gates Retry on it: a capture untouched for longer
+            than the worker's 900 s timeout has no live worker.
         duration_ms: { type: integer, nullable: true }
         language:
           type: string
@@ -2222,7 +2213,7 @@ components:
             router found no existing destination, or a person answered a
             `needs_target` capture with a new title — so the receipt can say
             "Started" rather than "Filed into". False for an append, after a
-            move, and on captures from before 2026-09-30.
+            move, and on a capture written before the field existed.
 
     CapturePage:
       type: object

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Resolve rebase conflicts in files where keeping both sides is right (append-only tables and import lists)."""
 import re, subprocess, sys
-KEEP_BOTH = {"docs/backlog.md", "docs/reviews/README.md", "frontend/src/styles/index.css", "frontend/src/components/Icon.tsx"}
+KEEP_BOTH = {"docs/backlog.md", "docs/history/reviews/README.md", "frontend/src/styles/index.css", "frontend/src/components/Icon.tsx"}
 TAKE_THEIRS_FROM_MAIN = {"frontend/src/api/__fixtures__/responses.ts", "frontend/src/api/__fixtures__/requests.json"}
 out = subprocess.run(["git", "status", "--short"], capture_output=True, text=True).stdout
 bad = False

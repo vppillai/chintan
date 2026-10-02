@@ -22,7 +22,8 @@
 #     instead of discovering a bad deploy after it is live.
 #   * After the smoke passes, deletes each function's versions beyond the newest
 #     KEEP_VERSIONS, never the one `live` serves or the one it would roll back
-#     to. Nothing else ever deleted one: prod had 97 by 1 Oct.
+#     to. Nothing else ever deletes one, so without this the store grows by
+#     two versions per merge.
 #
 # Usage:
 #   scripts/deploy.sh --instance dev --environment staging \
@@ -841,12 +842,11 @@ if [ "$SMOKE" = "1" ] && is_apply; then
             # worker's concurrency ceiling busy with real work at the moment
             # of the check — so it warns and goes on. AccessDenied is the
             # deploy role without lambda:InvokeFunction on the alias, which
-            # bootstrap.yaml has granted since 2026-10. On staging that is
-            # still a warning, so a clone whose bootstrap stack predates the
-            # grant can deploy and read what to fix. On prod it fails the
-            # deploy: for four deploys on 30 Sept this branch printed "smoke
-            # skipped" and then "smoke passed", and a smoke that did not run
-            # has not passed. The aliases go back, like any failed smoke —
+            # bootstrap.yaml grants. On staging that is still a warning, so a
+            # clone whose bootstrap stack predates the grant can deploy and
+            # read what to fix. On prod it fails the deploy: "smoke skipped"
+            # followed by "smoke passed" would be a lie, and a smoke that did
+            # not run has not passed. The aliases go back, like any failed smoke —
             # prod stays on the code the last complete smoke proved.
             case "$worker_err" in
                 *AccessDenied*)
@@ -876,7 +876,7 @@ if [ "$SMOKE" = "1" ] && is_apply; then
     # Only after a passed smoke, so a rollback never finds its target gone,
     # and never under --no-smoke. Lambda also refuses to delete a version an
     # alias points at, a second net under prune_candidates. An AccessDenied is
-    # a bootstrap stack from before the grant (2026-10): housekeeping, not a
+    # a bootstrap stack deployed before the grant: housekeeping, not a
     # gate, so it warns rather than fails — the versions are still there.
     while IFS= read -r fn; do
         [ -n "$fn" ] || continue

@@ -1,17 +1,11 @@
 #!/usr/bin/env bash
 # protect-main.sh — make GitHub enforce the merge rule the repository states
-# (owner decision D1 in docs/reviews/2026-10-01/platform-review.md):
-#
-#   * a ruleset on `main`: changes arrive by pull request, squash-merged, with
-#     the one `CI passed` check from ci.yaml green on a head that is at main's
-#     current tip (strict status checks: with no push-to-main CI run and no
-#     deploy-time test, the pull request's run is the only test of the tree
-#     that lands, so it must be of that tree); no force-push, no deletion,
-#     no required reviewers and no bypass actors;
-#   * the `production` environment keeps its wait timer and branch policy and
-#     loses its required reviewer — the staging smoke test and rollback in
-#     deploy-backend.yaml are the production gate; a reviewer a script approves
-#     is not one.
+# (README → Operate → Release flow): a ruleset on `main` that admits only a
+# squash-merged pull request with the one `CI passed` check green on a head at
+# main's current tip (strict: that run is the only test of the tree that
+# lands), with no force-push, no deletion, no required reviewers and no bypass
+# actors; and the `production` environment with its wait timer and branch
+# policy and no required reviewer.
 #
 # Why no bypass actor: `gh pr merge --squash` by an admin satisfies the rules
 # when the check is green and is refused when it is not, which is the point.
