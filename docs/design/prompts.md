@@ -204,7 +204,8 @@ order, `done` and `children` left out when false or empty. **Guards**
 flattened into the fourth after its parent; an item whose words are not the
 body's words in order (`llm.VerifySubsequence`) is dropped and counted, a
 dropped parent's children lifted (`dropInvented`: "- [x] Make a list." is the
-model inventing an antecedent); then `tickSafety` refuses the whole answer
+model inventing an antecedent); the levels a flat answer lost handed back
+from the body (`restoreLevels`, `checklists.md` "Tidy up"); then `tickSafety` refuses the whole answer
 when a done body line has no done answer item whose words equal it or are a
 sub-sequence of it, when an open body line is not covered by an open answer
 item (a part of it or one that holds it), when an open answer item has a done
