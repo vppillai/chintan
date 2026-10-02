@@ -144,7 +144,7 @@ func parseObjectKey(key string) objectRef {
 		return ref
 	}
 	switch parts[0] {
-	case "notes", "captures":
+	case "notes", "captures", "exports":
 		ref.Group = parts[0]
 		ref.EntityID = parts[1]
 		ref.File = parts[2]

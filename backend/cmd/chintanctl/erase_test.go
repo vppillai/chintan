@@ -6,9 +6,8 @@ import (
 	"testing"
 )
 
-// seedExport gives a tenant an export snapshot. It lives here rather than in
-// seedTenant because reconcile still classifies the exports group as
-// unknown_object; erase is the command that has to walk it.
+// seedExport gives a tenant an export snapshot: erase has to walk it and
+// reconcile has to pass over it without a finding.
 func seedExport(t *testing.T, blobs *fakeBlobs, tenantID string) {
 	t.Helper()
 	base := "tenants/" + tenantID + "/exports/e1/"

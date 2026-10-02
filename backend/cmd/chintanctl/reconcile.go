@@ -295,7 +295,7 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 					return nil
 				}
 			}
-			if _, referenced := refs[info.Key]; referenced {
+			if _, referenced := refs[info.Key]; referenced || ref.Group == "exports" { // a snapshot: no row names it, its tag expires it
 				return nil
 			}
 			switch ref.Group {
