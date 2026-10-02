@@ -230,7 +230,28 @@ export function ChecklistEditor({
   };
   const save = onSave;
 
+  const remove = (index: number, focus?: number): void => {
+    write(removeItem(body, index), focus);
+    save();
+  };
+
+  /** Removes the open item at `index`; focus steps back to the open row above it, or to the add row when there is none. */
+  const removeOpen = (index: number): void => {
+    const at = open.findIndex((entry) => entry.index === index);
+    const previous = open[at - 1];
+    remove(index, previous ? previous.index : ADD_ROW);
+  };
+
   const toggle = (index: number, item: ChecklistItem): void => {
+    // A row with no words has nothing to finish: ticking it removes the
+    // line, as Backspace in its emptied field does, rather than filing an
+    // "Item 3" under Done to be deleted by hand later. Nothing is said: the
+    // save word takes the one region at once, and the focus moving to the
+    // row above is the signal, as it is for Backspace.
+    if (!item.done && item.text.trim() === '') {
+      removeOpen(index);
+      return;
+    }
     const previous = body;
     const next = toggleItem(body, index);
     // Every row the tick flipped is held with the one tapped — a parent's
@@ -312,11 +333,6 @@ export function ChecklistEditor({
     else announce(by > 0 ? `Made a sub-item of ${under}` : `Moved up a level, under ${under}`);
     save();
     return true;
-  };
-
-  const remove = (index: number, focus?: number): void => {
-    write(removeItem(body, index), focus);
-    save();
   };
 
   const addFromRow = (): void => {
@@ -521,11 +537,7 @@ export function ChecklistEditor({
               write(insertItemAfter(body, index), index + 1);
             }}
             onBackspaceEmpty={() => {
-              // Back to the open item above, which keeps its index; or the add row
-              // when this was the last open item.
-              const at = open.findIndex((entry) => entry.index === index);
-              const previous = open[at - 1];
-              remove(index, previous ? previous.index : ADD_ROW);
+              removeOpen(index);
             }}
             onBlur={save}
           />
