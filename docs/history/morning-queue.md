@@ -1,3 +1,5 @@
+The owner's dated diary, one section per round, appended at the top of each round and never rewritten; nothing in it describes the system as it is. The current state is `README.md`, `docs/design/` and `docs/backlog-open.md`.
+
 # Morning queue — 2026-09-21
 
 Everything below was collected during the overnight run (2026-09-21, 06:20–12:00 UTC). What did not need you was implemented, merged behind CI and the staging→production gate, and deployed; what needs you is in the numbered sections.

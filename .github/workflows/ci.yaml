@@ -5,9 +5,8 @@ name: CI
 # main (scripts/dev/protect-main.sh) requires exactly one check from here, the
 # final `CI passed` job, so a pull request merges only when everything this
 # file ran has passed — and a docs-only pull request, which runs none of the
-# matrix, still gets that one check and stays mergeable. The production
-# environment has no human reviewer: the staging deploy's smoke test and its
-# rollback (deploy-backend.yaml) are the gate between main and prod.
+# matrix, still gets that one check and stays mergeable. The merge rule and the
+# production gate are README → Operate → Release flow.
 #
 # Go tests run with -race; golangci-lint, govulncheck, cfn-lint, shellcheck and
 # shfmt, the log-hygiene and env-contract checks, and the frontend typecheck,
@@ -24,8 +23,8 @@ name: CI
 
 # Every pull request runs this workflow; the `changes` job then decides what
 # the pull request touched, and the matrix jobs skip themselves when it touched
-# only prose (no job reads a .md file or docs/design, history, ops, qa or
-# reviews; docs/api/openapi.yaml is code — the conformance tests and the
+# only prose (no job reads a .md file or docs/design, history or ops;
+# docs/api/openapi.yaml is code — the conformance tests and the
 # contract job read it). A skipped job is a pass to `CI passed`, a failed or
 # cancelled one is a failure. There is no push-to-main trigger: the ruleset
 # requires `CI passed` on a head that is at main's current tip (strict status
@@ -76,7 +75,7 @@ jobs:
                 docs/backlog.md|docs/backlog-open.md|scripts/backlog-view.py) backlog=true ;;
               esac
               case "$f" in
-                *.md|docs/design/*|docs/history/*|docs/ops/*|docs/qa/*|docs/reviews/*) ;;
+                *.md|docs/design/*|docs/history/*|docs/ops/*) ;;
                 *) code=true ;;
               esac
             done < <(git diff --name-only --no-renames HEAD^1 HEAD)

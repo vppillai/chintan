@@ -94,7 +94,7 @@ appended. Every row should hold on three of three runs, as the eval's
   carries a title or a transcript word.
 - **Rows 1, 15, 16, 8 of the 2026-09-29 run** parked at `needs_target` once
   each under the 0.75 bar, and row 2 kept a trailing "Note:", row 13 opened
-  the body with the title words, row 17 kept "money" (`docs/reviews/
+  the body with the title words, row 17 kept "money" (`docs/history/reviews/
   2026-09-29/prod-battery.md`). Rows 2 and 13 are closed in code
   (`routing.ExtendSpans`); the others are what this prompt is measured on.
 

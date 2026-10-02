@@ -459,7 +459,7 @@ export function presignExpired(
  * Forty-five seconds is generous for a 4 MB ceiling on any connection worth
  * uploading over, and short enough that a stalled cellular socket costs one
  * retry rather than the whole recording session. The production log review
- * (docs/ops/log-review-2026-09-04.md, section 3) found ten uploads of
+ * (docs/history/2026-09-04-log-review.md, section 3) found ten uploads of
  * 67–250 KB that took 5–19 s in one bad stretch with no per-attempt bound at
  * all: one hung connection was waited on until the browser gave up on it.
  */
