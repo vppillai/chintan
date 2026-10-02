@@ -144,4 +144,4 @@ never leaves the user with no controls".
 
 ## History
 
-`docs/backlog.md` and `docs/reviews/` hold the decisions behind these rules.
+`docs/backlog.md` and `docs/history/` hold the decisions behind these rules.

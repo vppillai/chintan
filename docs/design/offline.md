@@ -180,4 +180,4 @@ worked is the request's to say. Tests: `OfflineBanner.test.tsx`.
 
 ## History
 
-`docs/backlog.md` and `docs/reviews/` hold the decisions behind these rules.
+`docs/backlog.md` and `docs/history/` hold the decisions behind these rules.
