@@ -18,9 +18,18 @@ import { useSyncExternalStore } from 'react';
 let current = '';
 const listeners = new Set<() => void>();
 
+/**
+ * A repeat is said again. A live region only speaks when its text changes,
+ * so "Already at the bottom" pressed twice was heard once; the second and
+ * every even repeat carry a trailing no-break space, which the reader does
+ * not voice and the DOM counts as a change. Compared without it, so three
+ * repeats alternate rather than grow.
+ */
+const REPEAT_MARK = '\u00a0';
+
 /** Says `message` through the shell's region, replacing whatever it last said. */
 export function announce(message: string): void {
-  current = message;
+  current = current === message ? message + REPEAT_MARK : message;
   for (const listener of listeners) listener();
 }
 
