@@ -1,5 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useId, useRef, type RefObject } from 'react';
+import {
+  useCallback,
+  useId,
+  useRef,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type RefObject,
+} from 'react';
 
 import { queryKeys, useSettings } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
@@ -8,11 +15,20 @@ import { CopyButton } from '@/components/CopyButton.tsx';
 import { DownloadButton } from '@/components/DownloadButton.tsx';
 import { Icon } from '@/components/Icon.tsx';
 import { LanguageSelect } from '@/components/LanguageSelect.tsx';
+import { canShare, ShareButton } from '@/components/ShareButton.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
 import { useModalFocus } from '@/components/useModalFocus.ts';
 import { languageName } from '@/features/settings/languages.ts';
+import {
+  GESTURE_SLOP_PX,
+  SWIPE_COMMIT_FRACTION,
+  SWIPE_FLICK_MAX_AGE_MS,
+  SWIPE_FLICK_PX_PER_MS,
+} from '@/hooks/gesture.ts';
+import { useSwallowNextClick } from '@/hooks/swallowNextClick.ts';
 
 import { checklistToProse, parseChecklist, proseToChecklist } from './checklist.ts';
+import { parseMotionMs } from './ChecklistEditor.tsx';
 import { checklistClipboard } from './checklistClipboard.ts';
 import { cleanedDocument, cleanedMarkdown } from './cleaned.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
@@ -83,6 +99,132 @@ export function NoteDrawer({
     onOpenChange(null);
   }, [onOpenChange]);
 
+  /*
+   * Dragging the head down closes the sheet, as a phone's own sheets do; the
+   * × and Escape stay. A finger or pen only — a mouse has the ×. The press
+   * becomes a drag at the shared slop once it is more down than across, and
+   * from there the sheet follows the finger (`translate` on the sheet, a
+   * style write and nothing in React); letting go at `SWIPE_COMMIT_FRACTION`
+   * of the sheet's height, or in a fresh downward flick at
+   * `SWIPE_FLICK_PX_PER_MS` — the tab swipe's two numbers — slides it the
+   * rest of the way and closes it when the slide ends (`transitionend`, with
+   * a timer behind it for a browser that fires none); short of that it
+   * settles back. Reduced motion makes both settles one frame through the
+   * motion tokens, and the close runs the same `close` as the ×, so focus
+   * goes back to the ⋮ either way — twice over: `changePanel` focuses the
+   * menu's trigger, and `useModalFocus`'s cleanup restores what had focus
+   * when the sheet opened, which `OverflowMenu` had already made that same
+   * trigger before the pick ran. The click a lift fires is swallowed once,
+   * so a drag that ends over the × is not also a tap on it.
+   */
+  const drag = useRef<{
+    id: number;
+    x0: number;
+    y0: number;
+    height: number;
+    dy: number;
+    lastY: number;
+    lastT: number;
+    vy: number;
+    active: boolean;
+  } | null>(null);
+  const swallow = useSwallowNextClick(500);
+  const settleBack = useCallback(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    panel.style.removeProperty('translate');
+    delete panel.dataset['dragging'];
+    drag.current = null;
+  }, []);
+  const dismiss = useCallback(
+    (height: number) => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      drag.current = null;
+      delete panel.dataset['dragging'];
+      panel.style.translate = `0 ${height}px`;
+      let done = false;
+      const finish = (): void => {
+        if (done) return;
+        done = true;
+        panel.removeEventListener('transitionend', onEnd);
+        panel.style.removeProperty('translate');
+        close();
+      };
+      // The sheet's own slide ending, not a child's hover colour settling.
+      const onEnd = (event: TransitionEvent): void => {
+        if (event.target === panel && event.propertyName === 'translate') finish();
+      };
+      panel.addEventListener('transitionend', onEnd);
+      // Behind it, for a browser that fires no event: the slide's own
+      // duration as computed on the sheet, plus a frame.
+      setTimeout(finish, parseMotionMs(getComputedStyle(panel).transitionDuration) + 16);
+    },
+    [close],
+  );
+  const onHeadPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (event.pointerType === 'mouse' || event.button !== 0) return;
+    // A sheet with no height yet has no distance to drag against.
+    const height = panelRef.current?.getBoundingClientRect().height ?? 0;
+    if (height <= 0) return;
+    swallow.reset();
+    drag.current = {
+      id: event.pointerId,
+      x0: event.clientX,
+      y0: event.clientY,
+      height,
+      dy: 0,
+      lastY: event.clientY,
+      lastT: event.timeStamp,
+      vy: 0,
+      active: false,
+    };
+  };
+  const onHeadPointerMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const g = drag.current;
+    const panel = panelRef.current;
+    if (!g || !panel || event.pointerId !== g.id) return;
+    const dy = event.clientY - g.y0;
+    if (!g.active) {
+      const dx = Math.abs(event.clientX - g.x0);
+      if (Math.abs(dy) < GESTURE_SLOP_PX && dx < GESTURE_SLOP_PX) return;
+      if (dy < dx || dy < GESTURE_SLOP_PX) {
+        // Up, or more across than down: not a close.
+        drag.current = null;
+        return;
+      }
+      g.active = true;
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      panel.dataset['dragging'] = '';
+    }
+    const dt = event.timeStamp - g.lastT;
+    if (dt > 0) g.vy = (event.clientY - g.lastY) / dt;
+    g.lastY = event.clientY;
+    g.lastT = event.timeStamp;
+    g.dy = Math.max(0, dy);
+    panel.style.translate = `0 ${g.dy}px`;
+  };
+  const onHeadPointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const g = drag.current;
+    if (!g || event.pointerId !== g.id) return;
+    if (!g.active) {
+      drag.current = null;
+      return;
+    }
+    swallow.arm();
+    const fresh = event.timeStamp - g.lastT <= SWIPE_FLICK_MAX_AGE_MS;
+    const far = g.dy >= g.height * SWIPE_COMMIT_FRACTION;
+    const flick = fresh && g.vy >= SWIPE_FLICK_PX_PER_MS;
+    if (far || flick) dismiss(g.height);
+    else settleBack();
+  };
+  const onHeadClickCapture = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    if (swallow.take(event.nativeEvent)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
+
   if (!open) return null;
 
   return (
@@ -102,7 +244,15 @@ export function NoteDrawer({
         {...(hidden ? {} : { role: 'dialog', 'aria-modal': true })}
       >
         {!hidden && <ModalFocus panelRef={panelRef} onCancel={close} />}
-        <div className="note-panel__head">
+        {/* The drag is a shortcut for the × beside it, never the only way to close. */}
+        <div
+          className="note-panel__head"
+          onPointerDown={onHeadPointerDown}
+          onPointerMove={onHeadPointerMove}
+          onPointerUp={onHeadPointerUp}
+          onPointerCancel={settleBack}
+          onClickCapture={onHeadClickCapture}
+        >
           {/* Focusable by script only: where Share lands a keyboard user, its controls a Tab away. */}
           <h2 id={headingId} className="note-panel__heading" tabIndex={-1}>
             {open === 'details' ? 'Details' : 'Share'}
@@ -215,60 +365,91 @@ export function NoteDrawer({
               </section>
             </>
           ) : (
-            /*
-             * Title first, then the body: a body pasted somewhere else with no
-             * title loses what it was about, and re-typing that is exactly the
-             * friction this is meant to remove.
-             */
-            <div className="note-copy">
-              <CopyButton
-                label="Copy note"
-                text={() =>
-                  checklist
-                    ? checklistClipboard(draft.title, draft.body).text
-                    : [draft.title.trim(), draft.body.trim()].filter(Boolean).join('\n\n')
-                }
-                {...(checklist ? { html: () => checklistClipboard(draft.title, draft.body).html } : {})}
-              />
-              <DownloadButton
-                label="Download note"
-                filename={() => `${filenameFor(draft.title)}.md`}
-                blob={() =>
-                  Promise.resolve(
-                    new Blob([`# ${draft.title.trim()}\n\n${draft.body.trim()}\n`], {
-                      type: 'text/markdown',
-                    }),
-                  )
-                }
-              />
-              {/*
-                The worker's rewrite, when there is one, named for what it is: a
-                control called "Copy" next to another called "Copy" would mean
-                neither. Stale or not — the user can see which it is on its tab.
-              */}
-              {cleaned && (
-                <>
-                  <CopyButton
-                    label="Copy cleaned view"
-                    text={() => cleanedDocument(draft.title, cleaned.body)}
-                  />
-                  <DownloadButton
-                    label="Download cleaned view"
-                    filename={() => `${filenameFor(draft.title)} (cleaned).md`}
-                    blob={() =>
-                      Promise.resolve(
-                        new Blob([cleanedMarkdown(draft.title, cleaned.body)], {
-                          type: 'text/markdown',
-                        }),
-                      )
-                    }
-                  />
-                </>
-              )}
-            </div>
+            <ShareBody
+              checklist={checklist}
+              title={draft.title}
+              body={draft.body}
+              cleaned={cleaned?.body ?? null}
+            />
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+/**
+ * The Share disclosure. One primary action: the system share sheet where
+ * the browser has one — a phone's, with its messaging apps — and Copy note
+ * where it has not, so there is one obvious thing to tap and the rest of
+ * the row is the quieter ways out. The text is the title, a blank line,
+ * then the body: a body pasted somewhere else with no title loses what it
+ * was about. A checklist copies as `☐` / `☑` lines, two spaces per level,
+ * with an HTML list beside them for a target that takes rich text
+ * (`checklistClipboard`), never the stored `- [ ]` markup; its hint says
+ * so. The worker's rewrite, when there is one, is its own labelled group
+ * under the note's: a control called Copy next to another called Copy
+ * would mean neither.
+ */
+function ShareBody({
+  checklist,
+  title,
+  body,
+  cleaned,
+}: {
+  checklist: boolean;
+  title: string;
+  body: string;
+  cleaned: string | null;
+}) {
+  const cleanedCaptionId = useId();
+  const share = canShare();
+  // Both forms at once for a checklist (`checklistClipboard`); prose is text alone.
+  const payload = () => checklistClipboard(title, body);
+  const text = () =>
+    checklist ? payload().text : [title.trim(), body.trim()].filter(Boolean).join('\n\n');
+  const html = checklist ? { html: () => payload().html } : {};
+  const subject = () => title.trim() || 'Note';
+  // The stored body as it is: a checklist's `- [ ]` lines are Markdown already.
+  const markdown = () => `# ${title.trim()}\n\n${body.trim()}\n`;
+  return (
+    <div className="note-share">
+      {share && <ShareButton title={subject} text={text} {...html} className="note-share__primary" />}
+      <div className="note-share__row">
+        <CopyButton
+          label="Copy note"
+          text={text}
+          {...html}
+          className={share ? 'screen__action' : 'note-share__primary'}
+        />
+        <DownloadButton
+          label="Download note"
+          filename={() => `${filenameFor(title)}.md`}
+          blob={() => Promise.resolve(new Blob([markdown()], { type: 'text/markdown' }))}
+        />
+      </div>
+      <p className="language-field__hint">
+        {checklist
+          ? 'Items copy as ☐ and ☑ lines, and paste as a list where rich text is accepted. The download is Markdown.'
+          : 'The title, then the text. The download is Markdown.'}
+      </p>
+      {cleaned && (
+        <section className="note-share__group" aria-labelledby={cleanedCaptionId}>
+          <p id={cleanedCaptionId} className="tag-editor__label">
+            Cleaned view
+          </p>
+          <div className="note-share__row">
+            <CopyButton label="Copy cleaned view" text={() => cleanedDocument(title, cleaned)} />
+            <DownloadButton
+              label="Download cleaned view"
+              filename={() => `${filenameFor(title)} (cleaned).md`}
+              blob={() =>
+                Promise.resolve(new Blob([cleanedMarkdown(title, cleaned)], { type: 'text/markdown' }))
+              }
+            />
+          </div>
+        </section>
+      )}
     </div>
   );
 }

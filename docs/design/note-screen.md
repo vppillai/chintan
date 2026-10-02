@@ -34,7 +34,16 @@ Top to bottom, inside the shell's one scroll region (`.app__main`):
   There is no action bar between the strip and the tab bar: the tab bar's
   disc records into the open note (`capture-ux.md`).
 - **Title**: an input whose label is the screen's visually hidden h1, so the
-  page has a heading and the field a name from the same element.
+  page has a heading and the field a name from the same element. A note
+  arriving from Home's + carries `focusTitle` in its route state; once the
+  editor holds the title, the field takes focus with the placeholder
+  selected, one time per arrival, so typing replaces it (`home.md`, "New
+  note"). A title cleared to nothing is never sent (`autosave.ts`
+  `patchFor`): the server refuses a blank title, and the placeholder stands
+  on the server until there is a new one. Left untouched — placeholder
+  title, empty body, no recording — such a note is discarded as the screen
+  unmounts: `useArchiveNote` then `useDeleteNoteForever`, whose own
+  `onSuccess` take it out of the lists and the device's copy.
 - **Meta line** (`NoteMeta`): "5 Sept · house · 3 rec · 0:17 · Malayalam",
   a real " · " between the facts so a screen reader hears a sentence; the
   language is a button that opens Details with focus on its select, because
@@ -171,9 +180,24 @@ scrolls sideways.
 
 Details — the transcription language, Tags, "Also called", the Word for
 word and Checklist switches, and the note's id in monospace with a **Copy
-note id** button and the `X-Chintan-Note-Id` hint — or Share — Copy note,
-Download note and, when the worker has written a cleaned view, Copy and
-Download cleaned view. The rules:
+note id** button and the `X-Chintan-Note-Id` hint — or Share. The rules:
+
+- **Share has one primary action.** Where the browser has a share sheet
+  (`navigator.share`; `components/ShareButton.tsx` `canShare`) a full-width
+  **Share…** leads, handing the title and the text to the system sheet; a
+  dismissed sheet (`AbortError`) says nothing, any other refusal copies
+  instead and says so. Where there is none, **Copy note** is the primary
+  and takes the first line. Then the quieter row — Copy note, Download note
+  (Markdown) — a hint saying what the text is, and, when the worker has
+  written a cleaned view, a **Cleaned view** group of its own with Copy and
+  Download under a caption, so no two controls are both called Copy
+  (`NoteDrawer.tsx` `ShareBody`, `shell.css` `.note-share`). The text is the
+  title, a blank line, then the body. A checklist copies as `☐` / `☑`
+  lines, two spaces per level, with an HTML list written beside them
+  (`features/notes/checklistClipboard.ts`; `CopyButton` writes both through
+  one `ClipboardItem` where the browser can, the text alone where it
+  cannot), never the stored `- [ ]` markup; its download is the Markdown as
+  stored. The design record is `specs/2026-10-02/share.md`.
 
 - **A sheet at the foot of the scroll region**, `position: sticky;
   inset-block-end: 0` inside `.app__main` (`.note-screen > .note-drawer`,
@@ -195,6 +219,20 @@ Download cleaned view. The rules:
   scroll()` is supported, else a `data-scrolled` attribute the body's scroll
   listener sets on the sheet. A body with nothing to scroll (Share) has no
   hairline.
+- **Three ways to close, all ending at the ⋮.** The × in the head, Escape,
+  and a drag down on the head with a finger or pen (`NoteDrawer.tsx`, the
+  head's pointer handlers; a mouse has the ×). The press becomes a drag at
+  `GESTURE_SLOP_PX` once it is more down than across; the sheet then follows
+  the finger (`translate` on `.note-panel`, `data-dragging` turning its
+  transition off) and the head wears `touch-action: none` so nothing scrolls
+  under it. Letting go at `SWIPE_COMMIT_FRACTION` of the sheet's height, or
+  in a downward flick at `SWIPE_FLICK_PX_PER_MS` still fresh at the lift
+  (`SWIPE_FLICK_MAX_AGE_MS`) — the tab swipe's numbers, all in
+  `hooks/gesture.ts` — slides it off and closes it when the slide ends
+  (`transitionend`, a timer behind it); short of that it settles back. Both
+  settles run on the motion tokens, so reduced motion makes them one frame.
+  The click a lift fires is swallowed once (`useSwallowNextClick`), so a
+  drag that ends over the × is not also a tap on it.
 - **A dialog while on screen** (`useModalFocus`, as the Move sheet):
   `role="dialog"`, `aria-modal`, Tab stays inside, Escape closes it, and
   focus returns to the ⋮ that opened it. Opening moves focus in — Details
@@ -423,7 +461,9 @@ with no neighbour, mouse, edge, the `.swipe` row closed and open, the enter
 pose and the two frames, the swallowed tap and the keyboard click let
 through), `PullToRefresh.test.tsx`, `useKeyboardInset.test.tsx`,
 `Recordings.test.tsx`, `recordings/RecordingRow.test.tsx`,
-`recordings/labels.test.ts`; end to end, `e2e/note-tabs.spec.ts` (the
+`recordings/labels.test.ts`, `components/ShareButton.test.tsx`,
+`checklistClipboard.test.ts`; end to end, `e2e/drawer.spec.ts` (the drag
+to close, with a real touch), `e2e/note-tabs.spec.ts` (the
 strip's count, `?tab=`, the session memory and Back; the arrow keys; the
 strip sticking under the banner; the Details sheet; the swipe cases; the
 keyboard cases; the banner mic), `recordings.spec.ts`, `playback.spec.ts`,
