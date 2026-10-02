@@ -126,7 +126,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	}
 	finish := func(outcome string) error {
 		if decided {
-			logRoutingDecision(ctx, decision, matchedBy, outcome, r.candidates, transcript, sourceDim(capture.Source))
+			logRoutingDecision(ctx, capture.ID, decision, matchedBy, outcome, r.candidates, transcript, sourceDim(capture.Source))
 		}
 		return p.persist(ctx, capture)
 	}
@@ -378,8 +378,10 @@ func outcomeOf(decision provider.RouteDecision) string {
 // pre-create re-check found the note a sibling capture had just made) or
 // new_after_missing (the model's note was archived or gone by the time it
 // was read). No title, no transcript word, no device id (source is
-// sourceDim's app or device); the correlation id rides the context.
-func logRoutingDecision(ctx context.Context, decision provider.RouteDecision, matchedBy, outcome string, candidates int, transcript, source string) {
+// sourceDim's app or device); the correlation id rides the context, and the
+// capture id is on the line as on every other line of route(), so a
+// triage query reads the decisions by capture in one step.
+func logRoutingDecision(ctx context.Context, captureID string, decision provider.RouteDecision, matchedBy, outcome string, candidates int, transcript, source string) {
 	switch {
 	case matchedBy != "":
 	case decision.Action == provider.RouteAppend:
@@ -394,6 +396,7 @@ func logRoutingDecision(ctx context.Context, decision provider.RouteDecision, ma
 		titleWords = len(routing.Words(decision.Title))
 	}
 	obs.Log(ctx).Info("routing decided",
+		slog.String("capture_id", captureID),
 		slog.String("action", string(decision.Action)),
 		slog.Float64("confidence", decision.Confidence),
 		slog.String("matched_by", matchedBy),
