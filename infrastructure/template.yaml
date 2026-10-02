@@ -1833,8 +1833,9 @@ Resources:
         # only for a run without the gateway. Every preflight is one Lambda
         # invocation (about one in seven API invocations in the 2026-09-05 prod
         # log); the only way to have the gateway answer them itself is to
-        # enumerate every route so that nothing matches OPTIONS. Keep this
-        # list and the middleware's in step by hand: no test compares them.
+        # enumerate every route so that nothing matches OPTIONS. The
+        # middleware's list is held to this one by the handler package's
+        # TestMiddlewareCORSHeadersAreInTheGatewaysList.
         AllowHeaders:
           - Authorization
           - Content-Type

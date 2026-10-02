@@ -4,22 +4,23 @@ import (
 	"net/http"
 )
 
-// allowedRequestHeaders is the CORS header allowlist this middleware
-// advertises — which, behind API Gateway, is not what a browser is told.
+// AllowedRequestHeaders is the CORS header allowlist this middleware
+// advertises: the headers the app sends (api-conventions.md, "Headers a
+// client sends"). Behind API Gateway it is not what a browser is told.
 //
 // The gateway's CorsConfiguration (infrastructure/template.yaml, HttpApi)
 // overwrites Access-Control-Allow-Headers and -Methods on every response that
 // leaves it, this middleware's 204 to a preflight included; the template's
 // list is the one the browser sees and the one that has to name every header
 // the client sends. This list is what a run without the gateway advertises —
-// local tests, a bare binary — and it is kept in step with the template's by
-// hand; no test compares the two. The template's comment says why the OPTIONS
+// local tests, a bare binary — and handler.TestMiddlewareCORSHeadersAreInTheGatewaysList
+// holds it to the template's. The template's comment says why the OPTIONS
 // route reaches the Lambda at all.
 //
 // X-User-ID was removed deliberately. Advertising it made a header the server
 // trusted reachable from any browser; the server no longer reads it, and it
 // must not be re-added here.
-const allowedRequestHeaders = "Content-Type, Authorization, Idempotency-Key"
+const AllowedRequestHeaders = "Content-Type, Authorization, Idempotency-Key, X-Correlation-Id"
 
 // CORS restricts cross-origin access to exactly one origin.
 //
@@ -37,7 +38,7 @@ func CORS(allowedOrigin string) func(http.Handler) http.Handler {
 			}
 
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", allowedRequestHeaders)
+			w.Header().Set("Access-Control-Allow-Headers", AllowedRequestHeaders)
 
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)

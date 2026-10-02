@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/vppillai/chintan/backend/internal/handler"
+	"github.com/vppillai/chintan/backend/internal/middleware"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
@@ -1213,4 +1214,64 @@ func containsInt(values []int, want int) bool {
 		}
 	}
 	return false
+}
+
+// parseGatewayAllowHeaders reads the HttpApi's CorsConfiguration.AllowHeaders
+// list from the template: the `- Name` lines under the one `AllowHeaders:`
+// key, lower-cased, since header names compare without case.
+func parseGatewayAllowHeaders(t *testing.T, path string) map[string]bool {
+	t.Helper()
+	f, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	headers := map[string]bool{}
+	inList := false
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case strings.TrimSpace(line) == "AllowHeaders:":
+			inList = true
+		case inList && strings.HasPrefix(strings.TrimSpace(line), "- "):
+			headers[strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- ")))] = true
+		case inList && strings.HasPrefix(strings.TrimSpace(line), "#"):
+		case inList:
+			inList = false
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if len(headers) == 0 {
+		t.Fatalf("no AllowHeaders parsed from %s; the reader and the template have diverged", path)
+	}
+	return headers
+}
+
+// TestMiddlewareCORSHeadersAreInTheGatewaysList holds the two CORS allowlists
+// to each other. The gateway overwrites Access-Control-Allow-Headers on every
+// response, so its list is what a browser sees and must name every header the
+// client sends; the middleware's list is what a run without the gateway
+// advertises. Every header the middleware names must be in the gateway's
+// list, and the headers the app sends (api-conventions.md, "Headers a
+// client sends") must be in the middleware's, so neither list can drift to
+// a preflight the browser refuses with no clue which header.
+func TestMiddlewareCORSHeadersAreInTheGatewaysList(t *testing.T) {
+	gateway := parseGatewayAllowHeaders(t, templatePath)
+	advertised := map[string]bool{}
+	for _, h := range strings.Split(middleware.AllowedRequestHeaders, ",") {
+		advertised[strings.ToLower(strings.TrimSpace(h))] = true
+	}
+	for h := range advertised {
+		if !gateway[h] {
+			t.Errorf("middleware.AllowedRequestHeaders names %s but the template's AllowHeaders does not; the browser is refused that header", h)
+		}
+	}
+	for _, h := range []string{"authorization", "content-type", "idempotency-key", "x-correlation-id"} {
+		if !advertised[h] {
+			t.Errorf("the client sends %s on its requests but middleware.AllowedRequestHeaders does not name it", h)
+		}
+	}
 }
