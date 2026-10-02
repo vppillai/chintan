@@ -27,7 +27,7 @@ const evalRecordings = "../provider/testdata/eval/recordings"
 // the case's expectations asserted on the outcome — so a change to
 // preferExistingTitle, spoken_name, the 0.75 bar or the span rules is
 // measured against real replies without a key. A prompt change is a replay
-// miss until it is re-recorded (docs/design/prompts.md).
+// miss until it is re-recorded (docs/design/routing.md, "Replay").
 func TestRoutingEvalReplay(t *testing.T) {
 	if files, _ := filepath.Glob(filepath.Join(evalRecordings, "*.json")); len(files) == 0 {
 		t.Skip("no routing recordings; record them with: cd backend && LIVE_LLM=1 LLM_API_KEY=… LLM_RECORD=testdata/eval/recordings go test ./internal/provider -run 'TestLiveEval/route' -count=1")

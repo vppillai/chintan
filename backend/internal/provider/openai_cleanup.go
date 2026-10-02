@@ -34,7 +34,7 @@ type OpenAICleanup struct {
 	model      string
 	httpClient *http.Client
 	// recordDir and replayDir are the eval's LLM_RECORD and LLM_REPLAY
-	// (docs/design/prompts.md, "Record and replay"), read only in a test
+	// (docs/design/routing.md, "Replay: testing the rules without a key"), read only in a test
 	// binary (recordReplayAllowed); both empty is a plain call.
 	recordDir string
 	replayDir string
@@ -299,7 +299,7 @@ func writeRecording(dir, key string, r recording) error {
 
 // errNoRecording is a replay miss: the prompt this call sent was never
 // recorded, which after a prompt change is the expected state.
-var errNoRecording = errors.New("provider: no recording for this prompt; the prompt, model or fixture changed since it was recorded — re-record with LIVE_LLM=1 LLM_API_KEY=… LLM_RECORD=testdata/eval/recordings go test ./internal/provider -run 'TestLiveEval/route' -count=1 (docs/design/prompts.md)")
+var errNoRecording = errors.New("provider: no recording for this prompt; the prompt, model or fixture changed since it was recorded — re-record with LIVE_LLM=1 LLM_API_KEY=… LLM_RECORD=testdata/eval/recordings go test ./internal/provider -run 'TestLiveEval/route' -count=1 (docs/design/routing.md, \"Replay\")")
 
 func readRecording(dir, key string) (string, TokenUsage, error) {
 	b, err := os.ReadFile(filepath.Join(dir, key+".json"))

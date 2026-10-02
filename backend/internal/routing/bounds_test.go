@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// routingRule is one row of the rule table: the rule as prompts.md §Routing
-// and the 2026-10-01 review name it, the bounds in bounds.go it reads (by
+// routingRule is one row of the rule table: the rule as routing.md §The
+// bounds and the 2026-10-01 review name it, the bounds in bounds.go it reads (by
 // constant name and the literal it must hold), and where a rule whose
 // numbers are not routing's keeps them.
 type routingRule struct {
@@ -36,7 +36,7 @@ var routingRules = []routingRule{
 	{10, "same-second re-check before a create (pipeline.route)", map[string]string{"MaxCandidates": "200"}, ""},
 	{11, "targeted-capture instruction gate (MentionsInstruction)", nil, "no bound: the instructionCues list"},
 	{12, "fallback title (pipeline.fallbackNoteTitle)", map[string]string{"FallbackTitleWords": "6", "FallbackTitleRunes": "40"}, ""},
-	{13, "no speech: the letter test, the silence phrases, the score pair (provider.Transcription.NoSpeech)", map[string]string{"NoSpeechThreshold": "0.6", "LogprobThreshold": "-1.0"}, ""},
+	{13, "nothing heard: the recorder's peak before the call, then the letter test, the silence phrases and the logprob (pipeline.transcribe, provider.Transcription.NoSpeech)", map[string]string{"QuietPeakRMS": "0.04", "LogprobThreshold": "-1.0"}, ""},
 	{14, "hint echo and the short-dictation tidy (pipeline.spellingHints, pipeline.transcriptOutcome, pipeline.isShortDictation)", map[string]string{"MinHintAudioMS": "1500", "MaxHintNotes": "50", "ShortDictationWords": "12"}, ""},
 }
 

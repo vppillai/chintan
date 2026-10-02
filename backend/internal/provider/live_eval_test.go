@@ -32,7 +32,8 @@ import (
 // passes. After the last of the -count runs it logs each case's pass rate
 // with a 95% Wilson interval, so -count=10 says how often, not only whether.
 // LLM_RECORD=<dir> also writes every reply for the CI replay
-// (pipeline.TestRoutingEvalReplay, docs/design/prompts.md). LLM_BASE_URL and LLM_MODEL default to the worker's. The key is read
+// (pipeline.TestRoutingEvalReplay; docs/design/routing.md, "Replay").
+// LLM_BASE_URL and LLM_MODEL default to the worker's. The key is read
 // from the environment and never printed; the output is the fixture text and
 // the model's reply to it, one line per case, and nothing else. Adding a case
 // is appending an object to the fixtures file; TestEvalFixturesParse, which
