@@ -161,7 +161,7 @@ not from a list request of its own, so it is only as fresh as that copy. A
 checklist deleted, archived or turned into a plain note on another device
 stays counted here until this device's copy refreshes: the next search-corpus
 fetch (at most every five minutes, and after a recording files) or the next
-list page that no longer carries it. A checklist made on another device is
+list page that does not carry it. A checklist made on another device is
 missing from the count for the same while. The filter itself asks the server,
 so pressing the chip always shows the true list. The Archived count comes
 from the archive's own list, asked for once the launch has gone idle rather
