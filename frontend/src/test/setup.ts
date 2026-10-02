@@ -4,6 +4,8 @@ import '@testing-library/jest-dom/vitest';
 // test the mock — fake-indexeddb is a real implementation of the spec.
 import 'fake-indexeddb/auto';
 
+import { webcrypto } from 'node:crypto';
+
 import { cleanup } from '@testing-library/react';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, vi } from 'vitest';
@@ -43,6 +45,18 @@ function bridgeAbortSignal(): void {
 }
 
 bridgeAbortSignal();
+
+/*
+ * jsdom's `window.crypto` has `getRandomValues` and no `subtle`. Under the
+ * threads pool Node's own webcrypto shows through the merged global; in a
+ * vm realm the window is the global, so PKCE's `digest` finds nothing. One
+ * place supplies it for both.
+ */
+if (typeof globalThis.crypto === 'undefined') {
+  Object.defineProperty(globalThis, 'crypto', { configurable: true, value: webcrypto });
+} else if (typeof globalThis.crypto.subtle === 'undefined') {
+  Object.defineProperty(globalThis.crypto, 'subtle', { configurable: true, value: webcrypto.subtle });
+}
 
 /**
  * jsdom implements no media queries at all, so `window.matchMedia` is

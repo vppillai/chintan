@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, createEvent, fireEvent, render, screen } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -69,23 +69,39 @@ function Region({
 
 const touch = { pointerId: 1, pointerType: 'touch', button: 0 };
 
+/**
+ * A pointer event stamped with the fake clock. The hook reads
+ * `event.timeStamp`, which jsdom takes from its own `Date.now()`; under the
+ * threads pool that is the faked one, in a vm realm it is the real clock, so
+ * the stamp is set on the event itself and the test means the same in both.
+ */
+function pointer(
+  kind: 'pointerDown' | 'pointerMove' | 'pointerUp' | 'pointerCancel',
+  el: Element,
+  init: Record<string, unknown>,
+): void {
+  const event = createEvent[kind](el, init);
+  Object.defineProperty(event, 'timeStamp', { value: Date.now() });
+  fireEvent(el, event);
+}
+
 /** A finger down at `x`, then moves `ms` apart, then up unless told otherwise. */
 function drag(
   el: Element,
   moves: number[],
   { x = 300, y = 10, ms = 100, lift = true, pointerType = 'touch' } = {},
 ): void {
-  const pointer = { ...touch, pointerType };
-  fireEvent.pointerDown(el, { ...pointer, clientX: x, clientY: y });
+  const pointerInit = { ...touch, pointerType };
+  pointer('pointerDown', el, { ...pointerInit, clientX: x, clientY: y });
   let at = x;
   for (const dx of moves) {
     act(() => {
       vi.advanceTimersByTime(ms);
     });
     at += dx;
-    fireEvent.pointerMove(el, { ...pointer, clientX: at, clientY: y + 2 });
+    pointer('pointerMove', el, { ...pointerInit, clientX: at, clientY: y + 2 });
   }
-  if (lift) fireEvent.pointerUp(el, { ...pointer, clientX: at, clientY: y + 2 });
+  if (lift) pointer('pointerUp', el, { ...pointerInit, clientX: at, clientY: y + 2 });
 }
 
 const region = () => screen.getByTestId('region');
@@ -100,7 +116,9 @@ const twoFrames = () => {
 };
 
 beforeEach(() => {
-  vi.useFakeTimers();
+  // The frames too: jsdom's own `requestAnimationFrame` runs on whichever
+  // realm's timers it was built in, which a vm pool does not fake.
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'requestAnimationFrame', 'cancelAnimationFrame'] });
   Object.defineProperty(window, 'innerWidth', { value: WIDTH, configurable: true });
 });
 
@@ -144,7 +162,7 @@ describe('useHorizontalSwipe', () => {
       vi.advanceTimersByTime(300);
     });
     const at = 300 + moves.reduce((sum, dx) => sum + dx, 0);
-    fireEvent.pointerUp(region(), { ...touch, clientX: at, clientY: 12 });
+    pointer('pointerUp', region(), { ...touch, clientX: at, clientY: 12 });
     expect(onSwipe).not.toHaveBeenCalled();
     expect(region()).not.toHaveAttribute('data-swiping');
   });
