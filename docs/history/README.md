@@ -11,3 +11,4 @@ here is maintained.
 |---|---|
 | `2026-09-03-review/` | The 2026-09-03 code, infrastructure and live-account review (`review.md`), with its per-area reports. |
 | `2026-09-03-review/ux-proposal-2026-09-03.html` | The 3 September UX proposal, an HTML mock-up of the screens as they were then imagined. Sat unreferenced at the docs root until 2026-09-26. |
+| `prompt-evals.md` | Every run of the live prompt evaluation and of the production routing battery, one line per run, with the per-case outcomes of the 2026-10-01 baseline and the production token measurement of 2026-09-20..26. |

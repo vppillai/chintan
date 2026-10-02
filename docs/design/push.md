@@ -1,22 +1,21 @@
 # Web Push: how a filed recording reaches a closed app
 
-Status: built (round 5, R5-RC-D1/D2, 2026-09-27); live on an instance once
-its VAPID key pair is in SSM, which the setup scripts install by default
-since round 8 (`web_push`, R8-VAPID-1). Code: `model.PushSubscription`
+A filed recording reaches a closed app as a notification. It is live on an
+instance once its VAPID key pair is in SSM, which the setup scripts install
+by default (`web_push`). Code: `model.PushSubscription`
 (`backend/internal/model/types.go`), `service.PushService`
 (`backend/internal/service/push.go`), the routes (`backend/internal/handler/
 push.go`), the worker's notifier (`backend/internal/pipeline/notify.go`) and
 its sender (`backend/internal/push`), the service worker's `push` and
 `notificationclick` handlers (`frontend/src/sw.ts`), the Notifications card
 (`frontend/src/features/settings/NotificationsCard.tsx`) and the key script
-(`scripts/vapid-keys.sh`). The evaluation this came out of is
-`docs/design/async-updates.md`.
+(`scripts/vapid-keys.sh`).
 
 ## Where it sits
 
 Request/response is the transport for the open app: the captures poll and
-the focus refetch (`async-updates.md`) are the floor, and nothing holds a
-connection open. Web Push is the one addition that reaches a *closed* app,
+the focus refetch (`capture-ux.md`, "The poll") are the floor, and nothing
+holds a connection open. Web Push is the one addition that reaches a *closed* app,
 which is what a ring's recording needs — the phone is in a pocket while the
 ring files three things — and it is the one that fits a stack whose bill
 rounds to zero: the worker already knows the moment an append completes, and
@@ -24,9 +23,9 @@ a VAPID push is one HTTPS POST from that moment to the browser's push
 service, which is free. It adds one row kind, four small routes, one Go
 dependency (`github.com/SherClockHolmes/webpush-go`, checked by
 govulncheck like the rest), two service-worker handlers and one card on You.
-No second API, no second identity system, no connection table. WebSocket,
-SSE, AppSync and IoT Core were costed and rejected; the table is in
-`async-updates.md`.
+No second API, no second identity system, no connection table: anything
+that holds a connection open costs by the connection-minute, the opposite of
+the stack.
 
 ## Data
 
@@ -66,7 +65,7 @@ an error and the capture is `appended`, `needs_target` or `failed` (and from
 finished capture returns at the top of `runCapture` and a conceded delivery
 leaves the announcement to its owner, so a Lambda retry cannot double-send.
 It follows Home's own rule for what a person is not already watching
-(R5-RC-2): a device's capture always, the app's own only when nobody chose
+(`capture-ux.md`, "Receipts on Home"): a device's capture always, the app's own only when nobody chose
 its note — a recording made into a note in the app is on screen while it
 files. `no_content` and `spend_capped` are the app's to show.
 
@@ -85,8 +84,8 @@ logged (`pushErrorText`) — and neither does the payload.
 A VAPID pair: the private key at `/chintan/<instance>/vapid_private_key`,
 read by the worker only, and the public key at
 `/chintan/<instance>/vapid_public_key`, read by the API for `GET /v1/push/key`
-and by the worker for the signature. Both are `SecureString`s the owner
-creates outside CloudFormation, as the provider keys are, and both are
+and by the worker for the signature. Both are `SecureString`s created
+outside CloudFormation, as the provider keys are, and both are
 *optional* reads (`internal/ssmparam`): an instance without them starts,
 files recordings, answers 404 on the key and logs one line at the worker's
 start. `template.yaml` names the paths in both functions' environments and
@@ -103,8 +102,8 @@ it, and the configs sharing a name must agree, since they share the path),
 and `scripts/bootstrap.sh --apply` for its instance before the deploy, so the
 first cold start already has the pair; `scripts/doctor.sh` reports a missing
 one. `web_push: false` makes all three leave the pair alone — neither created
-nor deleted. It runs on the owner's credentials: the agent role may not
-write SSM. Only `--rotate` replaces a pair, because a new pair
+nor deleted. It needs credentials that may write SSM, which the agent role
+may not. Only `--rotate` replaces a pair, because a new pair
 invalidates every subscription, and the push service says so with 401 or
 403 (RFC 8292 §4.2), never 404 or 410, so the rows stay and their
 `failures` climb; the worker does not prune on 403, because a misconfigured
@@ -129,7 +128,7 @@ opens one.
 
 ## The card
 
-"Notifications" on You, above Devices & shortcuts (R5-RC-D2): one switch,
+"Notifications" on You, above Devices & shortcuts: one switch,
 "Notify me when a recording files", with the hint "Also when one needs a
 note chosen, or did not finish". The permission prompt must follow a tap,
 and the switch is that tap: on runs `Notification.requestPermission()`,
@@ -140,7 +139,7 @@ only when this browser holds a subscription *and* the server lists it; a
 row the worker pruned reads off, which is the truth.
 
 Four states replace the switch, in this order: not set up on this instance
-(the key's 404), with the owner's step named; an iPhone or iPad outside the
+(the key's 404), with the operator's step named; an iPhone or iPad outside the
 installed app — "Add Chintan to your Home Screen first" — because iOS (16.4
 and later) exposes push only to a Home Screen app; a browser without the
 API; and permission denied, which only the browser's own settings undo, so
@@ -161,5 +160,7 @@ reads off on the next visit and one tap re-enrols.
 Permission denied or unsupported: the poll and the focus refetch are the
 product, unchanged. A push not delivered: nothing is lost, Home is right on
 the next focus. A subscription gone: the row is pruned, the switch reads
-off. Duplicate pushes collapse by tag. The owner on two devices: two rows,
+off. Duplicate pushes collapse by tag. One person on two devices: two rows,
 both notified, both collapse on open.
+
+History: `docs/backlog.md`.

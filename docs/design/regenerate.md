@@ -1,8 +1,8 @@
 # Regenerating a note from its recordings
 
-The prompts change — the items prompt of 2026-09-26 turned "add milk to the
-shopping list" from the item `add milk to the shopping list` into `Milk` — and
-a note made before the change keeps the words the old prompt produced.
+The prompts change — an items prompt may turn "add milk to the shopping
+list" from the item `add milk to the shopping list` into `Milk` — and a note
+keeps the words the prompt of its day produced.
 Regeneration re-runs the one pipeline stage that depends on a prompt over
 every recording the note holds, from the transcript that is already stored,
 and puts each recording's new words where its old ones stand. Nothing is
@@ -21,8 +21,9 @@ cleanup prompt (`Pipeline.clean`) from the transcript the pipeline kept — the
 routed one, with the words spoken to the app already removed, when the router
 or the instruction strip left one; the raw one otherwise — and replaced under
 its marker by the same path a retranscription uses (`replaceCaptureParagraph`).
-A recording under twelve words is tidied rather than sent to the model, as it
-is on first filing (`shortDictationWords`, `tidyDictation`), so regenerating
+A recording under `routing.ShortDictationWords` (12) words is tidied rather
+than sent to the model, as it is on first filing (`isShortDictation`,
+`tidyDictation` in `pipeline/clean.go`), so regenerating
 it makes no call and changes it only if the tidy's own rules have.
 Text the person edited inside that paragraph is overwritten, and the confirm
 says so. For a checklist each recording's items are extracted again with the
@@ -32,8 +33,8 @@ have no recording and stay. A plain note's whole-note cleaned view is
 regenerated afterwards when the note has one (`cleanNoteAfter`), once, after
 the last recording, rather than after each — with `auto_clean` every append would
 have queued a run and every run but the last would have been superseded
-after its model call was billed. A checklist has no such view since #195:
-`cleanNoteAfter` returns at once for one (R8-F8), and the list is tidied
+after its model call was billed. A checklist has no such view:
+`cleanNoteAfter` returns at once for one, and the list is tidied
 only when asked (`checklists.md`, "Tidy up").
 
 Not re-run: transcription (that is the per-recording "Transcribe again",
@@ -76,8 +77,8 @@ is invoked once with the note and the ids (`TaskRegenerateNote`,
 `Invocation.CaptureIDs`). 202 `{status: queued, captures: N}`; `N` is zero,
 and nothing is queued, when nothing qualifies. The spend gate answers first,
 as it does for `/clean`: the run is `N` cleanup calls, each reserved and
-priced like any other (`meter.OpCleanup`; measured p50 143 µ$ a call,
-`prompts.md`), so a capped instance is told before anything is reset. A plain note
+priced like any other (`meter.OpCleanup`), so a capped instance is told
+before anything is reset. A plain note
 that keeps a cleaned view adds one whole-note call (`meter.OpCleanNote`) over
 its entire body after the last recording lands — larger than any one
 recording's call, since it reads the body whole — and only when a recording
@@ -143,7 +144,7 @@ happened.
 
 A list only ever spoken to keeps each recording's items under its marker,
 but even there they are found by their words, not taken as the paragraph:
-since 2026-09-29 a later recording's child can stand in that paragraph,
+a later recording's child can stand in that paragraph,
 merged under a parent this recording named (`checklists.md`, "Merging into
 what the list has"). And every save from the Items tab — a tick, a drag —
 carries every marker to the end of the body with nothing under it
@@ -172,8 +173,8 @@ The old items have to outlive the extraction. `extractItems` overwrites the
 clean artefact before the append lands, and the append can fail after it —
 an object store fault, a stamp wait that ran out — leaving the row at
 `appending` with its claim handed back and `previous` gone with the call
-chain; until 2026-09-27 the attempt that resumed there (the strip's Retry,
-or the task's own retry) put the new items in beside the old ones. So the
+chain; an attempt that resumed there (the strip's Retry, or the task's own
+retry) would otherwise put the new items in beside the old ones. So the
 extraction keeps a copy at `clean.prev.txt` (`keys.CaptureCleanPrevious`,
 deleted with the recording's other objects), `cleanForNote` — the one stage
 shared by a capture's `run` and `regenerateCapture` — reads it when an
@@ -186,22 +187,20 @@ wrote the block and died from one that never wrote; and it means a typed
 line with the same words as a new item folds into the block rather than
 staying as a duplicate. The deletion rule holds: a pass that finds none of
 the OLD words leaves the list alone, even when a typed line carries one of
-the new words. Sub-items (`checklists.md`, three levels since #191 and four since PR10-11; `cleanup.MaxDepth = 3`, 0-based):
+the new words. Sub-items (`checklists.md`; four levels, `cleanup.MaxDepth = 3`, 0-based):
 the match ignores indent, and the block is written with the recording's own
 indent (`checklistItems` in `append.go`), so a recording's item the person
 had moved to another level comes back at the depth the recording gives it,
-and a typed sub-item that followed a removed parent now nests under whatever
+and a typed sub-item that followed a removed parent nests under whatever
 stands above it; `parseChecklist` clamps an orphan, so nothing breaks, but a
 depth the person chose is theirs to put back.
 
 `keepTick` carries a tick to the new line with the same words, wherever the
 new prompt put it; when no words match at all and the counts agree it falls
-back to the line, as it did before, so a retranscription that reworded every
-item is carried as it always was. A tick that cannot be placed either way
+back to the line, so a retranscription that reworded every item keeps its
+ticks by position. A tick that cannot be placed either way
 is dropped: an open item the person can tick again beats a tick on the
-wrong item. The same rules now apply to "Transcribe again" on a checklist,
-which until 2026-09-27 could only replace under the marker and, on a used
-list, added its new items beside the old ones.
+wrong item. The same rules apply to "Transcribe again" on a checklist.
 
 ## Rejected
 

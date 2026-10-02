@@ -39,10 +39,9 @@ key past it with the same fixed 401 as a revoked one and counts it as
 own key past its date, not a guess at one. The row stays listed, and counts
 against the ten, so the Devices card can say "Expires in 12 days" or
 "Expired" and offer Remove. There is no default: the ring you use daily
-stays perpetual, and a key handed to a one-off script gets thirty days
-(WH-A, round 5).
+stays perpetual, and a key handed to a one-off script gets thirty days.
 
-On You the Devices card is folded behind its title (round 8, R8-DF1): the
+On You the Devices card is folded behind its title: the
 summary row says "2 devices", "No devices yet", "1 expiring soon" (within a
 week) or "1 expired", or "Couldn't load", and the list, the form and the
 recipes are one tap away. It opens itself when About's "Devices &
@@ -72,7 +71,7 @@ a stranger on the card — "Last used 2 h ago from 203.0.113.x" — and keeps a
 precise address out of the table, the wire and the logs. The full address
 is read in that one function and nowhere else, and device rows are in no
 export: the export job reads notes, captures and recordings, never
-`DEVICE#` rows (WH-B, round 5). "Sent" counts accepted
+`DEVICE#` rows. "Sent" counts accepted
 requests, which is captures near enough: a two-step upload is two. Bytes
 are the bodies the inbox itself read — a one-shot route's recording or
 text, but for the two-step route only the small JSON that opens the
@@ -113,7 +112,7 @@ lands between the check's read and its write is not overwritten: the write
 loses, the row is read again and the revoke is seen; a revoke that loses to
 the counter write is retried the same way. Two hundred requests is one every seven
 minutes around the clock, which bounds what a leaked key costs in provider
-spend before its owner notices; the instance's daily spend cap still applies
+spend before the person notices; the instance's daily spend cap still applies
 above it, and every inbox capture runs through the breaker like any other.
 
 Once the key is accepted the device's tenant is the request's identity, so
@@ -135,8 +134,9 @@ those plus the probes.
   gateway hands a binary body to the function base64-encoded under its 6 MB
   request cap, so 5 MiB never arrived; a longer recording takes the two-step
   route) with `Content-Type` naming one of
-  `audio/webm`, `audio/ogg`, `audio/mp4`, `audio/m4a`, `audio/mpeg`,
-  `audio/wav`, `audio/x-wav`, and `X-Chintan-Note-Id`, `X-Chintan-Language`,
+  `audio/webm`, `audio/ogg`, `audio/mp4`, `audio/m4a`, `audio/x-m4a`,
+  `audio/mpeg`, `audio/mp3`, `audio/wav`, `audio/wave`, `audio/x-wav`
+  (`service/capture.go`), and `X-Chintan-Note-Id`, `X-Chintan-Language`,
   `X-Chintan-Duration-Ms` as optional headers. The API writes the object to
   the capture's own audio key — the row first, then the object, as the client
   flow orders them — with the same retention tags a presigned PUT carries, so
@@ -179,10 +179,10 @@ those plus the probes.
 
 An untargeted inbox capture is always routed, cue or no cue, and saying the
 note's name first — "App feedback the split up is slow" — is a supported way
-to file into it (`docs/design/prompts.md`, Routing; round 6, R6-RT-1/RT-2).
+to file into it (`docs/design/routing.md`).
 
 Every inbox capture carries `source: device:<id>` (the wire says `app` for
-the app's own, and for every capture from before the field existed), and the
+the app's own), and the
 Recordings tab says "From ⟨device⟩" by name, reading `GET /v1/devices` once a
 device-sourced row is on screen (`useDevices`, `queries/devices.ts`); and
 Home shows a receipt for every inbox capture, targeted or not — nobody
@@ -231,7 +231,7 @@ About: `captureOf` leaves both fields out, and the wire test pins that.
   minutes: one route held at its throttle for the window) e-mails when a
   flood is under way. The trade-off: the ceiling is per
   route and shared by every caller, so a flood at the public URL pauses the
-  inbox for the owner's own devices while it lasts; the app itself uses
+  inbox for the person's own devices while it lasts; the app itself uses
   other routes and is untouched. If that ever matters, CloudFront in front
   of the API with a WAF rate rule per source address is the path.
 - Below the gateway's threshold, refusals are still visible from the Lambda
@@ -251,28 +251,8 @@ About: `captureOf` leaves both fields out, and the wire test pins that.
 
 ### `source` and `last_progress_at` on a note's page
 
-`Capture.source` (since 2026-09-24) and `Capture.last_progress_at` (since
-2026-09-27) live in the row's blob and as top-level attributes too. gsi1's
-INCLUDE projection carries neither, and CloudFormation cannot change a live
-index's projection, so `ListCapturesByNote` overlays both on the page with one
-`BatchGetItem` (`hydrateUnprojectedCaptureFields`) rather than saying "app" for
-every row, as it did on the day the inbox shipped, or `null` for every
-recording's progress, which made the app measure a regeneration's age from
-`created_at` and call a healthy run on a ten-minute-old note stuck from its
-first second (QA 2026-09-27, F1). A row last written before its attribute was
-promoted has no top-level value and reads as it did before: "app", and
-`created_at`; the pipeline rewrites the whole row on every hand-off, so a
-recording that moves gets both.
-
-The overlay is the permanent answer at this scale, not a stopgap waiting for
-an index rebuild (round 6, decision R6-OD-2 (c)). CloudFormation cannot widen
-a live index's projection, so carrying the two in the index would mean a
-second index, a two-step deploy and a switch of the index-name constant, all
-to save one `BatchGetItem` per page of a note's recordings, a read that costs
-well under a cent a month. The code is `hydrateUnprojectedCaptureFields` in
-`backend/internal/repository/dynamo_captures.go`, about sixty lines that
-`TestListCapturesByNoteKeepsTheSource` and
-`TestListCapturesByNoteKeepsLastProgressAt` (`capture_list_test.go`, against
-the template's real projection) hold. Rebuild the index only when a DynamoDB
-change is needed for another reason, and fold both into `NonKeyAttributes` and
-delete the overlay then.
+`ListCapturesByNote` overlays both fields on the page with one `BatchGetItem`
+(`hydrateUnprojectedCaptureFields` in `repository/dynamo_captures.go`, held
+by `TestListCapturesByNoteKeepsTheSource` and
+`TestListCapturesByNoteKeepsLastProgressAt`), because the captures index does
+not project them; why the index is not rebuilt is `data-model.md`.
