@@ -13,6 +13,7 @@ import { useModalFocus } from '@/components/useModalFocus.ts';
 import { languageName } from '@/features/settings/languages.ts';
 
 import { checklistToProse, parseChecklist, proseToChecklist } from './checklist.ts';
+import { checklistClipboard } from './checklistClipboard.ts';
 import { cleanedDocument, cleanedMarkdown } from './cleaned.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
 import { useApplyTidy, useStartTidy } from './useTidyList.ts';
@@ -222,7 +223,12 @@ export function NoteDrawer({
             <div className="note-copy">
               <CopyButton
                 label="Copy note"
-                text={() => [draft.title.trim(), draft.body.trim()].filter(Boolean).join('\n\n')}
+                text={() =>
+                  checklist
+                    ? checklistClipboard(draft.title, draft.body).text
+                    : [draft.title.trim(), draft.body.trim()].filter(Boolean).join('\n\n')
+                }
+                {...(checklist ? { html: () => checklistClipboard(draft.title, draft.body).html } : {})}
               />
               <DownloadButton
                 label="Download note"

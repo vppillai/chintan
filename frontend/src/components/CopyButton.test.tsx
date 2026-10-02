@@ -46,6 +46,79 @@ describe('CopyButton', () => {
     expect(writeText).toHaveBeenCalledWith('Roof repair\n\nRidge tiles.');
   });
 
+  it('writes the text and the HTML together when the control has both', async () => {
+    const user = userEvent.setup();
+    const written: Record<string, Blob>[] = [];
+    class FakeClipboardItem {
+      constructor(parts: Record<string, Blob>) {
+        written.push(parts);
+      }
+    }
+    vi.stubGlobal('ClipboardItem', FakeClipboardItem);
+    const writeText = vi.fn(async () => {});
+    const write = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText, write } });
+    try {
+      render(<CopyButton label="Copy list" text={() => '☐ Milk'} html={() => '<ul><li>Milk</li></ul>'} />);
+      await user.click(screen.getByRole('button', { name: 'Copy list' }));
+
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(writeText).not.toHaveBeenCalled();
+      const parts = written[0] ?? {};
+      expect(Object.keys(parts)).toEqual(['text/plain', 'text/html']);
+      expect(parts['text/plain']?.type).toBe('text/plain');
+      expect(parts['text/html']?.type).toBe('text/html');
+      expect(parts['text/html']?.size).toBe('<ul><li>Milk</li></ul>'.length);
+      expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('writes the text alone when the HTML is empty', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      'ClipboardItem',
+      class {
+        constructor(_parts: Record<string, Blob>) {}
+      },
+    );
+    const writeText = vi.fn(async () => {});
+    const write = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText, write } });
+    try {
+      render(<CopyButton label="Copy list" text={() => 'Party'} html={() => ''} />);
+      await user.click(screen.getByRole('button', { name: 'Copy list' }));
+      expect(write).not.toHaveBeenCalled();
+      expect(writeText).toHaveBeenCalledWith('Party');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('falls back to the text alone when the rich write is refused', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      'ClipboardItem',
+      class {
+        constructor(_parts: Record<string, Blob>) {}
+      },
+    );
+    const writeText = vi.fn(async () => {});
+    const write = vi.fn(async () => {
+      throw new Error('NotAllowedError');
+    });
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText, write } });
+    try {
+      render(<CopyButton label="Copy list" text={() => '☐ Milk'} html={() => '<ul><li>Milk</li></ul>'} />);
+      await user.click(screen.getByRole('button', { name: 'Copy list' }));
+      expect(writeText).toHaveBeenCalledWith('☐ Milk');
+      expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('reads the text at the moment it is clicked, not at render', async () => {
     // The note is still being edited while this button sits on screen.
     const user = userEvent.setup();
