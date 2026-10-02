@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Share drawer mock</title>
+<link rel="stylesheet" href="mock-share-tokens.css">
+<style>
+  /* The recommended Share sheet at 360 px, both themes side by side, drawn
+     with the tokens of the day. Not the app's CSS: a mock of the shape. */
+  body { margin: 0; background: #888; font-family: var(--font-sans); display: flex; gap: 24px; padding: 24px; }
+  .phone { inline-size: 360px; block-size: 300px; display: flex; flex-direction: column; justify-content: flex-end; background: var(--color-ground); color: var(--color-ink); overflow: hidden; }
+  .sheet { background: var(--color-raised); border-block-start: 1px solid var(--color-line); border-start-start-radius: var(--radius-lg); border-start-end-radius: var(--radius-lg); box-shadow: var(--shadow-sheet); padding: var(--space-2) 0 var(--space-4); }
+  .head { display: flex; align-items: center; justify-content: space-between; padding-inline: var(--layout-gutter); block-size: 44px; }
+  .eyebrow { font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); letter-spacing: var(--letter-spacing-caps); text-transform: uppercase; color: var(--color-faint); }
+  .handle { inline-size: 36px; block-size: 4px; border-radius: 2px; background: var(--color-line-strong); margin: 0 auto var(--space-2); }
+  .body { display: grid; gap: var(--space-3); padding: var(--space-3) var(--layout-gutter) 0; }
+  .pill { display: inline-flex; align-items: center; justify-content: center; min-block-size: 44px; padding: 0 var(--space-4); border: 1px solid var(--color-line-strong); border-radius: var(--radius-full); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); color: var(--color-ink); background: var(--gradient-tonal); }
+  .primary { inline-size: 100%; background: var(--color-ink); border-color: var(--color-ink); color: var(--color-ground); }
+  .row { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
+  .hint { margin: 0; font-size: var(--font-size-sm); color: var(--color-muted); }
+  .group { display: grid; gap: var(--space-2); padding-block-start: var(--space-2); border-block-start: 1px solid var(--color-line); }
+  .caption { margin: 0; font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); letter-spacing: var(--letter-spacing-caps); text-transform: uppercase; color: var(--color-muted); }
+</style>
+</head>
+<body>
+  <div class="phone" data-theme="ink">
+    <section class="sheet">
+      <div class="handle" aria-hidden="true"></div>
+      <div class="head"><span class="eyebrow">Share</span><span aria-hidden="true">×</span></div>
+      <div class="body">
+        <span class="pill primary">Share…</span>
+        <div class="row"><span class="pill">Copy note</span><span class="pill">Download note</span></div>
+        <p class="hint">Items copy as ☐ and ☑ lines, and paste as a list where rich text is accepted. The download is Markdown.</p>
+      </div>
+    </section>
+  </div>
+  <div class="phone" data-theme="nocturne">
+    <section class="sheet">
+      <div class="head"><span class="eyebrow">Share</span><span aria-hidden="true">×</span></div>
+      <div class="body">
+        <span class="pill primary">Copy note</span>
+        <div class="row"><span class="pill">Download note</span></div>
+        <p class="hint">The title, then the text. The download is Markdown.</p>
+        <div class="group">
+          <p class="caption">Cleaned view</p>
+          <div class="row"><span class="pill">Copy cleaned view</span><span class="pill">Download cleaned view</span></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

@@ -1,5 +1,5 @@
 import { QueryClient } from '@tanstack/react-query';
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider, createMemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -843,6 +843,121 @@ describe('the note is panels under one strip', () => {
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.getByRole('button', { name: 'Note actions' })).toHaveFocus();
+  });
+
+  it('arrives from Home with the placeholder title selected, once', async () => {
+    // From Home, as the + sends it: a deep link is re-seeded under the
+    // library and would lose the route state on the way.
+    const api = server([withRecording]);
+    const { router } = mount(api.fetchImpl, '/');
+    await screen.findByRole('heading', { name: /notes/i });
+    await act(() => router.navigate('/notes/roof-repair', { state: { focusTitle: true } }));
+    await loaded();
+    const title = screen.getByRole('textbox', { name: 'Note title' }) as HTMLInputElement;
+    expect(title).toHaveFocus();
+    expect(title.selectionStart).toBe(0);
+    expect(title.selectionEnd).toBe('Roof repair'.length);
+  });
+
+  it('discards an untouched placeholder when the screen is left, and keeps one that was typed into', async () => {
+    const placeholder: StoredNote = { ...ROOF, id: 'typed-1', title: 'New note', body: '', snippet: '' };
+    const api = server([ROOF, placeholder]);
+    const { router } = mount(api.fetchImpl, '/');
+    await screen.findByRole('heading', { name: /notes/i });
+
+    // Opened from the +, left alone, Back: archived and purged, no dialog.
+    await act(() => router.navigate('/notes/typed-1', { state: { focusTitle: true } }));
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveValue('New note');
+    });
+    await act(() => router.navigate(-1));
+    await waitFor(() => {
+      expect(api.calls).toContain('DELETE /v1/notes/typed-1/permanent');
+    });
+    expect(api.calls).toContain('DELETE /v1/notes/typed-1');
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    // A title typed over the placeholder, even before it has saved: kept.
+    const user = userEvent.setup();
+    const kept: StoredNote = { ...ROOF, id: 'typed-2', title: 'New note', body: '', snippet: '' };
+    api.notes.set('typed-2', kept);
+    await act(() => router.navigate('/notes/typed-2', { state: { focusTitle: true } }));
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveValue('New note');
+    });
+    await user.keyboard('Hardware');
+    const before = api.calls.filter((call) => call.startsWith('DELETE')).length;
+    await act(() => router.navigate(-1));
+    await screen.findByRole('heading', { name: /notes/i });
+    expect(api.calls.filter((call) => call.startsWith('DELETE'))).toHaveLength(before);
+  });
+
+  it('closes from a drag down on its head, past the threshold or in a flick, and settles back short of it', async () => {
+    // A phone's own sheets close this way; the × and Escape stay (above).
+    const user = userEvent.setup();
+    const api = server([withRecording]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await loaded();
+    const height = 400;
+    const box = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ height, width: 360, top: 0, left: 0, right: 360, bottom: height, x: 0, y: 0, toJSON: () => ({}) });
+    try {
+      const touch = { pointerId: 7, pointerType: 'touch', button: 0, clientX: 100 };
+      // `timeStamp` is read-only on an event, so the clock the hook reads is
+      // set on the event itself: two synchronous moves would otherwise be a
+      // flick of infinite speed.
+      const at = (
+        kind: 'pointerDown' | 'pointerMove' | 'pointerUp',
+        head: Element,
+        init: Record<string, unknown>,
+        timeStamp: number,
+      ) => {
+        const event = createEvent[kind](head, init);
+        Object.defineProperty(event, 'timeStamp', { value: timeStamp });
+        fireEvent(head, event);
+      };
+      const dragDown = (dy: number, ms: number) => {
+        const head = screen.getByRole('dialog').querySelector('.note-panel__head')!;
+        const t0 = 1_000;
+        at('pointerDown', head, { ...touch, clientY: 500 }, t0);
+        at('pointerMove', head, { ...touch, clientY: 500 + dy / 2 }, t0 + ms / 2);
+        at('pointerMove', head, { ...touch, clientY: 500 + dy }, t0 + ms);
+        at('pointerUp', head, { ...touch, clientY: 500 + dy }, t0 + ms);
+      };
+      const sheet = () => screen.getByRole('dialog');
+
+      // Short and slow: back where it was.
+      await openPanel(user, 'Share');
+      dragDown(40, 400);
+      expect(sheet()).toBeInTheDocument();
+      expect(sheet().style.translate).toBe('');
+
+      // Past 30 % of the height, slowly (0.2 px/ms, half the flick speed):
+      // the fraction alone closes it, sliding away until the slide ends.
+      dragDown(height * 0.4, 800);
+      expect(sheet().style.translate).toBe(`0 ${height}px`);
+      // The sheet's own slide ending; a child's colour settling would not do.
+      fireEvent.transitionEnd(sheet(), { propertyName: 'translate' });
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Note actions' })).toHaveFocus();
+
+      // A flick: short, but fast and still moving at the lift.
+      await openPanel(user, 'Share');
+      dragDown(60, 40);
+      fireEvent.transitionEnd(sheet(), { propertyName: 'translate' });
+      expect(screen.queryByRole('dialog')).toBeNull();
+
+      // A mouse has the ×: its drag is nothing.
+      await openPanel(user, 'Share');
+      const head = sheet().querySelector('.note-panel__head')!;
+      fireEvent.pointerDown(head, { ...touch, pointerType: 'mouse', clientY: 500 });
+      fireEvent.pointerMove(head, { ...touch, pointerType: 'mouse', clientY: 800 });
+      fireEvent.pointerUp(head, { ...touch, pointerType: 'mouse', clientY: 800 });
+      expect(sheet()).toBeInTheDocument();
+    } finally {
+      box.mockRestore();
+    }
   });
 
   it('stops being a dialog while hidden behind the selection bar, so Escape cancels the selection', async () => {

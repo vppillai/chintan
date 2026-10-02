@@ -11,10 +11,17 @@ import {
   type RefObject,
 } from 'react';
 import { flushSync } from 'react-dom';
-import { useParams } from 'react-router';
+import { useLocation, useParams } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
-import { queryKeys, useInFlightCaptures, useNote, useSettings } from '@/api/queries.ts';
+import {
+  queryKeys,
+  useArchiveNote,
+  useDeleteNoteForever,
+  useInFlightCaptures,
+  useNote,
+  useSettings,
+} from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { useTabNavigation } from '@/app/useTabNavigation.ts';
@@ -32,6 +39,7 @@ import { useCachedNote } from '@/offline/useNotesCache.ts';
 import { CleanedPanel } from './CleanedPanel.tsx';
 import { FindBar, type FindTarget } from './FindBar.tsx';
 import { NoteMenu } from './NoteActions.tsx';
+import { isUntouchedPlaceholder } from './newNote.ts';
 import {
   NoteDrawer,
   noteLanguageFieldId,
@@ -96,6 +104,58 @@ export function NoteDetailScreen() {
   const note = served ?? cached.data ?? undefined;
   const offlineCopy = !served && Boolean(cached.data);
   const editor = useNoteEditor(note);
+
+  /*
+   * A note just made from Home's + arrives with `focusTitle` in its route
+   * state and a placeholder title: the field takes focus with the title
+   * selected, so the first keystroke replaces it. Once per arrival — the
+   * state stays on the history entry, and a note read again after Back
+   * must not steal focus from wherever `useRouteFocus` put it. Keyed on the
+   * draft's title, not the note: the editor adopts the note a render later,
+   * and a selection made over an empty field is lost when the value lands.
+   */
+  const location = useLocation();
+  const focusTitle = (location.state as { focusTitle?: boolean } | null)?.focusTitle === true;
+  const titleRef = useRef<HTMLInputElement>(null);
+  const titleFocused = useRef(false);
+  const titleReady = editor.model.draft.title.length > 0;
+  useEffect(() => {
+    if (!focusTitle || !titleReady || titleFocused.current) return;
+    titleFocused.current = true;
+    titleRef.current?.focus();
+    titleRef.current?.select();
+  }, [focusTitle, titleReady]);
+  /*
+   * A placeholder left as it was made — the title untyped, no body, no
+   * recording — is discarded when the screen is left (Back, the Home tab,
+   * a tap on another note): it was never a note, and a library of "New
+   * note" rows is the owner's mistake kept for them. The existing delete
+   * path, without its confirm or toast: the archive, then the purge, since
+   * the server purges only from the archive. Judged from the draft at the
+   * moment of leaving, so a title typed but not yet saved counts as typed;
+   * the hooks' own `onSuccess` take the row out of the lists and the
+   * device's copy after this component has gone.
+   */
+  const archiveNote = useArchiveNote();
+  const deleteForever = useDeleteNoteForever();
+  const discardOnLeave = useRef<string | null>(null);
+  // Every render, in an effect: a ref is not read or written while rendering.
+  useEffect(() => {
+    discardOnLeave.current =
+      focusTitle && note && isUntouchedPlaceholder({ ...editor.model.draft, captures: note.captures })
+        ? note.id
+        : null;
+  });
+  useEffect(
+    () => () => {
+      const id = discardOnLeave.current;
+      if (!id) return;
+      void archiveNote.mutateAsync(id).then(() => deleteForever.mutate(id), () => undefined);
+    },
+    // Once, at unmount; the refs carry the latest answer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
   // The draft's, not the server's: the Details switch changes what this
   // screen is — Items for Text, and no Cleaned tab — the moment it is
   // flipped, not after the save lands.
@@ -297,6 +357,7 @@ export function NoteDetailScreen() {
         <label htmlFor="note-title">Note title</label>
       </h1>
       <input
+        ref={titleRef}
         id="note-title"
         className="note-title-input"
         value={editor.model.draft.title}

@@ -1144,10 +1144,50 @@
   pointer-events: none;
 }
 
-.note-copy {
+/* The Share sheet: one primary action the width of the sheet, then the
+   quieter ways out in a row, then the cleaned view's pair under its own
+   caption (`NoteDrawer.tsx` `ShareBody`). */
+.note-share {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.note-share__row {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-4);
+  gap: var(--space-2) var(--space-3);
+}
+
+.note-share__primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 100%;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-ink);
+  border-radius: var(--radius-full);
+  background-color: var(--color-ink);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ground);
+}
+
+.note-share__primary:active {
+  opacity: 0.85;
+}
+
+/* Copy note is the primary where there is no share sheet; the row then
+   gives it the whole first line and the download the next. */
+.note-share__row > .copy:has(> .note-share__primary) {
+  flex-basis: 100%;
+}
+
+.note-share__group {
+  display: grid;
+  gap: var(--space-2);
+  padding-block-start: var(--space-2);
+  border-block-start: 1px solid var(--color-line);
 }
 
 /* --------------------------------------------------------------------------

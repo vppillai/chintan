@@ -424,6 +424,14 @@ describe('the PATCH names only what changed since the server’s copy', () => {
   const edited = (patch: Partial<NoteDraft>, model: EditorModel = start()): EditorModel =>
     editorReducer(model, { type: 'edit', patch });
 
+  it('leaves out a title cleared to nothing, since the server would refuse it', () => {
+    // A placeholder selected and backspaced is a field about to be typed
+    // into, not a title of ""; the body still goes.
+    expect(patchFor(edited({ title: '' }))).toEqual({ version: 3 });
+    expect(patchFor(edited({ title: '  ', body: 'Tiles.' }))).toEqual({ version: 3, body: 'Tiles.' });
+    expect(patchFor(edited({ title: 'Hardware' }))).toEqual({ version: 3, title: 'Hardware' });
+  });
+
   it('sends a Details change without the body: an unchanged body is not an edit (QA 2026-09-21, finding 1)', () => {
     // The server takes any body it is sent as the user's words and carries
     // the recordings' markers out of it; the language rode the whole draft.

@@ -533,6 +533,22 @@
   gap: var(--space-3);
   padding-inline: var(--layout-gutter);
   border-block-end: 1px solid transparent;
+  /* The head is the handle: a finger dragging it down closes the sheet
+     (`NoteDrawer.tsx`), so the browser must not scroll or select under it. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* The sheet follows the finger, then settles — back into place or off the
+   foot of the region — over the motion tokens, which reduced motion makes
+   one frame. While the finger holds it there is no transition to fight. */
+.note-panel {
+  transition: translate var(--motion-duration-base) var(--motion-ease-decelerate);
+}
+
+.note-panel[data-dragging] {
+  transition: none;
 }
 
 /* The hairline follows the body's scroll position where the browser can

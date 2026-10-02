@@ -469,6 +469,36 @@ const SURFACES: readonly Surface[] = [
     },
   },
   {
+    // With the cleaned view's own group under the note's pair.
+    name: 'the Share sheet of a cleaned note',
+    open: async (page) => {
+      await page.goto('/notes/roof-repair?tab=cleaned');
+      await page.getByRole('button', { name: 'Generate' }).click();
+      await expect(page.locator('.cleaned__body').getByRole('heading', { name: 'Summary' })).toBeVisible({
+        timeout: 10_000,
+      });
+      await noteAction(page, 'Share');
+      await expect(page.getByRole('button', { name: 'Copy cleaned view' })).toBeVisible();
+    },
+  },
+  {
+    name: 'the Share sheet of a checklist',
+    open: async (page, api) => {
+      seedChecklist(api);
+      await page.goto('/notes/shopping');
+      await noteAction(page, 'Share');
+      await expect(page.getByText(/Items copy as/)).toBeVisible();
+    },
+  },
+  {
+    name: 'Home with the New note menu open',
+    open: async (page) => {
+      await page.goto('/');
+      await page.getByRole('button', { name: 'New note' }).click();
+      await expect(page.getByRole('menuitem', { name: 'Checklist' })).toBeVisible();
+    },
+  },
+  {
     name: 'the find bar with a match',
     open: async (page) => {
       await page.goto('/notes/roof-repair');

@@ -161,7 +161,8 @@ worked is the request's to say. Tests: `OfflineBanner.test.tsx`.
   offline; a server failure while online says so instead, with Retry
   (`serverFailed` in `screens/library/LibraryList.tsx`). The tag chips come
   from the cached active notes. Search ranks the cached corpus on every
-  keystroke (`search.md`).
+  keystroke (`search.md`). The + for a typed note says it needs a
+  connection: the queue holds edits to notes that exist, not notes.
 - **A note**: the cached full note stands in while the server has not
   answered (`offlineCopy`); a note the device holds only as a row reads
   "Not on this device" with the offline sentence, never "archived or

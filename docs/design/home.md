@@ -15,14 +15,16 @@ rows, captions and empty states) — `features/notes/groups.ts`
 `components/ConfirmDialog.tsx` and `components/DeleteConfirm.tsx`, `usePinNote` and `useReorderPins`
 (`api/queries/notes.ts`), `offline/useNotesCache.ts`, the sheet (`styles/home.css`:
 the rows, chips, field and heading, then the overrides), the drawn checkbox
-(`components/CheckMark.tsx` `Check` / `CheckMark`, `styles/checklist.css`).
+(`components/CheckMark.tsx` `Check` / `CheckMark`, `styles/checklist.css`),
+and the typed note (`screens/library/NewNote.tsx`).
 
 ## Header
 
 One row. The brand leads: `Wordmark` (`components/Wordmark.tsx`), the name in
 the serif at `lg`, semibold, ink — the same lockup the shell's banner wears on
 every other screen, left-aligned there too. "Notes · 12" is the row's quiet
-right end, sans at `sm`, muted. No date: the day is the group label beneath.
+right end, sans at `sm`, muted, with the **+** for a typed note after it.
+No date: the day is the group label beneath.
 The h1 stays first in the DOM and the brand is moved ahead of it by `order`
 (`home.css`), so a screen reader hears "Notes, 12" and the a11y sweep still
 finds a heading that starts with Notes. The lockup leads with the mark: the
@@ -35,6 +37,28 @@ launcher icon is the same ring with the bindu in the accent
 `frontend/scripts/make-icons.mjs`; `public/favicon.svg` swaps to paper ink
 under a dark colour scheme). The design record, with the two directions not
 taken, is `docs/design/branding/`.
+
+## New note
+
+A note without a recording. The + at the header's end (`NewNote.tsx`, an
+`OverflowMenu` through its own 44 px trigger, named "New note") opens a
+two-item menu, **Note** or **Checklist**; the pick is one `POST /v1/notes
+{title, kind}` with the placeholder title "New note" or "New checklist"
+(`NEW_NOTE_TITLE`) — the server refuses an empty title — and the
+`Idempotency-Key` the client puts on every mutating request. On the 201 the
+app navigates to the note with `focusTitle` in the route state, and the note
+screen focuses the title field with the placeholder selected, once, so the
+first keystroke replaces it (`note-screen.md`, "Title"). The + is a disc at
+the meta colour like a row's ⋮, not a second record control: the disc on the
+tab bar is still how a note usually begins. Offline the + says "New note
+needs a connection." under the header rather than queueing: the edit queue
+carries edits to notes that exist, and a note with no server id could not be
+opened. A refused create says "The note could not be created. Try again."
+and keeps the +. A placeholder left exactly as it was made — the title
+untyped, no body, no recording — is discarded when its screen is left
+(`features/notes/newNote.ts` `isUntouchedPlaceholder`; the note screen
+archives and purges it, no confirm, no toast), so Back from an idle + leaves
+no "New note" row behind.
 
 ## Filing, above the list
 
@@ -180,7 +204,8 @@ answer, or — when the list failed while online for a reason a connection
 would not fix (a 5xx, a timeout, a 429, any `ApiError` but a network
 failure, a cancel or a 401) — "Chintan's server didn't answer — showing
 notes saved on this device" with a Retry (`serverFailed` in
-`screens/library/LibraryList.tsx`); Pin and reorder are disabled (above).
+`screens/library/LibraryList.tsx`); Pin and reorder are disabled (above),
+and the + says it needs a connection.
 
 ## The drawn checkbox
 
@@ -200,7 +225,8 @@ Home is the bottom of a short, app-style history stack: the Home tab goes
 back to it, You and the archive sit one above it, and Back from Home leaves
 the app. The rules are `navigation.md`.
 
-Tests: `features/notes/groups.test.ts`, `screens/NotesScreen.test.tsx`,
+Tests: `features/notes/groups.test.ts`, `screens/NotesScreen.test.tsx` (the
++ included),
 `NotesScreen.pins.test.tsx`, `NotesScreen.checklist.test.tsx`,
 `screens/library/LibraryList.test.tsx`, `components/NoteRow.test.tsx`,
 `NoteRow.checklist.test.tsx`, `SwipeRow.test.tsx`, `components/Toast.test.tsx`,
@@ -209,4 +235,5 @@ Tests: `features/notes/groups.test.ts`, `screens/NotesScreen.test.tsx`,
 end, `frontend/e2e/pins.spec.ts` (the group, the grip drag, the phone's hold
 and tray), `swipe.spec.ts`, `archive.spec.ts` (the per-row Delete behind its
 confirm, Undo reached from the keyboard, Delete forever; a held mouse press
-on a row opens it), `offline.spec.ts`, `a11y.spec.ts` (both themes).
+on a row opens it), `offline.spec.ts`, `new-note.spec.ts`, `a11y.spec.ts`
+(both themes).

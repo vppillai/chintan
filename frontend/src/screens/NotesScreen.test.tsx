@@ -1,7 +1,7 @@
 import { onlineManager } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SERVER_SEARCH_DEBOUNCE_MS } from '@/api/queries.ts';
@@ -894,5 +894,98 @@ describe('pull to refresh', () => {
     await waitFor(() => {
       expect(screen.queryByText('Refreshing…')).toBeNull();
     });
+  });
+});
+
+/*
+ * A note without a recording: the + at the header's end offers Note or
+ * Checklist, the pick is one POST, and the note screen opens with the title
+ * to be typed over. Offline it says so instead of queueing a note nobody
+ * could open; a refused create says the fixed sentence.
+ */
+describe('a typed note from the +', () => {
+  function Probe() {
+    const location = useLocation();
+    return <p data-testid="probe">{`${location.pathname} ${JSON.stringify(location.state)}`}</p>;
+  }
+
+  function mountWithRoutes(fetchImpl: typeof fetch) {
+    return render(
+      <TestProviders api={testApiContext(fetchImpl)}>
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route path="/" element={<NotesScreen />} />
+            <Route path="/notes/:id" element={<Probe />} />
+          </Routes>
+        </MemoryRouter>
+      </TestProviders>,
+    );
+  }
+
+  function libraryThatCreates(status = 201): { fetchImpl: typeof fetch; posts: { body: unknown; key: string | null }[] } {
+    const posts: { body: unknown; key: string | null }[] = [];
+    const base = library();
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/v1/notes') && init?.method === 'POST') {
+        const headers = new Headers(init.headers);
+        posts.push({ body: JSON.parse(String(init.body)), key: headers.get('Idempotency-Key') });
+        if (status !== 201) return json({ title: 'That request was not valid' }, status);
+        return json(
+          { id: 'typed-1', title: 'New checklist', kind: 'checklist', updated_at: new Date().toISOString(), version: 1, archived: false },
+          201,
+        );
+      }
+      return base(input, init);
+    });
+    return { fetchImpl, posts };
+  }
+
+  it('creates a checklist with a placeholder title and opens it with the title to focus', async () => {
+    const user = userEvent.setup();
+    const { fetchImpl, posts } = libraryThatCreates();
+    mountWithRoutes(fetchImpl);
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    await user.click(screen.getByRole('button', { name: 'New note' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Checklist' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('probe')).toHaveTextContent('/notes/typed-1 {"focusTitle":true}');
+    });
+    expect(posts).toEqual([{ body: { title: 'New checklist', kind: 'checklist' }, key: expect.stringMatching(/\S/) }]);
+  });
+
+  it('offline, says it needs a connection and sends nothing', async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+    try {
+      const { fetchImpl, posts } = libraryThatCreates();
+      mountWithRoutes(fetchImpl);
+      await screen.findByRole('button', { name: /roof repair/i });
+
+      await user.click(screen.getByRole('button', { name: 'New note' }));
+      await user.click(screen.getByRole('menuitem', { name: 'Note' }));
+
+      expect(screen.getByText('New note needs a connection.')).toHaveAttribute('role', 'status');
+      expect(posts).toEqual([]);
+      expect(screen.queryByTestId('probe')).toBeNull();
+    } finally {
+      Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+    }
+  });
+
+  it('says the fixed sentence when the server refuses, and stays on Home', async () => {
+    const user = userEvent.setup();
+    // A 400, which the client does not retry; a 5xx would be retried first.
+    const { fetchImpl } = libraryThatCreates(400);
+    mountWithRoutes(fetchImpl);
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    await user.click(screen.getByRole('button', { name: 'New note' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Note' }));
+
+    expect(await screen.findByText('The note could not be created. Try again.')).toHaveAttribute('role', 'status');
+    expect(screen.queryByTestId('probe')).toBeNull();
   });
 });
