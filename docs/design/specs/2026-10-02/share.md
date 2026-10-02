@@ -102,8 +102,8 @@ Owner decision: none needed; every call above is the recommended default.
 
 `frontend/src/components/ShareButton.tsx` (new), `CopyButton.tsx`
 (`ClipboardPayload`, `copyText` writing both flavours),
-`features/notes/checklistClipboard.ts` (the serializer; the checklists
-stream owns the final one and this stream's stand-in has its shape),
+`features/notes/checklistClipboard.ts` (the checklists stream's
+serializer, through `CopyButton`'s `html` prop),
 `features/notes/NoteDrawer.tsx` (`ShareBody`, the head's drag),
 `hooks/gesture.ts` (the shared constants), `styles/shell.css`
 (`.note-share*`), `styles/notes.css` (the head as a handle, the sheet's

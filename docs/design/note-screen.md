@@ -461,8 +461,8 @@ with no neighbour, mouse, edge, the `.swipe` row closed and open, the enter
 pose and the two frames, the swallowed tap and the keyboard click let
 through), `PullToRefresh.test.tsx`, `useKeyboardInset.test.tsx`,
 `Recordings.test.tsx`, `recordings/RecordingRow.test.tsx`,
-`recordings/labels.test.ts`, `components/ShareButton.test.tsx`,
-`checklistClipboard.test.ts`; end to end, `e2e/drawer.spec.ts` (the drag
+`recordings/labels.test.ts`, `components/ShareButton.test.tsx`; end to
+end, `e2e/drawer.spec.ts` (the drag
 to close, with a real touch), `e2e/note-tabs.spec.ts` (the
 strip's count, `?tab=`, the session memory and Back; the arrow keys; the
 strip sticking under the banner; the Details sheet; the swipe cases; the
