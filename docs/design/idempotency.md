@@ -16,7 +16,8 @@ key). Without the header the request passes straight through — refusing an
 unkeyed POST would break every caller that has no idea what it is for.
 Every route that writes a note, a capture, a job or the settings is wrapped
 — the PUT, POSTs and PATCH below; device keys and push subscriptions are
-not (`routes.go`): `PUT /settings`; notes, pins, clean, regenerate, Ask;
+not (`routes.go`): `PUT /settings`; notes, pins, restore, clean, regenerate,
+Ask;
 captures and their target, retry, retranscribe and move; the three inbox
 routes; export. A ring's webhook cannot set the header and files twice on a
 retry (`inbox.md`).
@@ -36,9 +37,8 @@ retry (`inbox.md`).
    tells the SDK's own retry of a committed write from a genuine duplicate.
 3. After the handler runs, only a **settled** response is recorded
    (`settled`: below 500, not 409, not 429): a 5xx, a conflict or the spend
-   cap are answers the same request would not get tomorrow, and recording a
-   429 once pinned "Resend tomorrow" to the recorded 429 for a day (review
-   2026-09-21, T13). Anything else, and a handler panic, releases the claim
+   cap are answers the same request would not get tomorrow, and a recorded
+   429 would pin "Resend tomorrow" to the cap for a day. Anything else, and a handler panic, releases the claim
    (`AbandonIdempotent`, in a `defer`).
 4. A recorded answer is honoured for `IdemTTL` (24 h); a bare claim only for
    `IdemClaimLease` (60 s), the backstop for a Lambda killed mid-request

@@ -35,8 +35,7 @@ ETag after the append's write (ETag current): both checks pass. The save then
 writes the client's text — which predates the paragraph — with the marker
 carried, so the body says "this capture's paragraph is here" and the paragraph
 is not. `CompleteCaptureAppend` marks the capture appended; every retry finds
-the marker and does nothing. The dictation survives only in `clean.txt`
-(review 2026-09-05 round 2, S1).
+the marker and does nothing. The dictation survives only in `clean.txt`.
 
 The window is the append's write-to-refresh span, one S3 GET and PUT, one
 GetItem, one S3 GET, one PutItem: tens of milliseconds, against an autosave
@@ -50,7 +49,7 @@ has not landed.
 
 The obvious fix — bump the version before the body write — narrows the window
 and then walks the client into it. The client's response to a version-only
-conflict (#53, F14) is to re-read and, finding the same text at a newer
+conflict is to re-read and, finding the same text at a newer
 version, re-send at once. Against a pre-bump that re-send carries the current
 version, reads its ETag after the body write, and passes both checks: a rare
 race made deterministic.
@@ -68,7 +67,7 @@ race made deterministic.
    other's stamp for up to `Config.AppendStampWait` (10 s by default) before
    stamping over it, so the row's one stamp always names the write in flight;
    only a holder that died mid-append is ever stamped over. A move of a
-   recording into a note is a second stamper of that note (`moveInto`, R9-BE2):
+   recording into a note is a second stamper of that note (`moveInto`):
    it stamps the target before copying the paragraph in, clears the stamp with
    the target's refresh, and refuses the move rather than stamp over a worker's.
 2. **Clear after indexing.** `RefreshNoteIndex` (`ClearAppendStampFor`) clears
@@ -81,7 +80,7 @@ race made deterministic.
    `ErrAppendInProgress` while `appending_capture` is set and `appending_at` is
    younger than `AppendClaimLease` — checked **before** the version, because
    the stamp bumped the version and a version conflict is what sends the client
-   round the F14 rebase. Metadata-only saves go through and carry the stamp
+   round the rebase. Metadata-only saves go through and carry the stamp
    forward. A stamp past the lease was left by a worker that died between
    stamping and writing; the lease is what lets that capture be retried, and
    the same bound lets the editor save again.
@@ -110,7 +109,7 @@ is a plain 409 and the normal conflict prompt is the right outcome. The reason
 is a fixed string the frontend matches, like `type` for the spend cap. Fixture:
 `problemAppendInProgress` in `frontend/src/api/__fixtures__/responses.ts`.
 
-## The version the editor saves on (#201)
+## The version the editor saves on
 
 The editor's PATCH carries the note's `version`, and two things bump it
 without touching the words: a clean request the moment it is accepted, and
@@ -124,10 +123,9 @@ fetches the server's copy and, under the same test, rebases and resends once
 (`rebased`); and `adopt(fresh)` is that rule on demand, for a caller holding
 a copy it knows is the server's own. `useApplyTidy` (`useTidyList.ts`) is
 that caller: a child's effect runs before the editor's own sync effect has
-seen the poll that brought the tidy's answer, so writing the answer and
-saving left on the pre-clean version and came back 409 before every Tidy
-(R8-P1, the live QA of 30 September) — it adopts the poll's copy first. A
-real change on the server, words and all, still meets the version check and
+seen the poll that brought the tidy's answer, so without it the answer would
+be saved on the pre-clean version and come back 409 — it adopts the poll's
+copy first. A real change on the server, words and all, still meets the version check and
 the conflict prompt.
 
 ## What is still open

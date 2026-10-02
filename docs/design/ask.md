@@ -1,7 +1,10 @@
-# Ask: a question over your notes (D5)
+# Ask: a question over your notes
 
-Status: implemented 2026-09-05. `POST /v1/ask` and `GET /v1/ask/{askId}`;
-the worker's `ask` task; `internal/ask` for the pure parts.
+A question is answered from the person's own notes, by one model call over
+the notes a lexical ranker picks. Code: `POST /v1/ask` and
+`GET /v1/ask/{askId}` (`backend/internal/handler/ask.go`), the worker's `ask`
+task (`backend/internal/pipeline/ask.go`) and `backend/internal/ask` for the
+pure parts: the ranker, the packer and the prompt.
 
 ## Shape
 
@@ -59,7 +62,7 @@ lowercased, marker-stripped copy of its body (`search_text`, up to 32 KB).
 3. Score each note: term occurrences in the title ×4, in aliases and tags ×3,
    in `search_text` ×1 with natural-log damping (`ln(1+hits)`) so a note that
    says a word fifty times does not beat a title that says it once. A note
-   without `search_text` (pre-2026-09) scores on its snippet. Ties break on
+   without `search_text` scores on its snippet. Ties break on
    update time, newest first.
 4. Choose: the top 12 with a score; if fewer than 3 scored, add the most
    recently updated notes up to 8 in total. The fill is what answers "what did
@@ -133,7 +136,7 @@ so the worker's whole budget fits inside the client's 60-second poll. The op app
   is what a personal corpus needs; embeddings are the answer when a tenant
   outgrows the 2,000-note window, and the data model above changes nothing
   for that — the ranker is one pure function.
-- **Per-note summaries** (the backlog's original sketch). The bodies are cheap
+- **Per-note summaries.** The bodies are cheap
   to read for a dozen notes, and a summary is one more derived field to keep
   fresh on every body write.
 - **Streaming**, a conversation store, or an answer that edits notes.
