@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -159,6 +160,15 @@ func (s *DynamoStore) GetCapture(ctx context.Context, tenantID, captureID string
 			"pk": strAttr(userPK(tenantID)),
 			"sk": strAttr(captureSK(captureID)),
 		},
+		// Strongly consistent, as GetNote is: every conditional write of a
+		// capture row — PutCapture under its version, the append claim and
+		// its completion under the token — conditions on what this read
+		// returned, and a condition on a stale read fails against a row
+		// nobody else touched. The worker's own status write and its claim
+		// read, a few milliseconds apart, were enough: the eventually
+		// consistent read returned the version before the write, the claim
+		// was refused, and the capture sat in `appending` with no owner.
+		ConsistentRead: aws.Bool(true),
 	})
 	if err != nil {
 		return model.CaptureIndex{}, fmt.Errorf("dynamo get capture: %w", err)
@@ -434,6 +444,69 @@ func (s *DynamoStore) ListUnindexedCaptures(ctx context.Context, tenantID string
 	}
 	sortCapturesNewestFirst(captures)
 	return captures, nil
+}
+
+// StuckCaptures returns every capture, in every tenant, that is still moving
+// through the pipeline and was last written before `before` (model.TimeLayout,
+// so the comparison is lexicographic). It is the reconcile-stuck task's input:
+// a pending row older than service.CaptureStuckAfter has no live worker, and
+// nothing else in the system goes looking for one.
+//
+// It is the store's second Scan (ExpiredNotes is the first), read across
+// tenants for the same reason: the task is an instance job and the worker
+// knows no tenant list. The filter names the status attribute through a
+// placeholder because STATUS is a DynamoDB reserved word.
+//
+// ponytail: a filtered Scan reads the whole table every fifteen minutes to
+// return, almost always, nothing. At one tenant's few hundred rows that is a
+// few read units a run; past a handful of tenants the upgrade is a sparse
+// status GSI (gsi2pk = PENDING, gsi2sk = last_progress_at) keyed only on
+// pending rows, which this one Query would then read instead.
+func (s *DynamoStore) StuckCaptures(ctx context.Context, before string) ([]model.CaptureIndex, error) {
+	values := map[string]types.AttributeValue{":before": strAttr(before)}
+	pending := make([]string, 0, 7)
+	for i, status := range []model.CaptureStatus{
+		model.StatusUploaded, model.StatusTranscribing, model.StatusTranscribed,
+		model.StatusRouting, model.StatusCleaning, model.StatusCleaned, model.StatusAppending,
+	} {
+		ref := fmt.Sprintf(":s%d", i)
+		values[ref] = strAttr(string(status))
+		pending = append(pending, "#status = "+ref)
+	}
+	filter := "attribute_exists(capture_id) AND last_progress_at < :before AND (" +
+		strings.Join(pending, " OR ") + ")"
+
+	var start map[string]types.AttributeValue
+	out := make([]model.CaptureIndex, 0)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		res, err := s.client.Scan(ctx, &dynamodb.ScanInput{
+			TableName:                 aws.String(s.tableName),
+			FilterExpression:          aws.String(filter),
+			ExpressionAttributeNames:  map[string]string{"#status": "status"},
+			ExpressionAttributeValues: values,
+			ExclusiveStartKey:         start,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("dynamo scan stuck captures: %w", err)
+		}
+		for _, raw := range res.Items {
+			c, err := captureFromItem(raw)
+			if err != nil {
+				return nil, err
+			}
+			c.UserID = trimPrefix(readString(raw, "pk"), "USER#")
+			out = append(out, c)
+		}
+		start = res.LastEvaluatedKey
+		if len(start) == 0 {
+			break
+		}
+	}
+	sortCapturesNewestFirst(out)
+	return out, nil
 }
 
 // sortCapturesNewestFirst orders a page by creation time.

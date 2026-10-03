@@ -97,6 +97,9 @@ func (s *DynamoStore) GetDevice(ctx context.Context, tenantID, deviceID string) 
 			"pk": strAttr(userPK(tenantID)),
 			"sk": strAttr(deviceSK(deviceID)),
 		},
+		// Strongly consistent for the reason GetCapture is: a revoke is
+		// PutDevice under the version this read returned.
+		ConsistentRead: aws.Bool(true),
 	})
 	if err != nil {
 		return model.Device{}, fmt.Errorf("dynamo get device: %w", err)

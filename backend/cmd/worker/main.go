@@ -1,5 +1,6 @@
 // Command worker runs the capture pipeline, the weekly expiry sweep, the
-// daily AWS cost reading and the daily storage snapshot.
+// daily AWS cost reading, the daily storage snapshot and the quarter-hourly
+// reconcile of stuck captures.
 //
 // It is a second Lambda because the first one cannot do this work. API Gateway's
 // HTTP API caps an integration at 30 seconds and the cap is not adjustable, so a
@@ -14,9 +15,10 @@
 // {"task":"clean-note"} for a note's whole-note cleaned view, the API with
 // {"task":"ask"} for a question over the tenant's notes, the API or
 // chintanctl with {"task":"regenerate-note"} to clean a note's recordings
-// again with the current prompts, and three
-// EventBridge rules: once a week with {"task":"sweep-expired"} and once a day
-// each with {"task":"aws-cost"} and {"task":"storage-snapshot"}. There is no
+// again with the current prompts, and four
+// EventBridge rules: once a week with {"task":"sweep-expired"}, once a day
+// each with {"task":"aws-cost"} and {"task":"storage-snapshot"}, and every
+// fifteen minutes with {"task":"reconcile-stuck"}. There is no
 // queue in between. A returned error
 // makes Lambda retry the same payload twice, and an invocation that fails all
 // three attempts is written to the dead-letter queue, which is what the alarm
@@ -55,6 +57,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/purge"
 	"github.com/vppillai/chintan/backend/internal/push"
+	"github.com/vppillai/chintan/backend/internal/reconcile"
 	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/service"
 	"github.com/vppillai/chintan/backend/internal/ssmparam"
@@ -66,6 +69,7 @@ var (
 	sweeper   *purge.Sweeper
 	costs     *awscost.Collector
 	snapshots *storagesnap.Snapshotter
+	reaper    *reconcile.Reaper
 )
 
 // deps is everything build wires that setup reads from the environment,
@@ -104,7 +108,7 @@ type deps struct {
 	budgetName string
 }
 
-// build wires the pipeline and the three scheduled tasks over d into the
+// build wires the pipeline and the four scheduled tasks over d into the
 // package's handler variables. Building the tasks here rather than lazily
 // keeps a failure at init, where the deploy can see it, instead of on the
 // first sweep a week after the deploy that broke it.
@@ -158,6 +162,11 @@ func build(d deps) error {
 	// has a figure over the month and not only a figure right now.
 	if snapshots, err = storagesnap.New(d.usage, service.NewStorageService(d.store)); err != nil {
 		return fmt.Errorf("build the storage-snapshot task: %w", err)
+	}
+	// The quarter-hourly backstop for a capture an invocation left in a
+	// stage: the same pipeline, run once more, then a failed verdict.
+	if reaper, err = reconcile.New(d.store, d.objects, p.Run); err != nil {
+		return fmt.Errorf("build the reconcile-stuck task: %w", err)
 	}
 	return nil
 }
@@ -393,6 +402,11 @@ var scheduled = map[string]func(context.Context) error{
 	// The daily storage reading behind storage.byte_days on GET /v1/usage.
 	storagesnap.Task: func(ctx context.Context) error {
 		_, err := snapshots.Run(ctx)
+		return err
+	},
+	// The quarter-hourly reconcile of captures left in a pipeline stage.
+	reconcile.Task: func(ctx context.Context) error {
+		_, err := reaper.Run(ctx)
 		return err
 	},
 	// scripts/deploy.sh's worker smoke. Reaching here means setup() ran —

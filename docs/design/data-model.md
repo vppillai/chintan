@@ -91,6 +91,25 @@ condition, `appendClaimCondition` (worker.md). Tests:
 `TestStampCleanRequestTouchesOnlyTheStampAndLeavesTheVersionAlone`,
 `TestClaimCaptureAppendIsExclusive`.
 
+One rule follows from the condition: **a conditional write conditions only
+on a consistent read.** DynamoDB's default `GetItem` is eventually
+consistent and can return the row as it was before a write made
+milliseconds earlier — the writer's own write included — so a condition
+on a version or token taken from such a read fails against a row nobody
+else touched, and the caller reads a conflict that is not there. Every
+read whose value becomes a condition therefore asks for
+`ConsistentRead: true`: `GetNote` (`PutNote`, the stamps, the note
+creates), `GetCapture` (`PutCapture` under the pipeline's persist,
+`ClaimCaptureAppend`, `CompleteCaptureAppend`, `UpdateCaptureStatus`, the
+API's retry and edits) and `GetDevice` (`PutDevice`). The idempotency
+claim writes first and reads consistently only on refusal; the settings,
+ask and push rows condition on nothing a read supplied. The test double
+has a `StaleReads` knob that serves one stale default read after a write
+(`dynamofake.Fake`), and
+`TestClaimCaptureAppendClaimsUnderAStaleRead` holds the claim's read to
+the rule. A consistent read costs twice the read units of a default one,
+which at this instance's volume is nothing against a capture that stalls.
+
 ## `gsi1`: three uses of one sparse index
 
 The index is one, and its projection is treated as fixed: a live index's

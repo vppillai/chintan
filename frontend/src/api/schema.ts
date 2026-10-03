@@ -352,6 +352,13 @@ export interface CaptureWire {
    */
   last_progress_at?: string | null;
   /**
+   * When the server will first allow Retry on a capture still in the
+   * pipeline (`service.CaptureRetryAfter`: its stuck rule as an instant),
+   * so the row waits for the server's number rather than its own copy of
+   * it. Null on a finished capture.
+   */
+  retry_after?: string | null;
+  /**
    * Where the router thinks this recording belongs. Exactly one of the two is
    * ever set, and only on a `needs_target` capture: `suggested_note_id` names an
    * existing note it was confident enough to propose but not to append to

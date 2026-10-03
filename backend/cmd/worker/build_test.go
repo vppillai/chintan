@@ -31,8 +31,10 @@ func (m *memCounter) Add(_ context.Context, day string, delta int64) (int64, err
 // environment; a wiring build loses fails here rather than at the next
 // deploy's smoke.
 func TestBuildWiresTheWorkerOverFakes(t *testing.T) {
-	prevWork, prevSweeper, prevCosts, prevSnapshots := handleWork, sweeper, costs, snapshots
-	t.Cleanup(func() { handleWork, sweeper, costs, snapshots = prevWork, prevSweeper, prevCosts, prevSnapshots })
+	prevWork, prevSweeper, prevCosts, prevSnapshots, prevReaper := handleWork, sweeper, costs, snapshots, reaper
+	t.Cleanup(func() {
+		handleWork, sweeper, costs, snapshots, reaper = prevWork, prevSweeper, prevCosts, prevSnapshots, prevReaper
+	})
 
 	err := build(deps{
 		store:    dynamofake.NewStore(),
@@ -48,7 +50,7 @@ func TestBuildWiresTheWorkerOverFakes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	if handleWork == nil || sweeper == nil || costs == nil || snapshots == nil {
+	if handleWork == nil || sweeper == nil || costs == nil || snapshots == nil || reaper == nil {
 		t.Fatal("build left a handler unset")
 	}
 	for task := range scheduled {

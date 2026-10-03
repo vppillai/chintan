@@ -33,7 +33,7 @@ daily_spend_cap_micros: 2000000
 #
 # CloudWatch's always-free allowance is ten alarm-months for the whole account,
 # and the account's other projects hold alarms too. The template declares
-# thirteen (docs/ops/alarms.md), and this stack's copies would be billed at
+# fifteen (docs/ops/alarms.md), and this stack's copies would be billed at
 # $0.10 an alarm-month each to duplicate alarms that nobody is subscribed to
 # and that watch no user data.
 #

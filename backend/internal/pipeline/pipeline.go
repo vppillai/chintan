@@ -182,6 +182,10 @@ type Pipeline struct {
 	// seen is set only on the copy forCapture makes for one capture's run;
 	// nil on the shared pipeline, which remembers nothing between calls.
 	seen *seenNote
+	// drive runs the stages for one capture: forCapture(...).run in
+	// production. A field so a test can stand in a stage that returns
+	// without finishing, which no real stage is meant to do.
+	drive func(ctx context.Context, capture *model.CaptureIndex) (model.CaptureIndex, error)
 }
 
 // New validates the configuration and builds a pipeline.
@@ -230,7 +234,11 @@ func New(cfg Config) (*Pipeline, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Pipeline{cfg: cfg, now: now}, nil
+	p := &Pipeline{cfg: cfg, now: now}
+	p.drive = func(ctx context.Context, capture *model.CaptureIndex) (model.CaptureIndex, error) {
+		return p.forCapture(capture.UserID, capture.ID).run(ctx, capture)
+	}
+	return p, nil
 }
 
 // errDeliveryConceded means another delivery of the same capture owns the row,
@@ -249,6 +257,17 @@ var errDeliveryConceded = errors.New("pipeline: another delivery owns this captu
 // dead, and only the lease expiring can prove it. See append.
 var errAppendClaimHeld = errors.New("pipeline: append claim held by an unfinished attempt")
 
+// errAppendClaimLost means the append claim was refused twice while nobody
+// held it: the store is not honouring a condition that should pass. A reason
+// to fail the invocation, so the retry and the dead-letter queue see it.
+var errAppendClaimLost = errors.New("pipeline: append claim refused with nobody holding it")
+
+// errCaptureOrphaned means a run returned with no error and the capture still
+// in a pipeline stage: a stage that returned nil without finishing, failing
+// or conceding. Nothing would ever come back for such a capture — Lambda
+// reads nil as success — so the invocation is failed instead (runCapture).
+var errCaptureOrphaned = errors.New("pipeline: run ended with the capture still pending")
+
 // Run drives one capture as far as it can go and returns its final state.
 //
 // A returned error means the invocation should be retried by Lambda: it is an
@@ -258,7 +277,9 @@ var errAppendClaimHeld = errors.New("pipeline: append claim held by an unfinishe
 // invocation is not retried to fail identically twice more before the DLQ. So
 // is a capture another delivery is already carrying.
 //
-// Test seam: production enters through RunUpload and Worker.Handle.
+// Production enters through RunUpload and Worker.Handle for a capture's own
+// deliveries, and through here for the reconcile task's second run of a
+// stuck capture (internal/reconcile) and for tests.
 func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.CaptureIndex, error) {
 	return p.runCapture(ctx, CaptureRef{TenantID: tenantID, CaptureID: captureID})
 }
@@ -274,11 +295,11 @@ func (p *Pipeline) RunUpload(ctx context.Context, ref CaptureRef) (model.Capture
 
 // orphanObjectAfter is how old an S3 notification must be before a missing
 // capture row is read as "deleted" rather than "not visible yet". GetCapture
-// is an eventually consistent read and the inbox writes the row and then the
-// object back to back, so the first delivery can miss a row that exists;
-// replication lag is well under a second, and Lambda's first retry of a
-// failed invocation comes about a minute later, so thirty seconds cannot be
-// lag and is always met by the retry.
+// is a strongly consistent read now, so a row that exists is always seen;
+// the margin stays because the inbox writes the row and then the object back
+// to back, and a notification can in principle arrive before the row's write
+// returns. Lambda's first retry of a failed invocation comes about a minute
+// later, so thirty seconds is always met by the retry.
 const orphanObjectAfter = 30 * time.Second
 
 // ref.ObjectKey and ref.EventTime are set only for an S3 notification: the
@@ -333,7 +354,7 @@ func (p *Pipeline) runCapture(ctx context.Context, ref CaptureRef) (model.Captur
 		queue = started.Sub(created)
 		obs.Duration(ctx, "CaptureQueueDelay", queue, source)
 	}
-	final, err := p.forCapture(tenantID, captureID).run(ctx, &capture)
+	final, err := p.drive(ctx, &capture)
 	elapsed := p.now().Sub(started)
 
 	// This carries the count as well as the timing: CloudWatch's SampleCount on
@@ -358,9 +379,20 @@ func (p *Pipeline) runCapture(ctx context.Context, ref CaptureRef) (model.Captur
 			slog.Bool("already_finished", service.CaptureIsTerminal(final.Status)))
 		return final, nil
 	}
+	if err == nil && service.CaptureIsPending(final.Status) {
+		// A stage returned nil without finishing, failing or conceding. nil
+		// is "done" to Lambda — no retry, no dead letter, no alarm — and the
+		// row would sit in that stage until someone noticed. Fail the
+		// invocation instead, so it is retried and, if it keeps happening,
+		// dead-lettered; the counter is what the alarm reads.
+		obs.CountWithRollup(ctx, "CaptureOrphaned", map[string]string{"Status": string(final.Status)})
+		err = fmt.Errorf("pipeline: run ended with status %s and no error: %w", final.Status, errCaptureOrphaned)
+	}
 	if err != nil {
 		obs.CountWithRollup(ctx, "CaptureStageFailures", map[string]string{"Stage": string(capture.Status)})
-		log.Error("capture pipeline could not complete", slog.String("error", err.Error()))
+		log.Error("capture pipeline could not complete",
+			slog.String("status", string(final.Status)),
+			slog.String("error", err.Error()))
 		return final, err
 	}
 	// Only a run that moved the capture to its end announces it: a retry of

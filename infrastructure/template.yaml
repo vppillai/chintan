@@ -135,15 +135,16 @@ Parameters:
     AllowedValues: ['true', 'false']
     Description: >
       Create the CloudWatch alarms for this stack. The template declares
-      thirteen (twelve, plus the spend-cap alarm when a cap is set): API
+      fifteen (fourteen, plus the spend-cap alarm when a cap is set): API
       function errors, a gateway 4xx flood, a gateway 5xx count, refused inbox
       keys, the capture dead-letter queue, a rejected provider key, failed
       captures, failed push sends, a failed expiry purge, a worker message it
       could not read, a clean the API could not hand to the worker, provider
-      calls running out of time, and the spend cap. CloudWatch's always-free
-      allowance is ten alarm-months for the whole account, so the three above
-      it are billed at $0.10 an alarm-month, and a second environment's
-      copies are billed in full. Set false on an environment whose
+      calls running out of time, a capture a run left in a stage, a stuck
+      capture the reconcile task gave up on, and the spend cap. CloudWatch's
+      always-free allowance is ten alarm-months for the whole account, so the
+      five above it are billed at $0.10 an alarm-month, and a second
+      environment's copies are billed in full. Set false on an environment whose
       failures are already caught some other way; the deploy's own smoke test
       is what gates staging.
 
@@ -1326,10 +1327,12 @@ Resources:
                   - dynamodb:DeleteItem
                   - dynamodb:Query
                   - dynamodb:BatchGetItem
-                  # Scan is for exactly one caller: the weekly expiry sweep,
-                  # which has to find every note past its purge deadline in
-                  # every tenant, and the worker knows no tenant list. Nothing
-                  # in the API has it.
+                  # Scan is for two callers: the weekly expiry sweep, which
+                  # has to find every note past its purge deadline in every
+                  # tenant, and the quarter-hourly reconcile of stuck
+                  # captures, which has to find every pending row the same
+                  # way; the worker knows no tenant list. Nothing in the API
+                  # has it.
                   - dynamodb:Scan
                 # The table and its indexes; see ApiFunctionRole for why the
                 # indexes are a wildcard.
@@ -1762,6 +1765,38 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt StorageSnapshotRule.Arn
+
+  # Every fifteen minutes the worker looks for captures left in a pipeline
+  # stage (internal/reconcile): a pending row with no write for longer than
+  # the worker's own timeout has no live worker, and the only things that
+  # otherwise come back for it are Lambda's retries of a FAILED invocation
+  # and the person's Retry. An invocation that returned nil with the capture
+  # still pending gets neither, so the row sat in `appending` for hours with
+  # no alarm. The task runs the pipeline once more for each such capture
+  # (a resume is idempotent) and marks failed, with a fixed sentence, any it
+  # cannot finish; CaptureReapedAlarm reads the second count. Fifteen
+  # minutes is the stuck rule's own period (service.CaptureStuckAfter), so
+  # a capture is reaped within half an hour of stalling. The task reads the
+  # table with a filtered Scan, which is why the worker role has Scan.
+  ReconcileStuckRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub 'chintan-${InstanceName}-${Environment}-reconcile-stuck'
+      Description: Quarter-hourly resume-or-fail of captures left in a pipeline stage; invokes the worker with {"task":"reconcile-stuck"}.
+      ScheduleExpression: rate(15 minutes)
+      State: ENABLED
+      Targets:
+        - Id: worker
+          Arn: !Ref WorkerLambdaLiveAlias
+          Input: '{"task":"reconcile-stuck"}'
+
+  ReconcileStuckRuleInvokesWorkerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WorkerLambdaLiveAlias
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ReconcileStuckRule.Arn
 
   # CloudWatch Log Group
   ApiLogGroup:
@@ -2419,19 +2454,81 @@ Resources:
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-capture-failures'
       AlarmDescription: >-
-        Three or more captures failed in fifteen minutes. The transcription or
-        cleanup provider is failing or stalling; the worker log names the
-        stage and the cause, and the app's Retry re-runs each capture once the
-        provider is back.
+        A capture failed in a pipeline stage. The transcription or cleanup
+        provider failed or stalled, or an append could not take its claim;
+        the worker log names the stage and the cause, and the app's Retry
+        re-runs the capture. One is worth the e-mail: a provider fault ends
+        the capture with a Retry button and no Lambda retry, so nothing else
+        says it happened, and the counter has not fired at all in a month of
+        several hundred captures.
       Namespace: Chintan
       MetricName: CaptureStageFailures
       Statistic: Sum
       Period: 900
       EvaluationPeriods: 1
-      Threshold: 2
+      Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       # The metric does not exist until the first failure, which is the
       # healthy state.
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # A run of the pipeline that returned nil — "done" to Lambda — with the
+  # capture still in a stage. Nothing retries it, nothing dead-letters it,
+  # and the row sits where it stopped; the worker fails the invocation
+  # (pipeline.runCapture) and counts it here. The count is the direct fact:
+  # a CapturePipelineDuration{Outcome=<stage>} sample says the same thing
+  # from the side, but an alarm over four Outcome values needs four metric
+  # queries and a metric-math sum, where this is one plain alarm. One is a
+  # bug, not noise; the reconcile task is the backstop that finishes the
+  # capture either way.
+  CaptureOrphanedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-capture-orphaned'
+      AlarmDescription: >-
+        A worker run returned without finishing, failing or conceding a
+        capture, leaving it in a pipeline stage. The invocation was failed so
+        Lambda retries it; the worker log names the capture and the stage,
+        and the reconcile task resumes or fails it within half an hour.
+      Namespace: Chintan
+      MetricName: CaptureOrphaned
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # The reconcile task ran a stuck capture once more and it still did not
+  # finish, so the task marked it failed with its fixed sentence. The person
+  # sees Retry; this says it happened and the worker log says why. Read on
+  # the Outcome=failed identity alone: a capture the second run finished is
+  # the task doing its job and is listed in metrics.md, not alarmed.
+  CaptureReapedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-capture-reaped'
+      AlarmDescription: >-
+        The reconcile task found a capture stuck in a pipeline stage, ran it
+        again and it still did not finish, so it is now failed with "Filing
+        did not finish. Retry to try again." The worker log names the capture
+        and the stage; Retry in the app runs it once more.
+      Namespace: Chintan
+      MetricName: CaptureReaped
+      Dimensions:
+        - Name: Outcome
+          Value: failed
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
       AlarmActions:
         - !Ref AlarmTopic

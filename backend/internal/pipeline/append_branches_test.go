@@ -53,18 +53,20 @@ func TestAppendExactlyOnceBranches(t *testing.T) {
 		stamp *stampFaults
 		// before prepares the capture's claim.
 		before func(t *testing.T, f *appendFixture)
-		// wantErr, wantBody, wantToken and wantStampCalls are the outcome.
+		// wantErr, wantBody, wantToken and wantStampCalls are the outcome;
+		// wantConceded names the one error that is not a failure.
 		wantErr        bool
+		wantConceded   bool
 		wantBody       string
 		wantToken      string
 		wantStampCalls int
 	}{
 		{
-			name: "a claim under another token returns without writing",
+			name: "a claim under another token concedes without writing",
 			before: func(t *testing.T, f *appendFixture) {
 				claim(t, f, "someone-else")
 			},
-			wantToken: "someone-else",
+			wantErr: true, wantConceded: true, wantToken: "someone-else",
 		},
 		{
 			name: "an append an earlier attempt finished returns without writing",
@@ -115,6 +117,9 @@ func TestAppendExactlyOnceBranches(t *testing.T) {
 			_, err = f.h.pipeline.append(ctx, "user1", &capture, note, appendOptions{})
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("append error = %v, want error %v", err, tc.wantErr)
+			}
+			if errors.Is(err, errDeliveryConceded) != tc.wantConceded {
+				t.Fatalf("append error = %v, want conceded %v", err, tc.wantConceded)
 			}
 			if got := f.body(t); (tc.wantBody == "" && got != "") || (tc.wantBody != "" && strings.Count(got, tc.wantBody) != 1) {
 				t.Errorf("body = %q, want %q exactly once", got, tc.wantBody)

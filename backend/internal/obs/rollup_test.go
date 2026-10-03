@@ -66,7 +66,10 @@ func emitCalls(t *testing.T) (rolled, plain []string, names []string) {
 }
 
 // alarmedMetrics is every Chintan-namespace metric an alarm in the template
-// reads, as a set of exact names.
+// reads with no Dimensions, as a set of exact names: the alarms that read the
+// dimensionless identity only the rollup publishes. An alarm with Dimensions
+// reads one dimensioned identity, which plain Count publishes; it is held
+// instead by TestEveryEmittedMetricIsAlarmedOrListed to a metrics.md row.
 func alarmedMetrics(t *testing.T) map[string]bool {
 	t.Helper()
 	raw, err := os.ReadFile("../../../infrastructure/template.yaml")
@@ -74,7 +77,14 @@ func alarmedMetrics(t *testing.T) map[string]bool {
 		t.Fatalf("read the template: %v", err)
 	}
 	out := map[string]bool{}
-	for _, m := range regexp.MustCompile(`(?m)^\s+Namespace: Chintan\n\s+MetricName: (\w+)`).FindAllStringSubmatch(string(raw), -1) {
+	// The template writes an alarm's Dimensions, when it has them, on the
+	// line after MetricName; a Dimensions block placed anywhere else would
+	// read here as a dimensionless alarm and be held to the rollup, which
+	// is the strict direction to be wrong in.
+	for _, m := range regexp.MustCompile(`(?m)^\s+Namespace: Chintan\n\s+MetricName: (\w+)\n(\s+Dimensions:)?`).FindAllStringSubmatch(string(raw), -1) {
+		if m[2] != "" {
+			continue
+		}
 		out[m[1]] = true
 	}
 	if len(out) == 0 {

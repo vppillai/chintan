@@ -44,6 +44,10 @@ type Fake struct {
 	mu sync.Mutex
 	// items keyed by pk then sk
 	items map[string]map[string]map[string]types.AttributeValue
+	// previous holds, per key, the row each item replaced: what an
+	// eventually consistent read can still return for a moment after a
+	// write. StaleReads serves it.
+	previous map[string]map[string]map[string]types.AttributeValue
 
 	// pageSize, when non-zero, caps how many items one Query returns
 	// regardless of Limit, standing in for the 1MB response cap. It is how the
@@ -62,6 +66,15 @@ type Fake struct {
 	BatchGets []*dynamodb.BatchGetItemInput
 	Gets      int
 	Scans     int
+	// StaleReads, when non-zero, makes that many of the next GetItems that
+	// do not ask for ConsistentRead return the row as it was before its
+	// last write — DynamoDB's eventually consistent read, which can lag a
+	// write by up to a second. A consistent read is never stale. It is how a
+	// test proves a read-then-conditional-write asks for the consistent
+	// read it depends on: the production incident it reproduces was the
+	// worker's own status write followed, milliseconds later, by a default
+	// read that returned the version before it.
+	StaleReads int
 	// unprocessedEvery, when non-zero, makes every nth BatchGetItem leave its
 	// last key unprocessed, standing in for the 16 MB response cap so the
 	// tests prove the store asks again.
@@ -71,7 +84,8 @@ type Fake struct {
 // New returns an empty table with gsi1 projected as the template deploys it.
 func New() *Fake {
 	return &Fake{
-		items: make(map[string]map[string]map[string]types.AttributeValue),
+		items:    make(map[string]map[string]map[string]types.AttributeValue),
+		previous: make(map[string]map[string]map[string]types.AttributeValue),
 		projected: map[string]map[string]bool{
 			"gsi1": IndexNonKeyAttributes("gsi1"),
 		},
@@ -151,6 +165,12 @@ func (f *Fake) put(item map[string]types.AttributeValue) {
 	if f.items[pk] == nil {
 		f.items[pk] = make(map[string]map[string]types.AttributeValue)
 	}
+	if prior := f.items[pk][sk]; prior != nil {
+		if f.previous[pk] == nil {
+			f.previous[pk] = make(map[string]map[string]types.AttributeValue)
+		}
+		f.previous[pk][sk] = prior
+	}
 	f.items[pk][sk] = item
 }
 
@@ -198,7 +218,14 @@ func (f *Fake) GetItem(ctx context.Context, in *dynamodb.GetItemInput, _ ...func
 		return nil, err
 	}
 	f.Gets++
-	item := f.items[Scalar(in.Key["pk"])][Scalar(in.Key["sk"])]
+	pk, sk := Scalar(in.Key["pk"]), Scalar(in.Key["sk"])
+	item := f.items[pk][sk]
+	if f.StaleReads > 0 && !aws.ToBool(in.ConsistentRead) {
+		f.StaleReads--
+		if prior := f.previous[pk][sk]; prior != nil {
+			item = prior
+		}
+	}
 	if item == nil {
 		return &dynamodb.GetItemOutput{}, nil
 	}
@@ -217,7 +244,7 @@ func (f *Fake) PutItem(ctx context.Context, in *dynamodb.PutItemInput, _ ...func
 	pk, sk := Scalar(in.Item["pk"]), Scalar(in.Item["sk"])
 	existing := f.items[pk][sk]
 	if in.ConditionExpression != nil {
-		ok, err := evalExpr(*in.ConditionExpression, existing, in.ExpressionAttributeValues)
+		ok, err := evalExpr(*in.ConditionExpression, existing, in.ExpressionAttributeValues, in.ExpressionAttributeNames)
 		if err != nil {
 			return nil, err
 		}
@@ -245,7 +272,7 @@ func (f *Fake) UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInput, _ .
 	pk, sk := Scalar(in.Key["pk"]), Scalar(in.Key["sk"])
 	existing := f.items[pk][sk]
 	if in.ConditionExpression != nil {
-		ok, err := evalExpr(*in.ConditionExpression, existing, in.ExpressionAttributeValues)
+		ok, err := evalExpr(*in.ConditionExpression, existing, in.ExpressionAttributeValues, in.ExpressionAttributeNames)
 		if err != nil {
 			return nil, err
 		}
@@ -333,7 +360,7 @@ func (f *Fake) DeleteItem(ctx context.Context, in *dynamodb.DeleteItemInput, _ .
 	pk, sk := Scalar(in.Key["pk"]), Scalar(in.Key["sk"])
 	existing := f.items[pk][sk]
 	if in.ConditionExpression != nil {
-		ok, err := evalExpr(*in.ConditionExpression, existing, in.ExpressionAttributeValues)
+		ok, err := evalExpr(*in.ConditionExpression, existing, in.ExpressionAttributeValues, in.ExpressionAttributeNames)
 		if err != nil {
 			return nil, err
 		}
@@ -405,7 +432,7 @@ func (f *Fake) Query(ctx context.Context, in *dynamodb.QueryInput, _ ...func(*dy
 	out := &dynamodb.QueryOutput{}
 	for _, item := range candidates[:evaluate] {
 		if in.FilterExpression != nil {
-			ok, err := evalExpr(*in.FilterExpression, item, in.ExpressionAttributeValues)
+			ok, err := evalExpr(*in.FilterExpression, item, in.ExpressionAttributeValues, in.ExpressionAttributeNames)
 			if err != nil {
 				return nil, err
 			}
@@ -479,7 +506,7 @@ func (f *Fake) Scan(ctx context.Context, in *dynamodb.ScanInput, _ ...func(*dyna
 	out := &dynamodb.ScanOutput{}
 	for _, item := range candidates[:evaluate] {
 		if in.FilterExpression != nil {
-			ok, err := evalExpr(*in.FilterExpression, item, in.ExpressionAttributeValues)
+			ok, err := evalExpr(*in.FilterExpression, item, in.ExpressionAttributeValues, in.ExpressionAttributeNames)
 			if err != nil {
 				return nil, err
 			}
@@ -558,9 +585,11 @@ func cloneItem(item map[string]types.AttributeValue) map[string]types.AttributeV
 
 // evalExpr evaluates the subset of DynamoDB condition/filter syntax the store
 // emits: AND, OR, parentheses, attribute_exists, attribute_not_exists,
-// begins_with, and the comparisons = <> < >.
-func evalExpr(expr string, item map[string]types.AttributeValue, values map[string]types.AttributeValue) (bool, error) {
-	p := &exprParser{tokens: tokenizeExpr(expr), item: item, values: values}
+// begins_with, and the comparisons = <> < >. An attribute written as #name
+// is resolved through names, the way a reserved word such as `status` has
+// to be.
+func evalExpr(expr string, item map[string]types.AttributeValue, values map[string]types.AttributeValue, names map[string]string) (bool, error) {
+	p := &exprParser{tokens: tokenizeExpr(expr), item: item, values: values, names: names}
 	got, err := p.parseOr()
 	if err != nil {
 		return false, err
@@ -600,6 +629,20 @@ type exprParser struct {
 	pos    int
 	item   map[string]types.AttributeValue
 	values map[string]types.AttributeValue
+	names  map[string]string
+}
+
+// attr resolves an attribute token: a #placeholder through the expression's
+// names, which the store must have defined, and anything else as itself.
+func (p *exprParser) attr(tok string) string {
+	if !strings.HasPrefix(tok, "#") {
+		return tok
+	}
+	name, ok := p.names[tok]
+	if !ok {
+		panic("fake dynamo: expression names " + tok + " but ExpressionAttributeNames does not define it")
+	}
+	return name
 }
 
 func (p *exprParser) peek() string {
@@ -666,7 +709,7 @@ func (p *exprParser) parseTerm() (bool, error) {
 		if p.next() != "(" {
 			return false, fmt.Errorf("Fake: %s expects (", tok)
 		}
-		name := p.next()
+		name := p.attr(p.next())
 		var arg string
 		if p.peek() == "," {
 			p.next()
@@ -692,7 +735,7 @@ func (p *exprParser) parseTerm() (bool, error) {
 	if !ok {
 		return false, fmt.Errorf("Fake: unknown value %q", valRef)
 	}
-	have, present := p.item[tok]
+	have, present := p.item[p.attr(tok)]
 	if !present {
 		// A missing attribute never satisfies a comparison.
 		return false, nil

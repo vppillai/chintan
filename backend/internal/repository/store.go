@@ -282,6 +282,12 @@ type Store interface {
 	// that must find every capture of a note or leave audio behind; nothing on
 	// a request path should call it.
 	ListUnindexedCaptures(ctx context.Context, tenantID string) ([]model.CaptureIndex, error)
+	// StuckCaptures returns every capture, in every tenant, whose status is
+	// still a pipeline stage and whose last write is older than `before`
+	// (model.TimeLayout). It is the reconcile-stuck task's input and reads
+	// the base table whole, like ExpiredNotes; nothing on a request path
+	// should call it.
+	StuckCaptures(ctx context.Context, before string) ([]model.CaptureIndex, error)
 	UpdateCaptureStatus(ctx context.Context, tenantID, captureID string, status model.CaptureStatus, errMsg string) error
 	DeleteCapture(ctx context.Context, tenantID, captureID string) error
 

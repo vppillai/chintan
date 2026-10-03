@@ -7,7 +7,7 @@ runs on a schedule. Code: `backend/cmd/worker/main.go` (the entry point,
 the API sends work), the function and its wiring in
 `infrastructure/template.yaml` (`WorkerLambdaFunction`,
 `WorkerLambdaLiveAlias`, `WorkerLambdaEventInvokeConfig`, `CaptureDLQ`, the
-three `AWS::Events::Rule`s).
+four `AWS::Events::Rule`s).
 
 ## Why a second function
 
@@ -38,7 +38,7 @@ There is no queue in front of the worker. Three sources, one handler:
   anything else is an error to the caller. The pipeline uses the same
   invoker to hand an auto-clean to a fresh invocation after an append
   (`CleanInvoker`, `NoteCleanInvokeFailures` when that hand-off fails).
-- **EventBridge**, three rules with a constant JSON input (below).
+- **EventBridge**, four rules with a constant JSON input (below).
 
 The payload is the `Invocation` envelope: `tenant_id`, `capture_id`,
 `reason`, `task`, `note_id`, `mode`, `requested_at`, `ask_id`,
@@ -64,6 +64,7 @@ any other event source is logged and dropped
 | `sweep-expired` | `ExpirySweepRule` | `rate(7 days)` | `purge.Sweeper.Sweep` (retention.md) |
 | `aws-cost` | `AwsCostRule` | `rate(1 day)` | `awscost.Collector.Run` (usage-accounting.md) |
 | `storage-snapshot` | `StorageSnapshotRule` | `cron(0 3 * * ? *)` | `storagesnap.Snapshotter.Run` (usage-accounting.md) |
+| `reconcile-stuck` | `ReconcileStuckRule` | `rate(15 minutes)` | `reconcile.Reaper.Run` (below) |
 | `smoke` | `scripts/deploy.sh` | each deploy | a no-op |
 
 The storage snapshot has a fixed hour because a `rate` schedule fires at
@@ -71,7 +72,7 @@ the minute its rule is created, and a reading taken near midnight UTC
 would credit a day's storage to its neighbour from one run to the next;
 03:00 is far from the boundary and from the cost reading. Each scheduled
 task's name is a constant in its package (`purge.Task`, `awscost.Task`,
-`storagesnap.Task`) and `TestHandlerDispatchesEveryTaskConstant` fails
+`storagesnap.Task`, `reconcile.Task`) and `TestHandlerDispatchesEveryTaskConstant` fails
 when the map in `cmd/worker` misses one. A task nobody knows is refused
 with `ErrUnknownTask` rather than dropped, so a deploy out of step with its
 sender is retried and dead-lettered where a person sees it
@@ -136,6 +137,54 @@ a live holder can write, which is the function's 900 s
 append-vs-autosave.md owns the body write the append shares with the
 editor.
 
+Every read a conditional write of the capture row rests on is strongly
+consistent (`GetCapture`, data-model.md): the claim conditions on the
+version it just read, and a default read can return the version before
+the worker's own status write, so the claim was refused against a row
+nobody else had touched. A claim refused while nobody holds it is asked
+once more; refused again it fails the invocation (`errAppendClaimLost`,
+`TestAClaimRefusedWithNobodyHoldingItIsRetriedOnce`,
+`TestAClaimRefusedTwiceWithNobodyHoldingItFailsTheInvocation`). A claim
+another token holds is conceded (`errDeliveryConceded`), not returned as
+done.
+
+## The two backstops for a capture left in a stage
+
+`nil` from `Run` is "done" to Lambda, so a stage that returned `nil` with
+the capture still in a pipeline status would leave it there: no retry, no
+dead letter, no alarm, and `CapturePipelineDuration{Outcome=<stage>}` the
+only trace. Two things stand between a capture and that.
+
+- **The guard.** `runCapture` fails any run that ends with `err == nil`
+  and `service.CaptureIsPending(final.Status)`: an `Error` log line with
+  `capture_id` and `status`, `CaptureOrphaned{Status}` (the
+  `capture-orphaned` alarm) and `CaptureStageFailures{Stage}`, and an
+  error back to Lambda so the invocation is retried
+  (`TestARunThatLeavesTheCapturePendingFailsTheInvocation`).
+- **The reaper.** `ReconcileStuckRule` invokes the worker every fifteen
+  minutes with `{"task":"reconcile-stuck"}`; `reconcile.Reaper.Run`
+  (`backend/internal/reconcile`) asks the store for every pending capture
+  last written before `service.CaptureStuckAfter` ago
+  (`repository.StuckCaptures`, a filtered Scan over the table, like the
+  sweep's), skips any inside its append lease (`service.CaptureStuck`) and
+  any `uploaded` row whose recording has not landed (`Objects.Exists`; an
+  upload in flight is not a stuck capture, and the server's Retry refuses
+  it on the same rule), leaves alone one a concurrent delivery owns (the
+  run returns nil with a pending status only by conceding),
+  runs the pipeline once for each — a resume is idempotent: every stage's
+  artefact is on the row, and the append has its claim and its marker —
+  and marks failed, under the row's version and only while it is still
+  pending, any the run left pending, with the fixed sentence `Filing did
+  not finish. Retry to try again.` (`reconcile.Verdict`).
+  `CaptureReaped{Outcome=finished|failed}` counts the two outcomes; the
+  `capture-reaped` alarm reads `failed`
+  (`TestRunFinishesOrFailsEveryStuckCapture`,
+  `TestRunDoesNotFailACaptureSomeoneElseMoved`,
+  `TestRunLeavesACaptureAConcurrentDeliveryOwns`,
+  `TestRunLeavesAnUploadedCaptureWhoseRecordingHasNotLanded`). A capture is therefore
+  either finished or wearing a Retry button within half an hour of
+  stalling, whatever stalled it.
+
 ## The spend cap
 
 Every paid call the worker makes goes through `breaker.Do`, which reserves
@@ -150,7 +199,8 @@ same sentence. usage-accounting.md owns the counter and the cap.
 
 `CaptureStageEntered`, `DuplicateDelivery`, `CaptureSpendCapped`,
 `WorkerMessagesDiscarded` (an unparseable payload, logged and let go
-rather than retried into the queue), `CaptureStageFailures`, the provider
+rather than retried into the queue), `CaptureStageFailures`,
+`CaptureOrphaned`, `CaptureReaped`, the provider
 and duration metrics, and the per-task counters: every name, its
 dimensions and who reads it are in `docs/ops/metrics.md`. The worker also
 sends one push per finished capture (push.md).

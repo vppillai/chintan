@@ -348,9 +348,22 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		Source: model.DeviceSource("dev_fixture"), TargetSource: model.TargetSourceClient,
 	})
 
+	// A capture the worker is still carrying: `retry_after` is the one
+	// member only a pending capture has, and the filing row's wait is read
+	// from it rather than from a copy of the server's thresholds.
+	inFlight := h.putCapture(t, model.CaptureIndex{
+		ID: "c_in_flight", UserID: contractUser, NoteID: note.ID,
+		Status: model.StatusTranscribing, CreatedAt: model.Now(), LastProgressAt: model.Now(),
+		AudioKey: "tenants/user1/captures/c_in_flight/audio.webm",
+	})
+
 	add("capturesPage", "Page<CaptureWire>",
 		"GET /v1/captures → 200. Includes the unrouted needs_target capture the progress card has to show.",
 		h.do(t, http.MethodGet, "/v1/captures", contractUser, nil))
+	add("captureInFlight", "CaptureWire",
+		"GET /v1/captures/{captureId} → 200 for a capture still in the pipeline. `retry_after` is when the server will first allow Retry; "+
+			"it is null once the capture is finished.",
+		h.do(t, http.MethodGet, "/v1/captures/"+inFlight.ID, contractUser, nil))
 	add("captureSuggestedNote", "CaptureWire",
 		"GET /v1/captures/{captureId} → 200 for a needs_target capture the router matched to an existing note. "+
 			"`suggested_note_id` is what the \"Add to <note>\" prompt is built from.",
@@ -709,6 +722,7 @@ var volatileStrings = map[string]string{
 	"expires_at":       contractTime,
 	"appended_at":      contractTime,
 	"last_progress_at": contractTime,
+	"retry_after":      contractTime,
 	"purge_after":      contractTime,
 	"generated_at":     contractTime,
 	"last_used_at":     contractTime,
