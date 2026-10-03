@@ -611,14 +611,18 @@ func replaceChecklistItems(body, captureID string, previous []string, text strin
 	}
 	// The place the block goes back is held by a line that is not an item,
 	// so the merge's insertions above it cannot move it and a parent's block
-	// ends at it, as it ends at a marker. It is where the first taken line
-	// stood or, when every old line stayed as a shared parent, right after
-	// the first one's block (DB6-7), so a new item is not lost for want of a
+	// ends at it, as it ends at a marker. It is where the first OLD taken
+	// line stood — a line taken for a new item's words alone is not where
+	// the recording's items were, and a sub-item taken that way under a
+	// parent released above would otherwise put the place inside that
+	// parent's block and the block flat above the recording's own marker —
+	// or, when every old line stayed as a shared parent, right after the
+	// first one's block (DB6-7), so a new item is not lost for want of a
 	// place: regenerating Costco › Meat to Costco › Meat, Rice when a line
 	// typed under Meat keeps both of them still writes Rice.
 	const placeholder = "\x00"
 	after := -1
-	if !slices.Contains(take, true) {
+	if !anyTakenOld(take, old) {
 		after = shared + 1
 		for after < len(lines) && depth[after] > depth[shared] {
 			after++
@@ -626,6 +630,7 @@ func replaceChecklistItems(body, captureID string, previous []string, text strin
 	}
 	kept := make([]string, 0, len(lines)+1)
 	var removed []string
+	placed := false
 	for i, line := range lines {
 		if i == after {
 			kept = append(kept, placeholder)
@@ -634,8 +639,9 @@ func replaceChecklistItems(body, captureID string, previous []string, text strin
 			kept = append(kept, line)
 			continue
 		}
-		if removed == nil {
+		if old[i] && !placed {
 			kept = append(kept, placeholder)
+			placed = true
 		}
 		removed = append(removed, line)
 	}
@@ -859,6 +865,17 @@ func ownItems(paragraph, rest string, items []cleanup.Item) []string {
 		}
 	}
 	return nil
+}
+
+// anyTakenOld reports whether a line of the recording's previous items is
+// coming out, as opposed to every one of them staying as a shared parent.
+func anyTakenOld(take, old []bool) bool {
+	for i := range take {
+		if take[i] && old[i] {
+			return true
+		}
+	}
+	return false
 }
 
 // parentOf is the index of the item line that line i stands under — the

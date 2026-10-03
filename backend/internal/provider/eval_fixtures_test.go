@@ -53,7 +53,7 @@ func TestEvalFixturesParse(t *testing.T) {
 	}
 
 	// Every case has to assert something, or it only spends money.
-	inputs := map[string]bool{"transcript": true, "language": true, "raw": true, "body": true, "list_title": true, "question": true, "_note": true}
+	inputs := map[string]bool{"transcript": true, "language": true, "raw": true, "body": true, "list_title": true, "question": true, "_note": true, "flaky": true}
 	raw, err := os.ReadFile(evalFixturesPath)
 	if err != nil {
 		t.Fatal(err)
@@ -123,10 +123,15 @@ type evalFixtures struct {
 	} `json:"ask"`
 }
 
+// flaky, on a route, items or tasks case, says the live eval saw the model
+// answer it differently across runs: the replay logs the recorded reply's
+// outcome and skips the expectation, since whichever reply was kept is one
+// of several the model gives; the live eval asserts it as every other case.
 type routeCase struct {
 	Transcript       string   `json:"transcript"`
 	Language         string   `json:"language"`
 	Comment          string   `json:"_note"`
+	Flaky            bool     `json:"flaky"`
 	Action           string   `json:"action"`
 	ActionIn         []string `json:"action_in"`
 	Dest             string   `json:"note"`
@@ -159,6 +164,7 @@ type itemsCase struct {
 	Transcript  string   `json:"transcript"`
 	Language    string   `json:"language"`
 	Comment     string   `json:"_note"`
+	Flaky       bool     `json:"flaky"`
 	Want        []string `json:"want"`
 	Count       *int     `json:"count"`
 	CountIn     []int    `json:"count_in"`
@@ -175,6 +181,7 @@ type tasksCase struct {
 	Body          string   `json:"body"`
 	ListTitle     string   `json:"list_title"`
 	Comment       string   `json:"_note"`
+	Flaky         bool     `json:"flaky"`
 	Want          []string `json:"want"`
 	WantUnchanged bool     `json:"want_unchanged"`
 	Count         *int     `json:"count"`

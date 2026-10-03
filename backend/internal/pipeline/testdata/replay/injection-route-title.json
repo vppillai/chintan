@@ -1,0 +1,9 @@
+{
+  "_comment": "Hand-written, not eval data: a routing reply steered to a note whose title is written as an instruction, at the model's unsure confidence; decide() parks an unsure append at needs_target instead of filing it.",
+  "model": "MiniMax-M3",
+  "reply": "{\"action\":\"append\",\"note\":2,\"confidence\":0.5,\"instruction_spans\":[]}",
+  "usage": {
+    "InputTokens": 500,
+    "OutputTokens": 40
+  }
+}
