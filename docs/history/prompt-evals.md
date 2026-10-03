@@ -18,6 +18,8 @@ run is the baseline the next prompt change is compared against: a case below
 | 2026-09-29 | Re-check after #170 (the "a name is one to five words, never a whole sentence" Titles sentence and a ninth example, R6-RT-8) | gate rows | row 30 ("The dog is having his dinner") 1/3 → 3/3; row 32 ("Groceries list milk eggs and protein powder") 3/3 → 1/3 | the prompt commit was reverted under the pre-agreed rule (any regression of a gate row reverts the prompt alone); `docs/backlog.md` R6-RT-8 |
 | 2026-10-01 | `TestLiveEval/route -count=3` with the instance key, the worker's default model (PR10-4, D14) | 32 cases, 96 calls, 185 s | 24 of 32 cases 3/3 | per-case table below; two failures are a dropped payload, not prompt shape (route/19, route/31 return empty `content` on an append to a listed list) |
 | 2026-10-01 | `TestLiveEval/(items\|tasks) -count=3`, same key and model | 17 + 9 cases, 78 calls, 106 s | items 14 of 17 3/3; tasks 5 of 9 3/3 | per-case table below; tasks/06 is refused every run by `SplitOutput`'s coverage guard, not by the model's shape. The tenth tasks case (four levels, PR10-11) was added after this run and has no result yet |
+| 2026-10-02 | `TestLiveEval/tasks -count=3` with the instance key, the worker's default model, after the levels fix (PR12-7's gate) | 11 cases, 33 calls, 42 s | tasks 10 of 11 cases 3/3 | per-case table below; tasks/06 is still the coverage guard's refusal; case 11 (four levels) 3/3 with the levels kept by the model itself |
+| 2026-10-02 | `TestLiveNoiseProbe` against Groq `whisper-large-v3-turbo` (PR12-20's gate): twelve generated clips | 12 clips, 3.4 s | noise above the bound, caught by the other rules; English −0.08…−0.09; two synthetic non-English clips under −1.0 | raw table below; the bound stays at −1.0 (PR12-27 holds the decision) |
 
 ## Per-case outcomes, 2026-10-01
 
@@ -45,6 +47,57 @@ route/19 and route/31 return an empty `content` on an append to a listed
 list, so what the worker files there is whatever `decide()` and the items
 prompt make of the raw transcript; the routing replay, once recorded, would
 show the outcome.
+
+## Per-case outcomes, 2026-10-02 (tasks)
+
+Every case not listed passed 3/3.
+
+| Case | Body | Runs | What the model did |
+|---|---|---|---|
+| tasks/06 | `- [ ] Milk` / `- [x] milk` / `- [ ] Eggs` | 0/3 | `{"items":[{"text":"Milk","done":true},{"text":"Eggs"}]}` every run; `SplitOutput`'s coverage guard refused it with `an open item was lost` |
+| tasks/08 | "book flights and hotel for Lisbon and tell Anu the dates" | 3/3 | twice "Tell Anu the dates" nested under "Book flights and hotel for Lisbon", once flat beside it; both shapes are within the case's count range of 2–3 |
+| tasks/11 | Party › Costco › Plates › Paper ones [x], Costco › Cups, Party › Candles, Milk, "buy eggs and call the plumber" | 3/3 | identical all three runs: `Party{Costco{Plates{Paper ones ✓}, Cups}, Candles}, Milk, Eggs, Call the plumber`, `dropped=0`; the model kept all four levels, so `restoreLevels` had nothing to put back and `SplitOutput` rendered the four-level list |
+
+## Noise probe, 2026-10-02
+
+`TestLiveNoiseProbe` (`backend/internal/provider/live_stt_probe_test.go`) on
+orb against Groq's `whisper-large-v3-turbo`, the clips in `orb:~/temp/noise/`,
+all webm/opus 32 kbps mono 48 kHz. Noise clips are ffmpeg's `anoisesrc`; the
+voices are espeak-ng (`-v en`, `-v ml`), so the texts are nobody's speech and
+are printed. Every segment on every clip reported `no_speech_prob` 0.000. RMS
+peak is ffmpeg's `astats` figure converted to the app's `peak` scale
+(10^(dB/20)); `routing.QuietPeakRMS` is 0.04 and `routing.LogprobThreshold`
+−1.0.
+
+| Clip | What it is | Length | RMS peak | Transcript (language) | `NoSpeech` | `avg_logprob` | `compression_ratio` |
+|---|---|---|---|---|---|---|---|
+| control | espeak-ng English, full level | 3.4 s | 0.253 | "Remind me to call the plumber about the kitchen tap on Thursday." (English) | false | −0.084 | 0.956 |
+| en_soft20 | espeak-ng English, −20 dB | 4.3 s | 0.022 | "Remind me to call the plumber tomorrow morning about the kitchen tap." (English) | false | −0.092 | 1.000 |
+| en_soft | espeak-ng English, −30 dB | 4.3 s | 0.007 | same, word for word (English) | false | −0.083 | 1.000 |
+| manglish1 | English voice reading "Naale kadayil ninnu paalum muttayum vaangananam, marakkaruthu." | 4.5 s | 0.230 | "I'll call you the name of the Lord." (English) | **true** | **−1.617** | 0.923 |
+| manglish2 | English voice reading "Vaikunneram aaru manikku ammaye vilikkan ormippikkanam." | 3.5 s | 0.218 | "VEIKENARAMARU MANIKU AME VILIKEN OR MIPIKENARM" (English) | false | −0.588 | 0.959 |
+| ml1 | espeak-ng Malayalam: tomorrow morning buy milk, eggs, rice and vegetables from the shop | 6.5 s | 0.201 | "Nale ravi lecada il nin palum mutta iumari um paccia, arium vanyanam." (English) | false | −0.809 | 1.045 |
+| ml2 | espeak-ng Malayalam: remind me to call mother at six in the evening, don't forget | 6.9 s | 0.200 | "Why don't we marry, man? We have a new one. I'm a new one." (English; three segments, each −0.335) | false | −0.335 | 1.054 |
+| ml3 | espeak-ng Malayalam: will it rain this evening, should I take an umbrella? | 5.7 s | 0.184 | "Inveigit marapeiumo, pura, un po' d'un bolto da edu, no?" (Italian) | false | −0.663 | 0.905 |
+| ml_soft | ml1 at −30 dB | 6.5 s | 0.006 | "I will not be able to get the water out of the water." (English) | **true** | **−1.828** | 1.000 |
+| pink | pink noise | 6.0 s | 0.053 | " ." (English) | true (no letter or digit) | −0.898 | 0.200 |
+| room | room tone | 6.0 s | 0.007 | " ." (English) | true (no letter or digit) | −0.509 | 0.200 |
+| fan | fan | 7.0 s | 0.075 | "Thank you." (English) | true (phrase list) | −0.679 | 0.579 |
+
+What the table says against the two bounds. Generated noise never reaches
+−1.0; it is the no-letter rule and the phrase list that end it, and the three
+production noise filings at −1.35, −2.08 and −2.56 came from a phone, which
+`anoisesrc` does not reproduce. English holds at −0.08 to −0.09 at every
+level down to −30 dB. Whisper never placed espeak-ng's Malayalam as Malayalam,
+so those rows measure an unintelligible synthetic voice, not a speaker: three
+of four sit above the bound (closest −0.81), and the soft one and one
+romanised clip fall under it and would be filed as "Nothing heard" until
+Transcribe anyway. `compression_ratio` is 0.9 to 1.05 on speech and on noise
+heard as words alike. On peak: the −20 dB and −30 dB voices measure 0.022 and
+0.007, under the 0.04 floor, while pink noise (0.053) and the fan (0.075)
+pass it — as files; a phone microphone's automatic gain is what the floor is
+set against, and the `peak` field on the `transcribed capture` lines is the
+measurement that decides it.
 
 ## Measured sizes, production, 2026-09-20 to 2026-09-26
 
