@@ -13,9 +13,11 @@ import {
   canNest,
   clampLevels,
   insertItemAfter,
+  mergeItems,
   openBlock,
   parentOf,
   parseChecklist,
+  pasteItems,
   planLevel,
   planMove,
   previewDepths,
@@ -23,6 +25,7 @@ import {
   removeItem,
   setItemText,
   shiftLevel,
+  splitItem,
   toggleItem,
   uncheckAll,
   type ChecklistItem,
@@ -110,13 +113,22 @@ import { useTidying } from './useTidyList.ts';
  * own autosave, conflict prompt and offline queue. Nothing here knows about
  * the server, or whose body this is.
  *
- * Keyboard: Enter in an item starts a new one under it — a parent's first
- * sub-item when it has any (`insertItemAfter`); Backspace in an emptied item
- * removes it and steps back to the one above, and a removed parent's
- * sub-items come up a level (`removeItem`); Enter in the add row adds and
- * stays there for the next. A move that lands a row on a slot of another
- * level changes its level (`moveItem`), and the status line says so, since
- * neither the menu nor the arrow keys offered a choice.
+ * Keyboard: Enter at the end of an item starts a new one under it — a
+ * parent's first sub-item when it has any (`insertItemAfter`) — and Enter
+ * inside its words splits it there, the rest starting a new item at the
+ * same level (`splitItem`); Backspace with the caret at the start joins the
+ * item onto the open row shown above it, caret at the join, the row above
+ * keeping its level and a joined parent's sub-items coming up a level
+ * (`mergeItems`; an emptied item goes the same way, which is how it is
+ * removed); a paste of several lines becomes several items at the row's
+ * level, each line read by the body's line rule (`pasteItems`); Alt+↑/↓
+ * move the row a slot from its field (`planMove`, as the grip's arrows and
+ * menu). Each is an edit, not an act: one body write, no Undo toast, and the
+ * status region says what cannot be seen — a join, a paste's count, a move
+ * refused or one that changed the level. Enter in the add row adds and stays
+ * there for the next. A move that lands a row on a slot of another level
+ * changes its level (`moveItem`), and the status line says so, since neither
+ * the menu nor the arrow keys offered a choice.
  */
 export function ChecklistEditor({
   noteId,
@@ -345,21 +357,76 @@ export function ChecklistEditor({
   /**
    * Puts the open item at body index `index` — with its sub-items — in the
    * slot of the open item at `position` (`planMove`): one body write, saved
-   * at once. `focusGrip` keeps the keyboard on the moved row after the render.
+   * at once. `focus` keeps the keyboard on the moved row after the render:
+   * its grip (the arrows there, the menu) or its field (Alt+↑/↓), which is a
+   * fresh element keyed by the row's new index, caret where it was; null
+   * after a drag, which took the pointer with it.
    */
-  const moveOpen = (index: number, position: number, focusGrip: boolean): void => {
+  const moveOpen = (index: number, position: number, focus: 'grip' | 'field' | null): void => {
     const move = planMove(body, items, open, index, position);
     if ('refusal' in move) {
       // The arrow keys at either end: said, since nothing moved and nothing
       // else says why (the menu disables its items there).
-      if (focusGrip) announce(move.refusal);
+      if (focus !== null) announce(move.refusal);
       return;
     }
-    write(move.next);
-    if (focusGrip) focusGripAfterWrite.current = move.gripAt;
+    if (focus === 'field') {
+      const field = inputs.current.get(index);
+      caretAfterWrite.current = field ? [field.selectionStart, field.selectionEnd] : null;
+      // The write ends any hold, so the open rows after it are by `done` alone.
+      const landed = parseChecklist(move.next).flatMap((item, i) => (item.done ? [] : [i]))[move.gripAt];
+      write(move.next, landed);
+    } else {
+      write(move.next);
+      if (focus === 'grip') focusGripAfterWrite.current = move.gripAt;
+    }
     // The slot's level is the row's now; said, because no path here asked.
     if (move.said !== null) announce(move.said);
     save();
+  };
+
+  /**
+   * Backspace at the start of the open item at `index`: its words join the
+   * open row shown above it, caret at the join (`mergeItems`); an emptied
+   * item goes the same way, which is how one is removed. The first row has
+   * nothing above: emptied, it goes and focus steps to the add row; with
+   * words, the key is left alone.
+   */
+  const mergeUp = (index: number, item: ChecklistItem): void => {
+    const at = open.findIndex((entry) => entry.index === index);
+    const previous = open[at - 1];
+    if (!previous) {
+      if (item.text === '') remove(index, ADD_ROW);
+      return;
+    }
+    const { next, caret } = mergeItems(body, index, previous.index);
+    caretAfterWrite.current = [caret, caret];
+    write(next, previous.index);
+    // Nothing is said for an emptied line: the focus stepping back is the signal.
+    if (item.text !== '') announce('Joined with the item above');
+    save();
+  };
+
+  /** Enter in the open item at `index` with the field's selection: a new item at the end, a split elsewhere. */
+  const enterAt = (index: number, item: ChecklistItem, start: number, end: number): void => {
+    if (start === end && start === item.text.length) {
+      // The new item sits right under this one, in the body and on screen.
+      write(insertItemAfter(body, index), index + 1);
+      return;
+    }
+    caretAfterWrite.current = [0, 0];
+    write(splitItem(body, index, start, end), index + 1);
+  };
+
+  /** Several pasted lines into the open item at `index`: items at its level (`pasteItems`); false when the browser should paste. */
+  const pasteInto = (index: number, text: string, start: number, end: number): boolean => {
+    const plan = pasteItems(body, index, start, end, text);
+    if (!plan) return false;
+    caretAfterWrite.current = [plan.caret, plan.caret];
+    write(plan.next, plan.focus);
+    const added = plan.focus - index;
+    announce(`${String(added)} item${added === 1 ? '' : 's'} added`);
+    return true;
   };
 
   // The drag's ids are body indices, as strings; the order shown while a
@@ -375,7 +442,7 @@ export function ChecklistEditor({
       // rather than past the next row too as the menu's Move down steps.
       const position = next.indexOf(moved);
       if (openBlock(items, open, Number(moved)).includes(position)) return;
-      moveOpen(Number(moved), position, false);
+      moveOpen(Number(moved), position, null);
     },
     // A tap on the grip opens the row's menu: the grip is the menu's own
     // trigger, so clicking it is the same as any press on it.
@@ -416,10 +483,10 @@ export function ChecklistEditor({
     // Nothing below the block to move past: a parent whose sub-items end the list is last too.
     const last = open.slice(position + 1).every((entry) => blockOf(items, index).includes(entry.index));
     return [
-      { label: 'Move up', disabled: first, onSelect: () => moveOpen(index, position - 1, true) },
-      { label: 'Move down', disabled: last, onSelect: () => moveOpen(index, position + 1, true) },
-      { label: 'Move to top', disabled: first, onSelect: () => moveOpen(index, 0, true) },
-      { label: 'Move to bottom', disabled: last, onSelect: () => moveOpen(index, open.length - 1, true) },
+      { label: 'Move up', disabled: first, onSelect: () => moveOpen(index, position - 1, 'grip') },
+      { label: 'Move down', disabled: last, onSelect: () => moveOpen(index, position + 1, 'grip') },
+      { label: 'Move to top', disabled: first, onSelect: () => moveOpen(index, 0, 'grip') },
+      { label: 'Move to bottom', disabled: last, onSelect: () => moveOpen(index, open.length - 1, 'grip') },
       {
         label: 'Make a sub-item',
         disabled: !above || !canNest(items, index, above.index),
@@ -522,8 +589,8 @@ export function ChecklistEditor({
                 drag.start(event.pointerId, String(index), { x: event.clientX, y: event.clientY });
               }
             }}
-            onStep={(by) => {
-              moveOpen(index, position + by, true);
+            onStep={(by, focus) => {
+              moveOpen(index, position + by, focus);
             }}
             onToggle={() => {
               toggle(index, item);
@@ -532,13 +599,13 @@ export function ChecklistEditor({
               write(setItemText(body, index, text));
             }}
             onNest={(by, focus) => shift(position, by, focus)}
-            onEnter={() => {
-              // The new item sits right under this one, in the body and on screen.
-              write(insertItemAfter(body, index), index + 1);
+            onEnter={(start, end) => {
+              enterAt(index, item, start, end);
             }}
-            onBackspaceEmpty={() => {
-              removeOpen(index);
+            onBackspaceStart={() => {
+              mergeUp(index, item);
             }}
+            onPasteLines={(text, start, end) => pasteInto(index, text, start, end)}
             onBlur={save}
           />
         ))}
@@ -595,7 +662,7 @@ const TICK_TOAST_MS = 4000;
 const TOAST_NAME_MAX = 40;
 
 /** An item's words for a one-line toast: cut at a word with an ellipsis when long. */
-export function shortName(text: string): string {
+function shortName(text: string): string {
   const words = text.trim().replace(/\s+/g, ' ');
   if (words === '') return 'Item';
   if (words.length <= TOAST_NAME_MAX) return words;

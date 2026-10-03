@@ -225,7 +225,7 @@ describe('ChecklistEditor', () => {
     expect(screen.queryByRole('region', { name: /^Done/ })).toBeNull();
   });
 
-  it('an item is a wrapping field: a pasted line break becomes a space, and Enter still starts a new item', async () => {
+  it('an item is a wrapping field, and a paste of several lines becomes several items at its level', async () => {
     const user = userEvent.setup();
     const { body } = mount(LIST);
     const milk = screen.getByRole('textbox', { name: 'Item 1' });
@@ -234,14 +234,93 @@ describe('ChecklistEditor', () => {
     expect(milk.tagName).toBe('TEXTAREA');
     expect(milk).toHaveAttribute('rows', '1');
 
+    // One line is the browser's paste, into the words.
     await user.click(milk);
-    await user.paste(' and\ncream');
+    await user.paste(' and cream');
     expect(body()).toBe('- [ ] Milk and cream\n- [x] Eggs\n- [ ] Bread');
-    expect(milk).toHaveValue('Milk and cream');
 
+    // Several lines: the first joins the words at the caret, the rest are
+    // items under it by the body's line rule — a `- [x]` stays done — and
+    // the caret lands at the end of the last; said through the region.
+    await user.paste(', skimmed\n- [x] Butter\nJam');
+    expect(body()).toBe('- [ ] Milk and cream, skimmed\n- [x] Butter\n- [ ] Jam\n- [x] Eggs\n- [ ] Bread');
+    const jam = screen.getByRole('textbox', { name: 'Item 2' });
+    expect(jam).toHaveFocus();
+    expect(jam).toHaveValue('Jam');
+    expect((jam as HTMLTextAreaElement).selectionStart).toBe(3);
+    expect(screen.getByText('2 items added')).toBeInTheDocument();
+  });
+
+  it('Enter inside the words splits the item there, the rest a new item at the same level', async () => {
+    const user = userEvent.setup();
+    const { body } = mount('- [ ] Party\n  - [ ] Paper plates\n    - [ ] Big');
+    const plates = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Sub-item 2' });
+    await user.click(plates);
+    plates.setSelectionRange(6, 6);
     await user.keyboard('{Enter}');
-    expect(body()).toBe('- [ ] Milk and cream\n- [ ] \n- [x] Eggs\n- [ ] Bread');
-    expect(screen.getByRole('textbox', { name: 'Item 2' })).toHaveFocus();
+    expect(body()).toBe('- [ ] Party\n  - [ ] Paper \n  - [ ] plates\n    - [ ] Big');
+    const rest = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Sub-item 3' });
+    expect(rest).toHaveFocus();
+    expect(rest).toHaveValue('plates');
+    expect(rest.selectionStart).toBe(0);
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+  });
+
+  it('Backspace at the start of an item joins it onto the one above, caret at the join, levels kept', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount('- [ ] Party\n  - [ ] Plates\n    - [ ] Big\n- [x] Eggs\n- [ ] Milk');
+    const plates = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Sub-item 2' });
+    await user.click(plates);
+    plates.setSelectionRange(0, 0);
+    await user.keyboard('{Backspace}');
+    // A sub-item into its parent: the parent stays top level, Big comes up a level.
+    expect(body()).toBe('- [ ] PartyPlates\n  - [ ] Big\n- [x] Eggs\n- [ ] Milk');
+    const party = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Item 1' });
+    expect(party).toHaveFocus();
+    expect(party.selectionStart).toBe(5);
+    expect(screen.getByText('Joined with the item above')).toBeInTheDocument();
+    expect(log.saves).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+
+    // Into the open row shown above, past the done Eggs in the body.
+    const milk = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Item 3' });
+    await user.click(milk);
+    milk.setSelectionRange(0, 0);
+    await user.keyboard('{Backspace}');
+    expect(body()).toBe('- [ ] PartyPlates\n  - [ ] BigMilk\n- [x] Eggs');
+
+    // The first row has nothing above: with words, the key is left alone.
+    await user.click(party);
+    party.setSelectionRange(0, 0);
+    await user.keyboard('{Backspace}');
+    expect(body()).toBe('- [ ] PartyPlates\n  - [ ] BigMilk\n- [x] Eggs');
+  });
+
+  it('Alt+↓ and Alt+↑ move the item from its field, focus staying in the words', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount('- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [ ] Jam');
+    const milk = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Item 1' });
+    await user.click(milk);
+    milk.setSelectionRange(2, 2);
+    await user.keyboard('{Alt>}{ArrowDown}{/Alt}');
+    expect(body()).toBe('- [x] Eggs\n- [ ] Bread\n- [ ] Milk\n- [ ] Jam');
+    const moved = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Item 2' });
+    expect(moved).toHaveFocus();
+    expect(moved).toHaveValue('Milk');
+    expect(moved.selectionStart).toBe(2);
+    expect(log.saves).toBe(1);
+
+    // Back up a slot: Bread's slot, which sits after the done Eggs in the
+    // body — the Done section is the view's grouping, not the body's.
+    await user.keyboard('{Alt>}{ArrowUp}{/Alt}');
+    expect(body()).toBe('- [x] Eggs\n- [ ] Milk\n- [ ] Bread\n- [ ] Jam');
+    const top = screen.getByRole('textbox', { name: 'Item 1' });
+    expect(top).toHaveFocus();
+    expect(top).toHaveValue('Milk');
+    // At the top, refused and said; nothing written.
+    await user.keyboard('{Alt>}{ArrowUp}{/Alt}');
+    expect(screen.getByText('Already at the top')).toBeInTheDocument();
+    expect(body()).toBe('- [x] Eggs\n- [ ] Milk\n- [ ] Bread\n- [ ] Jam');
   });
 
   it('shows a legacy prose line as an open item and normalises it on the first write', async () => {

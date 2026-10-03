@@ -682,3 +682,55 @@ test('Show after a recording lands in a list puts focus on the row it added', as
   await expect(jam.getByRole('textbox')).toBeFocused();
   await expect(jam.getByRole('textbox')).toHaveValue('Jam');
 });
+
+test('the field’s own keys: Enter splits, Backspace at the start joins, a multi-line paste makes items, Alt+arrows move', async ({
+  page,
+  api,
+}) => {
+  seedShopping(api);
+  await page.goto('/notes/shopping');
+  const items = page.getByRole('list', { name: 'Items' });
+  await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
+
+  // Enter inside "Bread and butter", after "Bread ": two items at the same level.
+  const bread = items.getByRole('textbox', { name: 'Item 2' });
+  await bread.click();
+  await bread.evaluate((el) => (el as HTMLTextAreaElement).setSelectionRange(6, 6));
+  await bread.press('Enter');
+  await expect.poll(() => values(items)).toEqual(['Milk', 'Bread ', 'and butter', '']);
+  await expect(items.getByRole('textbox', { name: 'Item 3' })).toBeFocused();
+
+  // Backspace at the start of "and butter" joins it back, caret at the join.
+  await page.keyboard.press('Home');
+  await page.keyboard.press('Backspace');
+  await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
+  await expect(bread).toBeFocused();
+  expect(await bread.evaluate((el) => (el as HTMLTextAreaElement).selectionStart)).toBe(6);
+  await expect(page.getByText('Joined with the item above')).toBeVisible();
+
+  // A paste of three lines into the end of Milk: the first joins Milk's
+  // words, the rest are items by the line rule, so "- [x] Jam" lands in Done.
+  const milk = items.getByRole('textbox', { name: 'Item 1' });
+  await milk.click();
+  await milk.evaluate((el) => {
+    const data = new DataTransfer();
+    data.setData('text/plain', ', skimmed\n- [x] Jam\nTea');
+    el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+  });
+  await expect.poll(() => values(items)).toEqual(['Milk, skimmed', 'Tea', 'Bread and butter', '']);
+  await expect(page.getByRole('heading', { name: 'Done (2)' })).toBeVisible();
+  await expect(items.getByRole('textbox', { name: 'Item 2' })).toBeFocused();
+
+  // Alt+↓ moves Tea below Bread from its field; focus stays in the words.
+  await page.keyboard.press('Alt+ArrowDown');
+  await expect.poll(() => values(items)).toEqual(['Milk, skimmed', 'Bread and butter', 'Tea', '']);
+  await expect(items.getByRole('textbox', { name: 'Item 3' })).toBeFocused();
+  await expect(items.getByRole('textbox', { name: 'Item 3' })).toHaveValue('Tea');
+
+  // Edits, not acts: no Undo toast was offered, and the body is saved.
+  await expect(page.getByRole('button', { name: 'Undo' })).toHaveCount(0);
+  await page.getByRole('textbox', { name: 'Note title' }).click();
+  await expect
+    .poll(() => api.notes['shopping']?.body)
+    .toBe('- [ ] Milk, skimmed\n- [x] Jam\n- [x] Eggs\n- [ ] Bread and butter\n- [ ] Tea');
+});

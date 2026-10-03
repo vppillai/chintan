@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   clampLevels,
+  mergeItems,
   openBlock,
   parseChecklist,
+  pasteItems,
   planLevel,
   planMove,
   previewDepths,
+  splitItem,
   type Entry,
 } from './checklist.ts';
 
@@ -91,5 +94,60 @@ describe('planMove and openBlock', () => {
   it('refuses at either end, and says which', () => {
     expect(planMove(body, items, open, 0, -1)).toEqual({ refusal: 'Already at the top' });
     expect(planMove(body, items, open, 3, 4)).toEqual({ refusal: 'Already at the bottom' });
+  });
+});
+
+/**
+ * The field's own edits — a Backspace at the start, an Enter in the words, a
+ * paste of several lines — as pure writes, without a render.
+ */
+describe('mergeItems', () => {
+  it('joins the words onto the row above, says where the join is, and keeps the parent’s level', () => {
+    const body = '- [ ] Party\n  - [ ] Plates\n    - [ ] Paper ones\n- [x] Eggs\n- [ ] Milk';
+    // A sub-item into its parent: the parent stays top level, its words grow,
+    // and the merged item's own sub-item comes up to hang from the parent.
+    expect(mergeItems(body, 1, 0)).toEqual({
+      next: '- [ ] PartyPlates\n  - [ ] Paper ones\n- [x] Eggs\n- [ ] Milk',
+      caret: 5,
+    });
+    // Into the open row shown above, past a done line in the body.
+    expect(mergeItems(body, 4, 2)).toEqual({
+      next: '- [ ] Party\n  - [ ] Plates\n    - [ ] Paper onesMilk\n- [x] Eggs',
+      caret: 10,
+    });
+    // A bad pair is a normalising no-op.
+    expect(mergeItems(body, 0, 4).next).toBe(body);
+  });
+});
+
+describe('splitItem', () => {
+  it('cuts the words at the caret into two items at the same level, dropping a selection', () => {
+    const body = '- [ ] Party\n  - [ ] Paper plates\n    - [ ] Big';
+    expect(splitItem(body, 1, 6)).toBe('- [ ] Party\n  - [ ] Paper \n  - [ ] plates\n    - [ ] Big');
+    expect(splitItem(body, 1, 5, 12)).toBe('- [ ] Party\n  - [ ] Paper\n  - [ ] \n    - [ ] Big');
+    expect(splitItem(body, 1, 0)).toBe('- [ ] Party\n  - [ ] \n  - [ ] Paper plates\n    - [ ] Big');
+  });
+});
+
+describe('pasteItems', () => {
+  it('reads each pasted line by the line rule, at the item’s level, with the tail after the last', () => {
+    const body = '- [ ] Party\n  - [ ] Plates and cups\n- [ ] Milk';
+    // Pasted over " and " in "Plates and cups": "Plates" + "Paper", then the
+    // rest, then "cups" after the last line; prefixes and levels respected.
+    expect(pasteItems(body, 1, 6, 11, 'Paper\n- [x] Forks\n  - [ ] Spoons\n')).toEqual({
+      next: '- [ ] Party\n  - [ ] PlatesPaper\n  - [x] Forks\n    - [ ] Spoonscups\n- [ ] Milk',
+      focus: 3,
+      caret: 6,
+    });
+    // An empty field takes the first line's mark; depth is clamped to four levels.
+    const deep = '- [ ] A\n  - [ ] B\n    - [ ] C\n      - [ ] ';
+    expect(pasteItems(deep, 3, 0, 0, '- [x] D\n  - [ ] E')).toEqual({
+      next: '- [ ] A\n  - [ ] B\n    - [ ] C\n      - [x] D\n      - [ ] E',
+      focus: 4,
+      caret: 1,
+    });
+    // One line is the browser's paste.
+    expect(pasteItems(body, 0, 0, 0, 'Cake')).toBeNull();
+    expect(pasteItems(body, 0, 0, 0, 'Cake\n')).toBeNull();
   });
 });

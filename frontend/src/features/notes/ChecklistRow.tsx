@@ -30,9 +30,14 @@ import type { ChecklistItem } from './checklist.ts';
  * one above it and Shift+Tab one level out (`onNest`, which says whether anything
  * changed — when nothing can, the key keeps its meaning and focus moves on,
  * so the list is never a keyboard trap); Enter starts a new item under this
- * one (`onEnter`); Backspace in an emptied item removes it (`onBackspaceEmpty`).
- * What each of those writes to the body is the editor's, which owns the
- * body; the row knows only the keys.
+ * one, or splits this one where the caret is (`onEnter`, with the
+ * selection); Backspace with the caret at the start joins the item onto the
+ * one above (`onBackspaceStart`); Alt+↑/↓ move the row a slot without
+ * leaving the field (`onStep`, as the grip's arrows); a paste of several
+ * lines is handed up (`onPasteLines`) to become several items, and taken
+ * from the browser only when the editor says it made them. What each of
+ * those writes to the body is the editor's, which owns the body; the row
+ * knows only the keys.
  */
 export function ChecklistRow({
   item,
@@ -52,7 +57,8 @@ export function ChecklistRow({
   onText,
   onNest,
   onEnter,
-  onBackspaceEmpty,
+  onBackspaceStart,
+  onPasteLines,
   onBlur,
 }: {
   item: ChecklistItem;
@@ -71,32 +77,44 @@ export function ChecklistRow({
   gripRef: (element: HTMLButtonElement | null) => void;
   fieldRef: (element: HTMLTextAreaElement | null) => void;
   onLift: (event: ReactPointerEvent<HTMLButtonElement>) => void;
-  onStep: (by: -1 | 1) => void;
+  /** Moves the row a slot; `focus` is what stays focused, the grip or the field. */
+  onStep: (by: -1 | 1, focus: 'field' | 'grip') => void;
   onToggle: () => void;
   onText: (text: string) => void;
   /** Nests (1) or un-nests (-1) the row, keeping focus where it is; false when nothing could change. */
   onNest: (by: 1 | -1, focus: 'field' | 'grip') => boolean;
-  onEnter: () => void;
-  onBackspaceEmpty: () => void;
+  /** Enter, with the field's selection: at the end a new item, elsewhere a split. */
+  onEnter: (start: number, end: number) => void;
+  /** Backspace with nothing selected and the caret at the start of the words. */
+  onBackspaceStart: () => void;
+  /** Several pasted lines, with the selection they land on; true when the editor made items of them. */
+  onPasteLines: (text: string, start: number, end: number) => boolean;
   onBlur: () => void;
 }) {
   const id = String(index);
 
   const onFieldKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    const { selectionStart, selectionEnd } = event.currentTarget;
     if (event.key === 'Tab') {
       // Keep's keys: Tab nests, Shift+Tab un-nests. When neither can change
       // anything the key keeps its meaning and focus moves on.
       if (onNest(event.shiftKey ? -1 : 1, 'field')) event.preventDefault();
       return;
     }
-    if (event.key === 'Enter') {
+    if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      // The grip's arrows, from the field, without leaving the words.
       event.preventDefault();
-      onEnter();
+      onStep(event.key === 'ArrowUp' ? -1 : 1, 'field');
       return;
     }
-    if (event.key === 'Backspace' && event.currentTarget.value === '') {
+    if (event.key === 'Enter') {
       event.preventDefault();
-      onBackspaceEmpty();
+      onEnter(selectionStart, selectionEnd);
+      return;
+    }
+    if (event.key === 'Backspace' && selectionStart === 0 && selectionEnd === 0) {
+      event.preventDefault();
+      onBackspaceStart();
     }
   };
 
@@ -107,7 +125,7 @@ export function ChecklistRow({
     // else on one.
     if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
       event.preventDefault();
-      onStep(event.key === 'ArrowUp' ? -1 : 1);
+      onStep(event.key === 'ArrowUp' ? -1 : 1, 'grip');
     } else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
       event.preventDefault();
       onNest(event.key === 'ArrowRight' ? 1 : -1, 'grip');
@@ -152,6 +170,11 @@ export function ChecklistRow({
           onText(event.target.value);
         }}
         onKeyDown={onFieldKeyDown}
+        onPaste={(event) => {
+          const field = event.currentTarget;
+          const text = event.clipboardData.getData('text/plain');
+          if (onPasteLines(text, field.selectionStart, field.selectionEnd)) event.preventDefault();
+        }}
         onBlur={onBlur}
       />
     </li>
