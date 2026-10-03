@@ -41,7 +41,9 @@ const sizes = await Promise.all(
   [main, ...preloaded].map(async (name) => ({ name, size: (await stat(new URL(name, assets))).size })),
 );
 const total = sizes.reduce((sum, file) => sum + file.size, 0);
-const parts = sizes.map((file) => `${file.name} ${kB(file.size)}`).join(' + ');
+const parts =
+  sizes.map((file) => `${file.name} ${kB(file.size)}`).join(' + ') +
+  (preloaded.length === 0 ? ', 0 preloaded' : '');
 // The measured size and the headroom, every run, so a reviewer can see when a
 // PR lands well under and lower the budget (the ratchet; see the header).
 const measured = `check-bundle: a launch fetches ${kB(total)} (${parts}) against the ${kB(BUDGET_BYTES)} budget (D2)`;

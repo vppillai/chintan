@@ -349,6 +349,13 @@ export class RecorderController {
     try {
       if (this.recorder && this.recorder.state !== 'inactive') {
         this.recorder.stop();
+      } else if (this.recorder?.onstop) {
+        /*
+         * Already inactive, with our `onstop` still attached: the platform
+         * stopped it (a track it ended) and its last `dataavailable` and
+         * `stop` are queued behind this call. They deliver `finalised`;
+         * emitting it here would review the buffer a chunk short.
+         */
       } else {
         this.emit({ type: 'finalised', now: this.deps.now() });
         this.teardown();

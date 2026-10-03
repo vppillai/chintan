@@ -197,6 +197,9 @@ export function NoteDetailScreen() {
       });
       const target =
         kind === 'details' ? noteLanguageFieldId(note.id) : notePanelHeadingId(note.id);
+      // The drawer is a lazy chunk whose import starts with this screen's
+      // first render; a ⋮ opened inside that window finds no element and
+      // focus stays on the menu's trigger, which is the fallback either way.
       document.getElementById(target)?.focus();
     },
     [note],

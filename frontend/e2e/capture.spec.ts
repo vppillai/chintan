@@ -890,12 +890,13 @@ test.describe('the screen locks while recording', () => {
   const storedCaptures = (page: Page) =>
     page.evaluate(
       () =>
-        new Promise<{ durationMs: number; bytes: number }[]>((resolve, reject) => {
+        new Promise<{ durationMs: number; bytes: number; chunkCount: number }[]>((resolve, reject) => {
           const open = indexedDB.open('chintan');
           open.onerror = () => reject(new Error('no db'));
           open.onsuccess = () => {
             const request = open.result.transaction('captures').objectStore('captures').getAll();
-            request.onsuccess = () => resolve(request.result as { durationMs: number; bytes: number }[]);
+            request.onsuccess = () =>
+              resolve(request.result as { durationMs: number; bytes: number; chunkCount: number }[]);
             request.onerror = () => reject(new Error('no captures'));
           };
         }),
@@ -917,6 +918,10 @@ test.describe('the screen locks while recording', () => {
     // the OS kills next is offered back as what it is, not as 0:00.
     const [record] = await storedCaptures(page);
     expect(record?.durationMs ?? 0).toBeGreaterThan(0);
+    // The hide asked the recorder for the chunk it was holding; once it
+    // lands the record counts it.
+    await expect.poll(async () => (await storedCaptures(page))[0]?.chunkCount ?? 0).toBeGreaterThan(0);
+    expect((await storedCaptures(page))[0]?.bytes ?? 0).toBeGreaterThan(0);
 
     await unlock(page);
     await expect(page.locator('.capture__state')).toHaveText('Recording');
@@ -937,6 +942,11 @@ test.describe('the screen locks while recording', () => {
     ).toBeVisible();
     await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Discard' })).toBeVisible();
+    // Review rewrote the record: the chunks the buffer holds, with their bytes.
+    const [record] = await storedCaptures(page);
+    expect(record?.chunkCount ?? 0).toBeGreaterThan(0);
+    expect(record?.bytes ?? 0).toBeGreaterThan(0);
+    expect(record?.durationMs ?? 0).toBeGreaterThan(0);
 
     await page.getByRole('button', { name: 'Send' }).click();
     await expect(page).toHaveURL(/\/$/);

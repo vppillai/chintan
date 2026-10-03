@@ -219,17 +219,24 @@ server.
 
 The recorder is built on three browser signals and holds one lock. What each
 platform does with them is the browser's; what the app does with each is
-`recorder.ts` and the machine. Nothing stops on the hide itself: Android
-keeps the recorder running behind a locked screen, and a stop there would
-truncate a recording that was going to survive.
+`recorder.ts` and the machine. The two platform columns are from the
+platforms' documentation and bug trackers — Chrome's page lifecycle rules
+exempt a tab that is capturing audio from freezing and discarding; WebKit
+bug 173268 is iOS muting a capture track when the page goes to the
+background and unmuting it on return; iOS ending the track about thirty
+seconds into the background is reported by developers, not documented —
+and are unverified on a device until the owner's check below is run.
+Nothing stops on the hide itself: Android keeps the recorder running behind
+a locked screen, and a stop there would truncate a recording that was going
+to survive.
 
-| Signal | Android Chrome | iOS Safari and the installed app | What the app does |
+| Signal | Android Chrome (documentation, unverified on a device) | iOS Safari and the installed app (documentation, unverified on a device) | What the app does |
 |---|---|---|---|
 | The page goes hidden (`visibilitychange`) | Fires when the screen locks or another app comes in front. Chrome keeps the renderer alive while the tab holds the microphone and shows its recording notification; `MediaRecorder` keeps delivering timeslices; `setInterval` is throttled, so the clock's ticks lag and catch up. | Fires; WebKit mutes the capture track and freezes the page within moments; the installed app may be jettisoned while hidden. | The recorder asks `MediaRecorder` for the chunk it is holding (`requestData`, up to `CHUNK_INTERVAL_MS` of speech) so it is on disk before anything else happens; the machine marks `hidden`; the capture record is rewritten with the recording's real length on the hide and on every chunk after it (`store.ts`), so a killed page leaves a record of the right length. The recording goes on. |
 | The track mutes (`mute`) | A call, Siri's equivalent, another app taking the microphone — not the lock. | The lock, and any backgrounding; `unmute` on return. | The recorder pauses and the clock stops. The state reads "Paused — the screen locked or the app went to the background" when the page was hidden, "Paused — the microphone was taken by another app" otherwise; Cancel · Resume · Stop · Send. `unmute` resumes by itself with "Resumed — the microphone is back.", unless the person had paused first. |
-| The track ends (`ended`) | A call, a headset unplugged. | The same, and the OS reclaiming the device. | Stop; review with the audio so far — "The recording stopped while the screen was locked or the app was in the background. What was captured before that is here." when the page was hidden, "The recording was interrupted. …" otherwise — with Discard · Re-record · Send. |
-| The recorder stops on its own (`onstop` with no Stop) | Not observed. | A thawed page whose recorder the OS ended. | A final chunk nobody asked for is settled as an interruption: review with the audio and the sentence above, or "Recording was interrupted." when nothing was recorded. The screen never says "Recording" over a dead recorder. |
-| The page is killed | Chrome discards a tab capturing audio only as a last resort. | Freely, once hidden. | Every chunk handed over is in IndexedDB and the record names it with its length as of the last chunk; Home's `ResumePrompt` offers it with Send and Discard. |
+| The track ends (`ended`) | A call, a headset unplugged. | The same, the OS reclaiming the device, and — as developers report — about thirty seconds into the background. | Stop; review with the audio so far — "The recording stopped while the screen was locked or the app was in the background. What was captured before that is here." when the page was hidden, "The recording was interrupted. …" otherwise — with Discard · Re-record · Send. |
+| The recorder stops on its own (`onstop` with no Stop) | No report found. | A thawed page whose recorder the OS ended. | A final chunk nobody asked for is settled as an interruption: review with the audio and the sentence above, or "Recording was interrupted." when nothing was recorded. The screen never says "Recording" over a dead recorder. |
+| The page is killed | Chrome's discarding exempts a tab capturing audio; memory pressure can still take it. | Freely, once hidden. | Every chunk handed over is in IndexedDB and the record names it with its length as of the last chunk; Home's `ResumePrompt` offers it with Send and Discard. |
 | The wake lock | Held for the recording; the browser releases it when the page hides; `wakeLock.ts` re-requests it when the page is visible again. | The same from the versions that have it; none before. | Keeps the screen from sleeping by itself. The power button locks it anyway, and the rows above are what happens then. |
 
 Chromium cannot lock a screen, so `e2e/capture.spec.ts` "the screen locks

@@ -603,6 +603,23 @@ describe('the live waveform starts empty', () => {
   });
 });
 
+describe('a recorder the platform has already stopped', () => {
+  it('lets its queued final chunk and onstop finish the recording', async () => {
+    const h = harness();
+    await h.start();
+    // The OS ended the track: the recorder is inactive before `stop()` runs,
+    // but its last chunk and `stop` event are still on the way.
+    h.recorder.state = 'inactive';
+    await h.controller.stop();
+    expect(kinds(h.events)).not.toContain('finalised');
+
+    h.recorder.emitChunk(640);
+    h.recorder.onstop?.();
+    expect(h.model().state).toBe('review');
+    expect(h.model().bytes).toBe(640);
+  });
+});
+
 describe('the page goes hidden', () => {
   function setVisibility(state: 'hidden' | 'visible'): void {
     Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });

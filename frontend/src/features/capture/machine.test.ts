@@ -140,6 +140,20 @@ describe('interruption produces a saved partial, never a discard', () => {
     expect(hasBufferedAudio(model)).toBe(true);
   });
 
+  it('keeps the seconds already spoken when the track ends before the first chunk', () => {
+    // The recorder's final chunk arrives after `ended`; failing at `ended`
+    // with bytes still 0 threw those seconds away.
+    const model = run([
+      ...requestAndStart,
+      { type: 'trackEnded', now: T0 + 500 },
+      { type: 'data', bytes: 1024 },
+      { type: 'finalised' },
+    ]);
+    expect(model.state).toBe('review');
+    expect(model.bytes).toBe(1024);
+    expect(model.interrupted).toBe(true);
+  });
+
   it('fails honestly when the interruption arrived before any audio', () => {
     const model = run([...requestAndStart, { type: 'trackEnded', now: T0 + 500 }, { type: 'finalised' }]);
     expect(model.state).toBe('failed');
