@@ -277,7 +277,9 @@ var errCaptureOrphaned = errors.New("pipeline: run ended with the capture still 
 // invocation is not retried to fail identically twice more before the DLQ. So
 // is a capture another delivery is already carrying.
 //
-// Test seam: production enters through RunUpload and Worker.Handle.
+// Production enters through RunUpload and Worker.Handle for a capture's own
+// deliveries, and through here for the reconcile task's second run of a
+// stuck capture (internal/reconcile) and for tests.
 func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.CaptureIndex, error) {
 	return p.runCapture(ctx, CaptureRef{TenantID: tenantID, CaptureID: captureID})
 }
@@ -293,11 +295,11 @@ func (p *Pipeline) RunUpload(ctx context.Context, ref CaptureRef) (model.Capture
 
 // orphanObjectAfter is how old an S3 notification must be before a missing
 // capture row is read as "deleted" rather than "not visible yet". GetCapture
-// is an eventually consistent read and the inbox writes the row and then the
-// object back to back, so the first delivery can miss a row that exists;
-// replication lag is well under a second, and Lambda's first retry of a
-// failed invocation comes about a minute later, so thirty seconds cannot be
-// lag and is always met by the retry.
+// is a strongly consistent read now, so a row that exists is always seen;
+// the margin stays because the inbox writes the row and then the object back
+// to back, and a notification can in principle arrive before the row's write
+// returns. Lambda's first retry of a failed invocation comes about a minute
+// later, so thirty seconds is always met by the retry.
 const orphanObjectAfter = 30 * time.Second
 
 // ref.ObjectKey and ref.EventTime are set only for an S3 notification: the
