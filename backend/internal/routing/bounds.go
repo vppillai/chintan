@@ -23,8 +23,11 @@ import (
 // files the rules live in (route.go, openai_router.go, spans.go) and fails
 // on a numeric constant or a comparison against a number that is not here.
 // The gate (decision D8, 2026-10-01): no new rescue rule or bound ships
-// without a recorded replay case (R7-9) and a line in this file, as the
-// revert rule (R7-10a) already holds prompt text to.
+// without a line in this file and a fixture case that exercises it in
+// provider/testdata/eval/fixtures.json with its recording under
+// provider/testdata/eval/recordings (scripts/dev/record-replay.sh), which
+// the replay tests run in CI with no key; the revert rule (R7-10a) holds
+// prompt text the same way.
 const (
 	// MinNameWords and MinNameRunes are what may file a recording by opening
 	// it or by being spoken as a name (rules 2 and 3: prefix_title,

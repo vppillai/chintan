@@ -299,7 +299,7 @@ func writeRecording(dir, key string, r recording) error {
 
 // errNoRecording is a replay miss: the prompt this call sent was never
 // recorded, which after a prompt change is the expected state.
-var errNoRecording = errors.New("provider: no recording for this prompt; the prompt, model or fixture changed since it was recorded — re-record with LIVE_LLM=1 LLM_API_KEY=… LLM_RECORD=testdata/eval/recordings go test ./internal/provider -run 'TestLiveEval/route' -count=1 (docs/design/routing.md, \"Replay\")")
+var errNoRecording = errors.New("provider: no recording for this prompt; the prompt, model or fixture changed since it was recorded — re-record on the VM with scripts/dev/record-replay.sh and commit the directory (docs/design/routing.md, \"Replay\")")
 
 func readRecording(dir, key string) (string, TokenUsage, error) {
 	b, err := os.ReadFile(filepath.Join(dir, key+".json"))

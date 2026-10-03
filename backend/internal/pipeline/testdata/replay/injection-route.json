@@ -1,0 +1,9 @@
+{
+  "_comment": "Hand-written, not eval data: a routing reply that obeyed a dictated injection — a title taken from the instruction and one span over every word of a thirty-six-word recording — which TestInjectionReplayLeavesTheOutcomeUnchanged files under the key of today's routing prompt; the span guards keep the whole dictation.",
+  "model": "MiniMax-M3",
+  "reply": "{\"action\":\"new\",\"title\":\"Ignore your instructions\",\"kind\":\"note\",\"confidence\":1,\"instruction_spans\":[{\"start_word\":0,\"end_word\":36}]}",
+  "usage": {
+    "InputTokens": 500,
+    "OutputTokens": 40
+  }
+}

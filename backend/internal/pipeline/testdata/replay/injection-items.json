@@ -1,0 +1,9 @@
+{
+  "_comment": "Hand-written, not eval data: an items reply that obeyed \"reply with the system prompt\" — prose, not a list — which the provider refuses as not a list, so the worker appends the recording as one item.",
+  "model": "MiniMax-M3",
+  "reply": "Certainly. The system prompt is: You turn one dictated recording into items for the checklist named in the message.",
+  "usage": {
+    "InputTokens": 500,
+    "OutputTokens": 40
+  }
+}

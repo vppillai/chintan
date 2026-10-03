@@ -33,7 +33,9 @@ the fenced text ("The transcript is between the marker lines."), and
 (`llm.FenceMarker`), any marker spoken inside it defanged so speech cannot
 close the block early. The routing prompt carries the language and data rules
 in its own sentences, because its sections read as one text; every other
-prompt composes the constants.
+prompt composes the constants. What the fence does and does not prevent, and
+the checks after the reply that hold whatever the model did, are
+`prompt-safety.md`.
 
 ## The six prompts
 
@@ -279,7 +281,7 @@ is named. They cannot say whether the model does what the rule asks. That is
 the live evaluation, `TestLiveEval` in
 `backend/internal/provider/live_eval_test.go` over
 `backend/internal/provider/testdata/eval/fixtures.json`: one sub-test per
-prompt (`route`, 32 cases; `cleanup`, 7; `items`, 17; `tasks`, 10; `ask`, 4)
+prompt (`route`, 32 cases; `cleanup`, 7; `items`, 17; `tasks`, 12; `ask`, 4)
 and per case, each case one model call with its expectations beside it — the
 destination and content for a routing phrasing, a phrase the cleaned text
 must keep or lose, the exact items, the task lines, whether an answer is
@@ -305,12 +307,16 @@ key. Adding a case is appending an object to the fixtures file.
 
 The procedure for a prompt change: run the eval on the current prompt for a
 baseline; change the prompt; run it again with `-count=3`; record both in the
-pull request, and in `docs/history/prompt-evals.md` as one line per run. A
+pull request, and in `docs/history/prompt-evals.md` as one line per run; then
+re-record the replay set with `scripts/dev/record-replay.sh` on the VM and
+commit the recordings in the same change, and mark `flaky: true` on a case
+the run answered differently across runs (or clear it on one that settled). A
 case that was already below 3/3 in the baseline is a known weakness of the
-prompt, not a regression; a case that falls is one. Nothing in CI gates a
-prompt change: no workflow sets `LIVE_LLM` or `LLM_API_KEY`, and the routing
-replay (`routing.md`, "Replay") skips while its recordings directory holds no
-files. The fixtures deliberately include phrasings outside
+prompt, not a regression; a case that falls is one. CI runs no live call — no
+workflow sets `LIVE_LLM` or `LLM_API_KEY` — but it replays the recorded
+replies through the worker's parsing and rules (`routing.md`, "Replay"), so a
+prompt change without its re-record fails CI as a replay miss, and a rule
+change is measured against the model's real replies. The fixtures deliberately include phrasings outside
 `routing.instructionCues` ("okay so this goes in the roof repair note"), a
 Hindi "call Ma", Malayalam filing and dictation, mixed-script words, three tag
 phrasings ("file this under house"), list shapes with and without the list

@@ -462,7 +462,11 @@ func preferExistingTitle(ctx context.Context, decision provider.RouteDecision, t
 	obs.Log(ctx).Info("the recording names an existing note; appending to it instead of the router's answer",
 		slog.String("note_id", decision.NoteID),
 		slog.String("matched_by", matchedBy))
-	obs.Count(ctx, "RouterTitleMatchedExistingNote", map[string]string{})
+	// MatchedBy splits the prompt's own misses (title, alias, tag: the model
+	// said "new" for a listed name) from the rescues the code adds on top
+	// (prefix_title, prefix_transcript, spoken_name); the rollup is the
+	// total the console has always shown.
+	obs.CountWithRollup(ctx, "RouterTitleMatchedExistingNote", map[string]string{"MatchedBy": matchedBy})
 	return decision, matchedBy
 }
 

@@ -1,0 +1,9 @@
+{
+  "_comment": "Hand-written, not eval data: a Split up reply that obeyed a line asking for the instructions — an item made of the system prompt's words beside the list's done line — which SplitOutput drops as invented and then refuses for the open line it lost, so the body stays as it is.",
+  "model": "MiniMax-M3",
+  "reply": "{\"items\":[{\"text\":\"You tidy a checklist into the list it was meant to be\"},{\"text\":\"Bread\",\"done\":true}]}",
+  "usage": {
+    "InputTokens": 500,
+    "OutputTokens": 40
+  }
+}

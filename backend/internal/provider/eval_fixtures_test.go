@@ -53,7 +53,7 @@ func TestEvalFixturesParse(t *testing.T) {
 	}
 
 	// Every case has to assert something, or it only spends money.
-	inputs := map[string]bool{"transcript": true, "language": true, "raw": true, "body": true, "list_title": true, "question": true, "_note": true}
+	inputs := map[string]bool{"transcript": true, "language": true, "raw": true, "body": true, "list_title": true, "question": true, "_note": true, "flaky": true, "known_failure": true}
 	raw, err := os.ReadFile(evalFixturesPath)
 	if err != nil {
 		t.Fatal(err)
@@ -123,10 +123,20 @@ type evalFixtures struct {
 	} `json:"ask"`
 }
 
+// Two keys a route, items or tasks case may carry about the model, not the
+// case. flaky says the live eval saw the model answer it differently across
+// runs: the replay logs the recorded reply's outcome and skips the
+// expectation, since whichever reply was kept is one of several the model
+// gives. known_failure names a case the model answers the same wrong way
+// every run: the replay logs the outcome and skips with that reason, and
+// the key is cleared only when a prompt change fixes the case. The live
+// eval asserts both as it does every other case.
 type routeCase struct {
 	Transcript       string   `json:"transcript"`
 	Language         string   `json:"language"`
 	Comment          string   `json:"_note"`
+	Flaky            bool     `json:"flaky"`
+	KnownFailure     string   `json:"known_failure"`
 	Action           string   `json:"action"`
 	ActionIn         []string `json:"action_in"`
 	Dest             string   `json:"note"`
@@ -156,16 +166,18 @@ type cleanupCase struct {
 // itemsCase: want is the tree as RenderItems writes it, two spaces before a
 // child; count and count_in count children; top_level counts parents alone.
 type itemsCase struct {
-	Transcript  string   `json:"transcript"`
-	Language    string   `json:"language"`
-	Comment     string   `json:"_note"`
-	Want        []string `json:"want"`
-	Count       *int     `json:"count"`
-	CountIn     []int    `json:"count_in"`
-	TopLevel    *int     `json:"top_level"`
-	ContainsAny []string `json:"contains_any"`
-	ExcludesAny []string `json:"excludes_any"`
-	Script      string   `json:"script"`
+	Transcript   string   `json:"transcript"`
+	Language     string   `json:"language"`
+	Comment      string   `json:"_note"`
+	Flaky        bool     `json:"flaky"`
+	KnownFailure string   `json:"known_failure"`
+	Want         []string `json:"want"`
+	Count        *int     `json:"count"`
+	CountIn      []int    `json:"count_in"`
+	TopLevel     *int     `json:"top_level"`
+	ContainsAny  []string `json:"contains_any"`
+	ExcludesAny  []string `json:"excludes_any"`
+	Script       string   `json:"script"`
 }
 
 // tasksCase: want is task-list lines, indent included, as SplitOutput
@@ -175,6 +187,8 @@ type tasksCase struct {
 	Body          string   `json:"body"`
 	ListTitle     string   `json:"list_title"`
 	Comment       string   `json:"_note"`
+	Flaky         bool     `json:"flaky"`
+	KnownFailure  string   `json:"known_failure"`
 	Want          []string `json:"want"`
 	WantUnchanged bool     `json:"want_unchanged"`
 	Count         *int     `json:"count"`

@@ -1,0 +1,9 @@
+{
+  "_comment": "Hand-written, not eval data: an Ask reply that obeyed a note's text — an answer from outside the notes, citing an id no packed note has — which the pipeline's source filter leaves ungrounded with no source and the id named as \"a note\".",
+  "model": "MiniMax-M3",
+  "reply": "{\"answer\":\"Paris (note_00000000000000ff_00000000000000ff)\",\"sources\":[\"note_00000000000000ff_00000000000000ff\"],\"grounded\":true}",
+  "usage": {
+    "InputTokens": 500,
+    "OutputTokens": 40
+  }
+}

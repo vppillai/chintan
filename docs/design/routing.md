@@ -159,8 +159,9 @@ reason it is that number; `TestRoutingBoundsAreRegistered`
 `TestRuleFilesHoldNoUnregisteredLiterals` fails on a numeric constant or a
 comparison against a number in `spans.go`, `pipeline/route.go` or
 `provider/openai_router.go` that is not registered here. A new rescue rule
-or bound ships only with a line in `bounds.go` and a recorded replay case
-(§Replay).
+or bound ships only with a line in `bounds.go`, a fixture case in
+`provider/testdata/eval/fixtures.json` that exercises it and that case's
+recording (§Replay).
 
 | Rule | Bound | Constant | What it protects |
 |---|---|---|---|
@@ -318,10 +319,12 @@ holds; the correlation id rides the context. A route the router did not
 answer has no decision line: the `routing failed` warning is its line.
 
 **Metrics.** `RouterSpansDiscarded{Reason=missing_field|malformed|too_long|empty_content|not_derived}`;
-`RouterTitleMatchedExistingNote`, counted once for any rescue in
-`preferExistingTitle` (title, alias, tag, the prefixes and `spoken_name`
-alike; the decision line's `matched_by` tells them apart, and the pre-create
-dedupe is not counted); `RouterNewNoteKind{Kind=note|checklist}`;
+`RouterTitleMatchedExistingNote{MatchedBy}`, counted once for any rescue in
+`preferExistingTitle`, with a rollup: `MatchedBy` is the decision line's
+`matched_by`, so `title`, `alias` and `tag` are the prompt's own misses (the
+model said "new" for a listed name) and `prefix_title`, `prefix_transcript`
+and `spoken_name` the rules the code adds on top; the dimensionless total is
+the rollup, and the pre-create dedupe is not counted; `RouterNewNoteKind{Kind=note|checklist}`;
 `RouterRetried{Reason}`; `RouterTimedOut{Attempt}`. The gates have no
 counters: the `gate` attribute and the tidy's INFO line are their trace.
 
@@ -348,24 +351,40 @@ completions, in test binaries only:
 every route case of `provider/testdata/eval/fixtures.json` through `Route`
 and `decide` and asserts the case's expectations on the outcome — `append`
 means filed without asking, `title_names` means the named note is where the
-recording went. It reads `provider/testdata/eval/recordings/`, which does not
-exist, so it skips on every run, printing the command that fills it:
+recording went. `provider.TestEvalReplay` (`live_eval_test.go`) replays the
+cleanup, items, tasks and ask cases with the live eval's own checks, the
+tasks cases through `cleanup.SplitOutput` as the worker runs them. Both read
+`provider/testdata/eval/recordings/`, one file per prompt, and skip while it
+holds no file. It is filled on the VM by `scripts/dev/record-replay.sh`: the
+instance's key from SSM into the environment of three `go test` runs, never
+printed; per prompt the reply a majority of the runs gave is kept, so a
+recording is the model's usual answer and not a one-off; the directory is
+then copied back and committed, with the runs' logs beside it
+(`testdata/eval/record-logs/`). Two fixture keys say what the model does
+with a case rather than what the case wants: `flaky: true` on one the live
+eval sees answered differently across runs (set from the script's split
+report), and `known_failure: "<reason>"` on one it answers the same wrong
+way every run (cleared only when a prompt change fixes it). The replay logs
+such a case's outcome and skips its expectation; the live eval asserts both
+as it does every other case.
 
-```bash
-cd backend && LIVE_LLM=1 LLM_API_KEY=… LLM_RECORD=testdata/eval/recordings go test ./internal/provider -run 'TestLiveEval/route' -v -count=1
-```
-
-Record with the default `LLM_MODEL`, which the replay also uses, and with
-`-count=1`: a key is one file, so under `-count=N` only the last reply per
-case survives. The one recording in the tree is hand-written, not eval data — a second
+Record with the default `LLM_MODEL`, which the replay also uses. The
+hand-written recordings in the tree are not eval data — each is a second
 copy of a recording's shape, kept beside its test:
 `pipeline/testdata/replay/synthetic-route.json`, which
 `TestRouteReplayRunsTheRecordedReplyThroughDecide` files under the key of
 the current prompt to prove the path end to end (a "new Roof repair" reply
-turned by `decide` into an append to the listed Roof repair). Once a set is
-recorded, a change to a rule needs no re-record — that is what the replay
-measures — and a change to the prompt's text is a miss, so it is re-recorded
-in the same change.
+turned by `decide` into an append to the listed Roof repair);
+`synthetic-tasks.json` for `restoreLevels`; and the `injection-*.json`
+replies, in which the model did what an injected text asked, which
+`TestInjectionReplayLeavesTheOutcomeUnchanged` runs through the same rules,
+one of them documenting an outcome that stands rather than one wanted
+(`prompt-safety.md`). Once a set is recorded, a change to a rule needs no
+re-record — that is what the replay measures — and a change to a prompt's
+text, the model or a fixture is a miss, so it is re-recorded in the same
+change (`prompts.md`, "Changing a prompt"). A new rescue rule or bound ships
+with a fixture case that exercises it and that case's recording
+(`bounds.go`).
 
 Tests: `routing/prompt_test.go` (the wording and the fence),
 `routing/spans_test.go` (`RemoveSpans`, `ExtendSpans`, the cues),

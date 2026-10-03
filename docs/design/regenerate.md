@@ -193,7 +193,12 @@ indent (`checklistItems` in `append.go`), so a recording's item the person
 had moved to another level comes back at the depth the recording gives it,
 and a typed sub-item that followed a removed parent nests under whatever
 stands above it; `parseChecklist` clamps an orphan, so nothing breaks, but a
-depth the person chose is theirs to put back.
+depth the person chose is theirs to put back. One exception to the
+indent-blind match: a sub-item with a NEW item's words under a parent that
+is not coming out — typed there, or another recording's, a parent the
+recording named itself but then shares included — is that block's line and
+stays in it for the merge to find, rather than being pulled out and written
+flat above the recording's own marker.
 
 `keepTick` carries a tick to the new line with the same words, wherever the
 new prompt put it; when no words match at all and the counts agree it falls

@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,13 +32,14 @@ import (
 // and -count=3 because a prompt that passes once is not yet a prompt that
 // passes. After the last of the -count runs it logs each case's pass rate
 // with a 95% Wilson interval, so -count=10 says how often, not only whether.
-// LLM_RECORD=<dir> also writes every reply for the CI replay
-// (pipeline.TestRoutingEvalReplay; docs/design/routing.md, "Replay").
-// LLM_BASE_URL and LLM_MODEL default to the worker's. The key is read
-// from the environment and never printed; the output is the fixture text and
-// the model's reply to it, one line per case, and nothing else. Adding a case
-// is appending an object to the fixtures file; TestEvalFixturesParse, which
-// always runs, refuses a misspelt key so a typo fails CI without a key.
+// LLM_RECORD=<dir> also writes every reply for the CI replay (TestEvalReplay
+// and pipeline.TestRoutingEvalReplay; scripts/dev/record-replay.sh runs it
+// that way; docs/design/routing.md, "Replay"). LLM_BASE_URL and LLM_MODEL
+// default to the worker's. The key is read from the environment and never
+// printed; the output is the fixture text and the model's reply to it, one
+// line per case, and nothing else. Adding a case is appending an object to
+// the fixtures file; TestEvalFixturesParse, which always runs, refuses a
+// misspelt key so a typo fails CI without a key.
 func TestLiveEval(t *testing.T) {
 	if os.Getenv("LIVE_LLM") != "1" {
 		t.Skip("set LIVE_LLM=1 and LLM_API_KEY to evaluate the prompts against the real model")
@@ -50,9 +52,53 @@ func TestLiveEval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { reportPassRates(t) })
+	runEval(t, c, false)
+}
+
+// evalRecordings is where scripts/dev/record-replay.sh puts the live eval's
+// replies, one file per prompt (RecordingKey), and where the replay reads
+// them. The pipeline's routing replay reads the same directory.
+const evalRecordings = "testdata/eval/recordings"
+
+// TestEvalReplay is the eval CI runs: the same cases and the same checks as
+// TestLiveEval over the replies the owner recorded, served by LLM_REPLAY with
+// no key and no call. A case marked flaky (the model answers it differently
+// across runs) or known_failure (the same wrong answer every run) in the
+// fixtures has its outcome logged, not asserted. It skips only while the recordings directory is
+// empty; a prompt, model or fixture change is a replay miss, which fails
+// with the re-record command. The route cases are also replayed through the
+// pipeline's decide() by pipeline.TestRoutingEvalReplay, which judges the
+// outcome rather than the reply.
+func TestEvalReplay(t *testing.T) {
+	if files, _ := filepath.Glob(filepath.Join(evalRecordings, "*.json")); len(files) == 0 {
+		t.Skip("no eval recordings; record them on the VM with scripts/dev/record-replay.sh and commit the directory")
+	}
+	t.Setenv("LLM_REPLAY", evalRecordings)
+	c, err := NewOpenAICleanup("replay", "", os.Getenv("LLM_MODEL"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runEval(t, c, true)
+}
+
+// runEval is the eval's sub-tests over one client, live or replaying.
+// replay is what the flaky and known_failure marks mean: the case's call
+// still has to be served (a miss is a stale recording set), its outcome is
+// logged, and the expectation is skipped.
+func runEval(t *testing.T, c *OpenAICleanup, replay bool) {
 	fx := loadEvalFixtures(t)
 	ctx := context.Background()
-	t.Cleanup(func() { reportPassRates(t) })
+	unasserted := func(t *testing.T, flaky bool, knownFailure string) {
+		t.Helper()
+		switch {
+		case !replay:
+		case knownFailure != "":
+			t.Skipf("known failure of the prompt, logged above, not asserted: %s", knownFailure)
+		case flaky:
+			t.Skip("flaky in the live eval: the recorded reply is one of several the model gives; its outcome is logged above, not asserted")
+		}
+	}
 
 	t.Run("route", func(t *testing.T) {
 		candidates, idOf := fx.candidates()
@@ -64,6 +110,7 @@ func TestLiveEval(t *testing.T) {
 					t.Fatalf("%s | ERROR %v", tc.Transcript, err)
 				}
 				t.Logf("%s | %s %s %q checklist=%v conf=%.2f | %q", tc.Transcript, d.Action, d.NoteID, d.Title, d.Checklist, d.Confidence, d.Content)
+				unasserted(t, tc.Flaky, tc.KnownFailure)
 				checkRoute(t, tc, d, idOf)
 			})
 		}
@@ -104,6 +151,7 @@ func TestLiveEval(t *testing.T) {
 				}
 				joined := strings.Join(lines, " · ")
 				t.Logf("%s | %s", tc.Transcript, joined)
+				unasserted(t, tc.Flaky, tc.KnownFailure)
 				if tc.Want != nil && !equalLines(lines, tc.Want, true) {
 					t.Errorf("items = %s, want %s", joined, strings.Join(tc.Want, " · "))
 				}
@@ -133,6 +181,7 @@ func TestLiveEval(t *testing.T) {
 				}
 				text, dropped, err := cleanup.SplitOutput(out.Text, tc.Body)
 				t.Logf("%q | %q dropped=%d", tc.Body, out.Text, dropped)
+				unasserted(t, tc.Flaky, tc.KnownFailure)
 				if err != nil {
 					t.Fatalf("SplitOutput refused the reply: %v", err)
 				}
@@ -154,7 +203,9 @@ func TestLiveEval(t *testing.T) {
 		for i, tc := range fx.Ask.Cases {
 			t.Run(caseName(i), func(t *testing.T) {
 				tally(t)
-				a, err := c.Ask(ctx, ask.Prompt{Today: time.Now().UTC().Format("2006-01-02"), Notes: notes, Question: tc.Question})
+				// A fixed date: the date is in the system prompt, and so in
+				// the recording's key; the fixture notes are dated too.
+				a, err := c.Ask(ctx, ask.Prompt{Today: "2026-10-03", Notes: notes, Question: tc.Question})
 				if err != nil {
 					t.Fatalf("%s | ERROR %v", tc.Question, err)
 				}

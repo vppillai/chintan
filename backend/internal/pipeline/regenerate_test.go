@@ -508,6 +508,11 @@ func TestReplaceChecklistItemsIsIdempotentAndRespectsADeletion(t *testing.T) {
 		// parent and goes back in the block, not doubled.
 		{"a fresh word under a parent the recording does not own stays in its block", "- [ ] Costco\n  - [ ] Meat\n  - [ ] Rice\n\n" + m + "\n- [ ] Milk", []string{"Milk"}, "- [ ] Rice\n- [ ] Milk", "- [ ] Costco\n  - [ ] Meat\n  - [ ] Rice\n\n" + m + "\n- [ ] Milk"},
 		{"a fresh word under the recording's own parent comes out with it", m + "\n- [ ] Costco\n  - [ ] Chicken\n  - [ ] Rice", shared, "- [ ] Costco\n  - [ ] Chicken\n  - [ ] Rice", m + "\n- [ ] Costco\n  - [ ] Chicken\n  - [ ] Rice"},
+		// The parent itself is a fresh word too: taken, then released for the
+		// Meat it does not own; the sub-item taken under it is not where the
+		// recording's items were, so the block still goes back under the
+		// marker, where Milk stood, rather than flat above it.
+		{"a fresh word under a fresh-named parent the recording does not own stays in its block", "- [ ] Costco\n  - [ ] Meat\n  - [ ] Rice\n\n" + m + "\n- [ ] Milk", []string{"Milk"}, "- [ ] Costco\n  - [ ] Rice\n- [ ] Milk", "- [ ] Costco\n  - [ ] Meat\n  - [ ] Rice\n\n" + m + "\n- [ ] Milk"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
