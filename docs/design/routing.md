@@ -206,7 +206,14 @@ under `routing.QuietPeakRMS` (0.04) is filed as `no_content` with gate
 the bars stay flat while recording. An idle or muted microphone sits around
 0.01; someone speaking softly passes 0.05. A peak of zero — a device's inbox
 request, an app without the field — means nothing was measured and the gate
-does not apply.
+does not apply. Measured as a file (ffmpeg's `astats` RMS peak is the same
+quantity), the probe's text-to-speech voice is 0.25 at full level, 0.02 at
+−20 dB and 0.007 at −30 dB; pink noise is 0.05, a fan 0.08, room tone 0.007.
+So the floor, applied to a file, lets pink noise and the fan through and
+refuses a soft voice Whisper transcribes word for word at −0.09. A file's
+gain is not a phone microphone's automatic gain, which lifts a soft voice,
+so the floor is judged from `peak` on the `transcribed capture` lines, not
+from files.
 
 **Spelling hints.** Whisper takes a prompt that biases spelling
 (`prompts.md`, "Whisper's spelling prompt"). `spellingHints` supplies the
@@ -244,13 +251,32 @@ English clips, eleven were real English dictations with `avg_logprob_max`
 between −0.08 and −0.604, one was a stock silence phrase at −0.88 that the
 phrase list caught, and three were recordings of room noise that became
 notes, at −1.35 (thirteen words in 1.6 s), −2.08 (one word, "Portuguese")
-and −2.56 (two words in 5.4 s). The bound is measured for English only: no
-Malayalam, Tamil or Hindi capture has been scored, and that is why Transcribe
-again lifts the gate rather than argues with it. "Thank you, Anu.", "Thank
-you. Buy milk." and a quiet but confidently heard "Buy milk" are speech. `TestLiveNoiseProbe` (`provider/live_stt_probe_test.go`) is how
-the gate is measured against the real provider: it transcribes every clip in
-`STT_PROBE_DIR` — generated pink noise, room tone and a fan, and a
-text-to-speech control — and prints each segment's three scores and text.
+and −2.56 (two words in 5.4 s). The bound is measured on English production captures only: no Malayalam,
+Tamil or Hindi capture has been scored, and that is why Transcribe again
+lifts the gate rather than argues with it. "Thank you, Anu.", "Thank you. Buy
+milk." and a quiet but confidently heard "Buy milk" are speech.
+`TestLiveNoiseProbe` (`provider/live_stt_probe_test.go`) is how the gate is
+measured against the real provider: it transcribes every clip in
+`STT_PROBE_DIR` and prints each segment's three scores and text. The clip set
+is generated — pink noise, room tone and a fan; a text-to-speech English
+sentence at full level, −20 dB and −30 dB; three espeak-ng Malayalam
+sentences, one of them also at −30 dB; two romanised-Malayalam sentences
+read by the English voice — and `docs/history/prompt-evals.md` holds the
+table. What it measures: generated noise never reaches the bound — pink
+noise and room tone come back as " ." at −0.90 and −0.51 and the fan as
+"Thank you." at −0.68, so the no-letter rule and the phrase list end them,
+not the score; the English sentence sits at −0.08 to −0.09 at every level,
+0.9 above the bound; Whisper never hears the synthetic Malayalam or the
+romanised sentences as Malayalam (it labels them English or Italian and
+answers English words or letter salad), and they sit at −0.34 to −0.81 at
+full level, while one romanised clip (−1.62) and the −30 dB Malayalam clip
+(−1.83) fall under the bound and are refused. `compression_ratio` separates
+nothing: 0.9 to 1.05 on speech and on noise heard as words alike, under 0.6
+only where the other two rules already fire. A synthetic voice Whisper
+cannot place is not a Malayalam speaker, so the bound stays where the
+production numbers put it until real Malayalam recordings on the test tenant
+are scored; `avg_logprob_max` and `peak` on their `transcribed capture`
+lines are that measurement.
 
 The `transcribed capture` log line carries `gate` — `quiet`, `hint_echo`,
 `no_speech` or empty when the transcript goes on — `peak` when the app
