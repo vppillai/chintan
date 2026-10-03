@@ -95,12 +95,42 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 	if err != nil {
 		return *capture, fmt.Errorf("pipeline: claim capture append: %w", err)
 	}
+	if !claimed && current.AppendToken == "" && current.AppendedAt == 0 {
+		// Refused, yet nobody holds it: the claim's conditional write lost
+		// the version race to another writer of the row — a duplicate
+		// delivery's status write — and the claim is still free. That is a
+		// retry, not a verdict. Once, with a fresh read; a second refusal
+		// against a free claim is a store that is not behaving, and the
+		// invocation fails so Lambda's retry and the dead-letter queue see
+		// it. Before this an empty token was read as a foreign owner and
+		// the attempt returned nil, leaving the capture in `appending` with
+		// no owner, no retry and no alarm.
+		obs.Log(ctx).Warn("append claim was refused with nobody holding it; claiming again",
+			slog.String("note_id", note.ID))
+		claimed, current, err = p.cfg.Store.ClaimCaptureAppend(ctx, tenantID, capture.ID, token)
+		if err != nil {
+			return *capture, fmt.Errorf("pipeline: claim capture append again: %w", err)
+		}
+		if !claimed && current.AppendToken == "" && current.AppendedAt == 0 {
+			*capture = current
+			return current, fmt.Errorf("pipeline: append claim refused twice with nobody holding it: %w", errAppendClaimLost)
+		}
+	}
 	if !claimed {
 		*capture = current
-		if current.AppendToken != token || current.AppendedAt != 0 {
-			// Somebody else owns this append, or an earlier attempt finished
-			// it. Either way this attempt must not write the text a second time.
+		if current.AppendedAt != 0 {
+			// An earlier attempt finished it. This one must not write the
+			// text a second time.
 			return current, nil
+		}
+		if current.AppendToken != token {
+			// Another attempt, with another cleaned artefact, owns this
+			// append and has not finished: concede to it as every other
+			// lost write of the row concedes, rather than returning a
+			// pending status as if it were done.
+			obs.Log(ctx).Info("append claim is held by another attempt; leaving the capture to it",
+				slog.String("note_id", note.ID))
+			return current, errDeliveryConceded
 		}
 
 		// Our own token, unfinished, inside the lease. Either the earlier
