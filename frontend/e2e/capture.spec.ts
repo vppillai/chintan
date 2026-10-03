@@ -940,6 +940,8 @@ test.describe('the screen locks while recording', () => {
 
     await page.getByRole('button', { name: 'Send' }).click();
     await expect(page).toHaveURL(/\/$/);
-    await expect(page.getByText(/Filed into|Filing your recording|Uploading/)).toBeVisible();
+    // Two rows can say it at once — this device's upload and the server's
+    // row — so the first is enough.
+    await expect(page.getByText(/Filed into|Filing your recording|Uploading/).first()).toBeVisible();
   });
 });
