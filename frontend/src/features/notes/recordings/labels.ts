@@ -7,6 +7,7 @@
 
 import { ApiError } from '@/api/problem.ts';
 import type { CaptureStatus, CaptureWire, NoteWire } from '@/api/schema.ts';
+import { describeAgoShort, isStuck } from '@/features/capture/filing/model.ts';
 import { AUTO_LANGUAGE, languageName } from '@/features/settings/languages.ts';
 
 /** The capture that was moving on the last render and is `appended` on this one. */
@@ -119,9 +120,12 @@ export function describeOutcome(
  * `note_id`, the router's `suggested_*` fields (cleared the moment a target
  * is set) and `appended_at`, nothing that separates "the router chose this
  * note" from "the user chose it" — so there is no truer word to put there.
- * The states that are worth a word are the ones still moving or gone wrong.
+ * The states that are worth a word are the ones still moving or gone wrong
+ * — and one that has stopped moving without saying so (`isStuck`), which
+ * names how long it has sat, so the row reads as a problem rather than as
+ * patience.
  */
-export function filedLabel(capture: CaptureWire): string {
+export function filedLabel(capture: CaptureWire, now: number = Date.now()): string {
   switch (capture.status) {
     case 'appended':
       return '';
@@ -134,6 +138,8 @@ export function filedLabel(capture: CaptureWire): string {
     case 'no_content':
       return capture.gate ? 'Nothing heard' : 'Nothing to save';
     default:
-      return 'Filing…';
+      return isStuck(capture, now)
+        ? `Still not done after ${describeAgoShort(capture.last_progress_at ?? capture.created_at, now)}`
+        : 'Filing…';
   }
 }

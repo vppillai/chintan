@@ -300,7 +300,8 @@
 
 .recording[data-status='failed'] .recording__filed,
 .recording[data-status='spend_capped'] .recording__filed,
-.recording[data-status='needs_target'] .recording__filed {
+.recording[data-status='needs_target'] .recording__filed,
+.recording[data-stuck] .recording__filed {
   color: var(--color-ink);
   font-weight: var(--font-weight-medium);
 }
@@ -322,6 +323,11 @@
 .recording__error {
   font-size: var(--font-size-sm);
   color: var(--color-ink);
+}
+
+/* Under the row's line rather than in its body: the menu's Retry is tapped on a closed row too. */
+.recording__error--row {
+  padding: 0 var(--space-3) var(--space-3);
 }
 
 .recording__actions {

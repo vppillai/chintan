@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test';
 
 import { LONG_PRESS_MS } from '../src/hooks/useLongPress.ts';
 
-import { expect, test, type ApiState } from './fixtures.ts';
+import { expect, seedStuckCapture, test, type ApiState } from './fixtures.ts';
 
 /**
  * Doing things to a recording other than playing it: moving it to another
@@ -67,7 +67,11 @@ test('a recording that is still filing cannot be deleted yet, and the screen say
   page,
   api,
 }) => {
+  // Still filing: the worker wrote the row a moment ago. Without the stamp an
+  // August row at `transcribing` is one the server has given up on, and the
+  // stub lets it go as the server would.
   api.notes['roof-repair']!.captures![0]!.status = 'transcribing';
+  api.notes['roof-repair']!.captures![0]!.last_progress_at = new Date().toISOString();
   await page.goto(RECORDINGS);
 
   await page.getByRole('button', { name: ROW }).click();
@@ -179,4 +183,57 @@ test('a settled recording can be transcribed again, and the row follows the run'
   );
   expect(posted).toBeTruthy();
   expect(api.notes['roof-repair']?.captures?.[0]?.status).toBe('transcribing');
+});
+
+/**
+ * A recording the pipeline stopped moving without saying so. It sat at
+ * "Filing your recording" over a lit strip for ten minutes, then said
+ * something might have gone wrong with nothing to tap, and Delete came back
+ * 409. Both surfaces take the failed row's shape instead: the age in the
+ * title, no strip, Retry when the server will take it, and a way to delete.
+ */
+test('a stuck recording offers Retry and Delete on the banner and the Recordings tab, aged and without a strip', async ({
+  page,
+  api,
+}) => {
+  seedStuckCapture(api);
+
+  // Home's tray: one the server will take a Retry on, one it still holds.
+  await page.goto('/');
+  const tray = page.getByRole('region', { name: 'Filing' });
+  const rows = tray.locator('.filing-row');
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText('Still not done. Retry, or dismiss it.');
+  await expect(rows.nth(0)).toContainText('· 16 min');
+  await expect(rows.nth(0).getByRole('button', { name: 'Retry' })).toBeVisible();
+  await expect(rows.nth(1)).toContainText('Still not done. You can dismiss it.');
+  await expect(rows.nth(1)).toContainText('· 12 min');
+  await expect(rows.nth(1).getByRole('button', { name: 'Retry' })).toHaveCount(0);
+  await expect(tray.getByRole('list', { name: 'Filing progress' })).toHaveCount(0);
+
+  await page.goto('/notes/roof-repair');
+  const banner = page.getByRole('region', { name: 'Filing a recording' });
+  await expect(banner).toContainText('Still not done. Retry, or dismiss it.');
+  await expect(banner).toContainText('· 16 min');
+  await expect(banner.getByRole('list', { name: 'Filing progress' })).toHaveCount(0);
+  await expect(banner.getByRole('button', { name: 'Retry' })).toBeVisible();
+  await expect(banner.getByRole('button', { name: 'Dismiss' })).toBeVisible();
+
+  await page.getByRole('tab', { name: /^Recordings/ }).click();
+  const row = page.getByRole('region', { name: 'Recordings' }).getByRole('listitem').first();
+  await expect(row).toContainText('Still not done after 16 min');
+  await expect(row.getByRole('list', { name: 'Filing progress' })).toHaveCount(0);
+  await row.getByRole('button', { name: ROW }).click();
+  await expect(page.getByRole('menuitem', { name: 'Retry' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Delete recording' })).toBeVisible();
+  // Its transcript may well exist; Retry resumes from it. Transcribe again is for a settled row.
+  await expect(page.getByRole('menuitem', { name: /transcribe again/i })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  // The banner's × is a real delete once the server will let the capture go.
+  await page.getByRole('tab', { name: 'Text' }).click();
+  await banner.getByRole('button', { name: 'Dismiss' }).click();
+  await expect.poll(() => api.deletedCaptures).toEqual(['cap-stuck']);
+  await expect(banner).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'Recordings (1)' })).toBeVisible();
 });

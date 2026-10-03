@@ -352,10 +352,11 @@ export interface CaptureWire {
    */
   last_progress_at?: string | null;
   /**
-   * When the server will first allow Retry on a capture still in the
-   * pipeline (`service.CaptureRetryAfter`: its stuck rule as an instant),
-   * so the row waits for the server's number rather than its own copy of
-   * it. Null on a finished capture.
+   * When the server will first accept a Retry — or a Delete — of a capture
+   * that is still moving (RFC 3339): `service.CaptureRetryAfter`, its stuck
+   * rule as an instant, so the row offers Retry exactly when a tap will not
+   * come back 409 (`filing/model.ts`, `retryAccepted`) and keeps no copy of
+   * the rule. Null on a finished capture.
    */
   retry_after?: string | null;
   /**

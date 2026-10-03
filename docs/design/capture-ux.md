@@ -257,7 +257,8 @@ note was made for it, so a misroute into a fresh note is visible — then
 then the ×. There is no chevron: the whole row opens the note, through a
 zero-size "Open the note" button whose `::after` stretches over it with the
 focus ring drawn on the row. The × is always drawn, under a finger too, and
-is named "Dismiss" on every row. A failed or stuck row has Retry and the ×; a
+is named "Dismiss" on every row. A failed or stuck row has Retry and the ×
+(on a stuck row the × is a delete once the server allows one, below); a
 `no_content` row has the × alone; a row asking "which note?" has no ×, since
 putting it away would hide a recording that is in no note yet — answering is
 its way off the screen. This device's failed upload keeps "Discard" as a
@@ -298,10 +299,31 @@ moving; `failed`, `spend_capped` and `needs_target` always, because each has
 an action the person must take; `appended` for `FILED_RECEIPT_MS` (a day) —
 long enough for the walk home, short enough that a second device does not
 meet receipts from weeks ago; `no_content` for `RECENTLY_SETTLED_MS` (ten
-minutes), since there is nothing to open and nothing to do. A moving row
-counts as stuck after `STUCK_AFTER_MS` (ten minutes, `schema.ts`; `isStuck`
-reads `last_progress_at ?? created_at`, the poll's clock) and offers Retry
-after `RETRY_ACCEPTED_AFTER_MS` (fifteen minutes, `filing/model.ts`).
+minutes), since there is nothing to open and nothing to do.
+
+A moving row shows its age once that is a minute: "Filing your recording"
+with "· 4 min" beside it (`describe` in `filing/model.ts`, `describeAgoShort` of
+`last_progress_at ?? created_at` — the poll's clock — on the row's minute
+tick, `hooks/useMinuteNow.ts`). It counts as stuck after `STUCK_AFTER_MS`
+(ten minutes, `schema.ts`; `isStuck`): the strip goes, since no stage is in
+progress, and the row says "Still not done. You can dismiss it." until the
+server will take a Retry, then "Still not done. Retry, or dismiss it." —
+fixed sentences by state, so a change is a change of state. The age ("· 12
+min") is drawn beside the sentence, `aria-hidden`, never inside its
+`role="status"`: it moves every minute, and a stuck row read out again each
+minute for ever is worse than one that says nothing (`describe` returns
+`{sentence, age}`). Retry appears when the
+server will accept it (`retryAccepted`): at `CaptureWire.retry_after`, the
+server's own `CaptureRetryAfter` answer, which is on every non-terminal
+capture; the row keeps no copy of the rule, and a tap before that instant is
+answered by the 409's own sentence under the row. The × on a stuck row is not only a dismissal: past the same
+bound it deletes the capture (`StuckDismissButton`, `useDeleteStuckCapture`
+in `queries/captures.ts`), which drops it from the pending list at once —
+so the poll stops counting it — and from its note; a refusal (an upload
+whose object may yet land) hides the row on this device and says the
+server's sentence through the status region; before the bound the × hides
+the row as on any other. The note's Recordings tab applies the same rule to
+its row (`note-screen.md`).
 
 Home shows every capture the person did not watch land: everything the
 router placed, and everything a device sent, whoever chose the note
@@ -327,7 +349,7 @@ keeps the poll brisk however long another has been stuck beside it:
 | a capture is under `CAPTURE_POLL_FAST_WINDOW_MS` (30 s) old | `CAPTURE_POLL_FAST_MS` | 1.5 s | the first half-minute is when a capture is most likely to flip; a 4 s poll adds a median 2 s of pure waiting to a pipeline that usually finishes in two |
 | under `CAPTURE_POLL_QUIET_MS` (2 min) | `CAPTURE_POLL_INTERVAL_MS` | 4 s | it is waiting on a provider |
 | under `STUCK_AFTER_MS` (10 min) | `CAPTURE_POLL_SLOW_MS` | 15 s | something is slow, not stuck |
-| `STUCK_AFTER_MS` and beyond | `CAPTURE_POLL_STUCK_MS` | 60 s | the row offers Retry at fifteen minutes, and this re-render is what shows it on time; a capture stuck for hours must not keep an open Home at nine hundred requests an hour |
+| `STUCK_AFTER_MS` and beyond | `CAPTURE_POLL_STUCK_MS` | 60 s | the row offers Retry at `retry_after`, and the minute tick shows it on time; a capture stuck for hours must not keep an open Home at nine hundred requests an hour, and the × deletes one the server has given up on |
 | nothing moving | — | off | — |
 
 It never stops while anything is non-terminal. The same query refetches

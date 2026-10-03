@@ -351,6 +351,26 @@ function problem(route: Route, status: number, extra: Partial<ProblemWire> = {})
 /** Statuses the pipeline will not move on from; a capture in one may be deleted or moved. */
 const TERMINAL = new Set(['appended', 'needs_target', 'no_content', 'failed', 'spend_capped']);
 
+/** The worker's timeout: how long after its last write the server lets a pending capture be retried or deleted. */
+const RETRY_AFTER_MS = 15 * 60_000;
+
+/**
+ * A capture as the server serialises it: `retry_after` on every pending row
+ * (`service.CaptureRetryAfter` — the last progress, else the creation, plus
+ * the worker's timeout) and null on a finished one. Derived at the edge so a
+ * spec that moves a row's status by hand still emits the shape the app reads.
+ */
+function withRetryAfter<T extends CaptureRecord>(capture: T): T {
+  if (TERMINAL.has(capture.status)) return { ...capture, retry_after: null };
+  const since = Date.parse(capture.last_progress_at ?? capture.created_at);
+  return { ...capture, retry_after: new Date(since + RETRY_AFTER_MS).toISOString() };
+}
+
+/** A note as the server serialises it: its captures through `withRetryAfter`. */
+function noteWire<T extends NoteRecord>(note: T): T {
+  return note.captures ? { ...note, captures: note.captures.map(withRetryAfter) } : note;
+}
+
 function findCapture(
   state: ApiState,
   captureId: string,
@@ -448,7 +468,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       await json(
         route,
         {
-          capture: created,
+          capture: withRetryAfter(created),
           upload: {
             url: `${url.origin}/upload/${id}`,
             expires_at: new Date(Date.now() + 900_000).toISOString(),
@@ -470,7 +490,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         status === 'pending'
           ? state.captures.filter((capture) => capture.status !== 'appended')
           : state.captures;
-      await json(route, { items } satisfies PageWire<CaptureWire>);
+      await json(route, { items: items.map(withRetryAfter) } satisfies PageWire<CaptureWire>);
       return;
     }
 
@@ -480,8 +500,11 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       if (capture) {
         capture.status = 'transcribing';
         capture.error = null;
+        // Every hand-off stamps the row, as the real worker does; without it a
+        // row from the seed's August would count as stuck the moment it moved.
+        capture.last_progress_at = new Date().toISOString();
       }
-      await json(route, capture, 202);
+      await json(route, capture && withRetryAfter(capture), 202);
       return;
     }
 
@@ -510,7 +533,8 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       }
       capture.status = 'transcribing';
       capture.error = null;
-      await json(route, capture, 202);
+      capture.last_progress_at = new Date().toISOString();
+      await json(route, withRetryAfter(capture), 202);
       return;
     }
 
@@ -541,7 +565,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         await problem(route, 404, { title: 'Not found' });
         return;
       }
-      await json(route, capture);
+      await json(route, withRetryAfter(capture));
       return;
     }
     if (captureMatch && method === 'DELETE') {
@@ -550,10 +574,13 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         await problem(route, 404, { title: 'Not found' });
         return;
       }
-      if (!TERMINAL.has(found.capture.status)) {
+      // In flight until `retry_after`, the server's own answer; past it, a
+      // stuck capture may go like a settled one.
+      const letGo = Date.parse(withRetryAfter(found.capture).retry_after ?? '') <= Date.now();
+      if (!TERMINAL.has(found.capture.status) && !letGo) {
         await problem(route, 409, {
-          title: 'Still filing',
-          detail: 'This recording is still moving through the pipeline.',
+          title: 'Conflict',
+          detail: 'the capture is still being processed; wait for it to finish or fail',
         });
         return;
       }
@@ -763,7 +790,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       if (method === 'GET') {
         // The detail always carries the two cleaned-view fields and the kind.
         await json(route, {
-          ...note,
+          ...noteWire(note),
           kind: note.kind ?? 'note',
           cleaned: note.cleaned ?? null,
           auto_clean: note.auto_clean ?? false,
@@ -831,7 +858,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
           else note.language = body['language'];
         }
         note.version += 1;
-        await json(route, note);
+        await json(route, noteWire(note));
         return;
       }
     }
@@ -1144,6 +1171,31 @@ export { expect } from '@playwright/test';
  * open — enough for the Items tab's grouping, its grip and its Done section.
  * Not in `freshState`, because every Home assertion counts the notes there.
  */
+/**
+ * Recordings the pipeline stopped moving without saying so (the stub adds
+ * `retry_after`, the last progress plus the worker's fifteen minutes, as the
+ * server does): one sixteen minutes quiet, so the server will take a Retry
+ * or a Delete now — on the roof note (its banner and its Recordings tab) and
+ * untargeted for Home's tray — and one twelve minutes quiet, stuck by the
+ * row's rule but still held by the server, on Home alone, so the tray shows
+ * both sentences.
+ */
+export function seedStuckCapture(api: ApiState): void {
+  const minutes = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
+  const quietFor = (n: number) => ({
+    status: 'appending' as const,
+    created_at: minutes(40),
+    last_progress_at: minutes(n),
+    version: 1,
+    duration_ms: 8_000,
+  });
+  api.notes['roof-repair']!.captures!.push({ ...quietFor(16), id: 'cap-stuck', note_id: 'roof-repair', targeted: true });
+  api.captures.push(
+    { ...quietFor(16), id: 'cap-stuck-home', note_id: null },
+    { ...quietFor(12), id: 'cap-stuck-held', note_id: null },
+  );
+}
+
 export function seedChecklist(api: ApiState): void {
   api.notes['shopping'] = {
     id: 'shopping',

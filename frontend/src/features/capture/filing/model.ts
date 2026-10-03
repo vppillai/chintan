@@ -41,48 +41,57 @@ export function stageIndex(status: CaptureStatus): number {
 }
 
 /**
- * Whether a non-terminal capture has sat past `STUCK_AFTER_MS` (`schema.ts`;
- * the poll backs off to once a minute at the same threshold) and the row
- * should stop trusting the pipeline and offer a way out. Measured from
- * `last_progress_at` — every stage hand-off re-stamps it, so a capture that
- * moved into transcribing nine minutes in is not called stuck a minute
- * later — else from `created_at`, on rows from before it was recorded. The
- * poll reads the same clock (`capturePollInterval`), so the two agree.
+ * When the pipeline last wrote the capture, as a timestamp: `last_progress_at`
+ * — every stage hand-off re-stamps it — else `created_at`, on rows from
+ * before it was recorded. `NaN` when neither parses. The one clock the row's
+ * age, the stuck rule, the Retry gate and the poll (`capturePollInterval`)
+ * all read, so they agree.
  */
-export function isStuck(capture: CaptureWire): boolean {
-  if (isTerminalStatus(capture.status)) return false;
-  const since = Date.parse(capture.last_progress_at ?? capture.created_at);
-  if (Number.isNaN(since)) return false;
-  return Date.now() - since > STUCK_AFTER_MS;
+export function progressAt(capture: CaptureWire): number {
+  return Date.parse(capture.last_progress_at ?? capture.created_at);
 }
 
 /**
- * When the server will accept a Retry of a capture that is still moving.
- *
- * `RetryCapture` refuses an in-flight capture until no worker can still be
- * on it: fifteen minutes since the row was last written (the worker's
- * timeout), or the twenty-minute append lease while `appending`. The row
- * offered Retry at ten minutes, so for five to ten minutes every tap came
- * back "still in flight". The copy keeps `STUCK_AFTER_MS`; the button waits
- * for this.
- *
- * The server measures from `last_progress_at`, which every stage hand-off
- * re-stamps, and the API does not put that field on the wire yet — so until
- * it does, the row measures from `created_at`: exact for a capture that never
- * moved, early by however long it did move for one that reached transcribing
- * before it stalled, and the tap inside that gap is answered by the 409's
- * own sentence. Read when carried, so the gap closes the day it is sent.
+ * Whether a non-terminal capture has sat past `STUCK_AFTER_MS` (`schema.ts`;
+ * the poll backs off to once a minute at the same threshold) and the row
+ * should stop trusting the pipeline and offer a way out. Measured from
+ * `progressAt`, so a capture that moved into transcribing nine minutes in is
+ * not called stuck a minute later.
  */
-const RETRY_ACCEPTED_AFTER_MS = 15 * 60 * 1000;
-const RETRY_ACCEPTED_APPENDING_MS = 20 * 60 * 1000;
-
-export function retryAccepted(capture: CaptureWire): boolean {
+export function isStuck(capture: CaptureWire, now: number = Date.now()): boolean {
   if (isTerminalStatus(capture.status)) return false;
-  const since = Date.parse(capture.last_progress_at ?? capture.created_at);
+  const since = progressAt(capture);
   if (Number.isNaN(since)) return false;
-  const after =
-    capture.status === 'appending' ? RETRY_ACCEPTED_APPENDING_MS : RETRY_ACCEPTED_AFTER_MS;
-  return Date.now() - since > after;
+  return now - since > STUCK_AFTER_MS;
+}
+
+/**
+ * When the server will accept a Retry — or a Delete — of a capture that is
+ * still moving: `retry_after` on the wire, `service.CaptureRetryAfter`'s
+ * answer, read to the second. The row keeps no copy of the server's rule —
+ * it had one (fifteen minutes; twenty while `appending`), and for five
+ * minutes of every stall the two disagreed and a tap was a 409. The copy
+ * calls the row stuck at `STUCK_AFTER_MS` (the visual flip); the button
+ * waits for this. A non-terminal row the server has not dated is never
+ * offered Retry: the field is on every such row the server sends.
+ */
+export function retryAccepted(capture: CaptureWire, now: number = Date.now()): boolean {
+  if (isTerminalStatus(capture.status)) return false;
+  const told = capture.retry_after ? Date.parse(capture.retry_after) : NaN;
+  return !Number.isNaN(told) && now >= told;
+}
+
+/** What a filing row says: the state, and — apart from it — how long it has sat. */
+export interface Described {
+  /** The row's live sentence. A fixed string per state, so a change is a change of state. */
+  sentence: string;
+  /**
+   * "4 min", "3 h": how long since the pipeline last moved the capture, once
+   * that is a minute or more; `''` before. Drawn beside the sentence, never
+   * inside its live region — it changes every minute, and a row that is
+   * re-announced each minute for ever is worse than one that says nothing.
+   */
+  age: string;
 }
 
 /**
@@ -90,27 +99,48 @@ export function retryAccepted(capture: CaptureWire): boolean {
  * one is a receipt (`ReceiptGroup`). `recordedHere` is false on a device that
  * did not make the recording (`useRecordedHere`): there, a capture still at
  * `uploaded` is waiting on the device that holds the bytes, stuck or not, and
- * nothing this one can do will move it.
+ * nothing this one can do will move it. `now` is the clock the age and the
+ * stuck rule are read against; the row re-renders on a minute tick.
+ *
+ * A moving row says "Filing your recording" with its age beside it: a row
+ * that said only that for ten minutes gave the person nothing to judge it
+ * by. Past the stuck bound (`isStuck`) the sentence names what can be done,
+ * and only that: "Retry, or dismiss it." once the server will take a Retry
+ * (`retryAccepted`), "You can dismiss it." before — the earlier sentence
+ * named a Retry that was not on the row.
  */
-export function describe(capture: CaptureWire, stuck: boolean, recordedHere = true): string {
+export function describe(
+  capture: CaptureWire,
+  recordedHere = true,
+  now: number = Date.now(),
+): Described {
+  const said = (sentence: string, age = ''): Described => ({ sentence, age });
   switch (capture.status) {
     case 'needs_target':
-      return 'Which note should this go in?';
+      return said('Which note should this go in?');
     case 'no_content':
       // A gate heard nothing: the microphone never rose, or the provider
       // was unsure of every word. Otherwise the recording was an
       // instruction to the app, which is nothing to save but was heard.
-      return capture.gate ? 'Nothing heard' : 'Nothing to save from that recording';
+      return said(capture.gate ? 'Nothing heard' : 'Nothing to save from that recording');
     case 'spend_capped':
-      return 'Daily spending cap reached';
+      return said('Daily spending cap reached');
     case 'failed':
-      return capture.error ?? 'That capture did not finish';
-    default:
+      return said(capture.error ?? 'That capture did not finish');
+    default: {
       if (capture.status === 'uploaded' && !recordedHere) {
-        return 'Waiting for the device that recorded it';
+        return said('Waiting for the device that recorded it');
       }
-      if (stuck) return 'Still not done — something may have gone wrong';
-      return 'Filing your recording';
+      const since = describeAgoShort(capture.last_progress_at ?? capture.created_at, now);
+      const age = since === 'now' ? '' : since;
+      if (!isStuck(capture, now)) return said('Filing your recording', age);
+      return said(
+        retryAccepted(capture, now)
+          ? 'Still not done. Retry, or dismiss it.'
+          : 'Still not done. You can dismiss it.',
+        age,
+      );
+    }
   }
 }
 
@@ -184,13 +214,18 @@ export function describeAgoShort(iso: string, now: number): string {
 }
 
 /**
- * What a Retry that the server refused says under the row. The problem's
+ * What a request the server refused says under the row. The problem's
  * `detail` is one of the backend's fixed sentences — "that recording has
  * already been filed", "an identical request is still in flight" — and is
- * written for a person; anything else is the client's own sentence.
+ * written for a person; a network failure has the client's own sentence
+ * (`ApiError.userMessage`); anything else is `fallback`, the caller's
+ * sentence for its own verb, so a delete that failed never says "retry".
  */
-export function retryMessage(error: unknown): string {
-  return error instanceof ApiError ? error.userMessage : 'The retry did not go through. Try again.';
+export function retryMessage(
+  error: unknown,
+  fallback = 'The retry did not go through. Try again.',
+): string {
+  return error instanceof ApiError ? error.userMessage : fallback;
 }
 
 /** Which glyph a filing notice wears, and the `data-kind` its row carries (F9). */

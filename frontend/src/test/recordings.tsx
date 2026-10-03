@@ -80,7 +80,7 @@ export function apiStub(
   initial: NoteDetailWire = NOTE,
   overrides: Partial<
     Record<
-      'delete' | 'move' | 'manifest' | 'segments' | 'retranscribe',
+      'delete' | 'move' | 'manifest' | 'segments' | 'retranscribe' | 'retry',
       (init?: RequestInit) => Response
     >
   > = {},
@@ -135,12 +135,22 @@ export function apiStub(
       const body = JSON.parse(String(init?.body)) as { note_id?: string };
       return json({ ...CAPTURE, id: captureId, note_id: body.note_id ?? 'made-from-title' });
     }
-    if (method === 'POST' && url.pathname.endsWith('/retranscribe')) {
-      if (overrides.retranscribe) return overrides.retranscribe(init);
-      // Back at the start of the pipeline, as the real server answers.
+    if (method === 'POST' && url.pathname.endsWith('/retry')) {
+      if (overrides.retry) return overrides.retry(init);
       const row = (note.captures ?? []).find((capture) => capture.id === captureId);
       if (row) row.status = 'transcribing';
-      return json({ ...CAPTURE, id: captureId, status: 'transcribing' }, 202);
+      return json({ ...CAPTURE, id: captureId, status: 'transcribing', last_progress_at: new Date().toISOString() }, 202);
+    }
+    if (method === 'POST' && url.pathname.endsWith('/retranscribe')) {
+      if (overrides.retranscribe) return overrides.retranscribe(init);
+      // Back at the start of the pipeline, as the real server answers — with
+      // the hand-off stamped, so the row is young again and not stuck.
+      const row = (note.captures ?? []).find((capture) => capture.id === captureId);
+      if (row) row.status = 'transcribing';
+      return json(
+        { ...CAPTURE, id: captureId, status: 'transcribing', last_progress_at: new Date().toISOString() },
+        202,
+      );
     }
     if (url.pathname.endsWith('/v1/notes')) {
       return json({

@@ -47,7 +47,16 @@ describe('a recording nothing was heard in', () => {
 describe('a recording still being made into this note', () => {
   it('says nothing about a row that is filed, and names every other state', () => {
     expect(filedLabel(CAPTURE)).toBe('');
-    expect(filedLabel({ ...CAPTURE, status: 'transcribing' })).toBe('Filing…');
+    expect(filedLabel({ ...CAPTURE, status: 'transcribing', created_at: new Date().toISOString() })).toBe('Filing…');
+    // Stopped moving without saying so: the row names how long, as the tray does.
+    const now = Date.parse('2026-10-02T12:00:00.000Z');
+    const stale = new Date(now - 12 * 60_000).toISOString();
+    expect(filedLabel({ ...CAPTURE, status: 'appending', last_progress_at: stale }, now)).toBe(
+      'Still not done after 12 min',
+    );
+    expect(
+      filedLabel({ ...CAPTURE, status: 'appending', created_at: stale, last_progress_at: new Date(now).toISOString() }, now),
+    ).toBe('Filing…');
     expect(filedLabel({ ...CAPTURE, status: 'needs_target' })).toBe('Needs a target');
     expect(filedLabel({ ...CAPTURE, status: 'failed' })).toBe('Failed');
   });

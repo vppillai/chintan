@@ -3,7 +3,20 @@ import { describe, expect, it } from 'vitest';
 import { CAPTURE_STATUSES, isTerminalStatus } from '@/api/schema.ts';
 import { STUCK_CREATED_AT, capture } from '@/test/filing.tsx';
 
-import { STAGES, describe as describeRow, describeAgoShort, groupReceipts, noticeKind, stageIndex, tierCaptures } from './model.ts';
+import {
+  STAGES,
+  describe as describeRow,
+  describeAgoShort,
+  groupReceipts,
+  noticeKind,
+  retryAccepted,
+  retryMessage,
+  stageIndex,
+  tierCaptures,
+} from './model.ts';
+
+const NOW = Date.parse('2026-10-02T12:00:00.000Z');
+const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
 
 describe('stageIndex', () => {
   it('lights a segment for every status the pipeline can leave a capture in', () => {
@@ -115,13 +128,84 @@ describe('describe', () => {
     // The gate is the one signal that tells silence or noise (the microphone
     // never rose, or the provider was unsure of every word) from a
     // recording that was heard and was only an instruction to the app.
-    expect(describeRow(capture({ status: 'no_content', gate: 'quiet' }), false)).toBe('Nothing heard');
-    expect(describeRow(capture({ status: 'no_content', gate: 'no_speech' }), false)).toBe('Nothing heard');
-    expect(describeRow(capture({ status: 'no_content', gate: 'hint_echo' }), false)).toBe('Nothing heard');
-    expect(describeRow(capture({ status: 'no_content', gate: null }), false)).toBe(
-      'Nothing to save from that recording',
+    const sentence = (row: Parameters<typeof describeRow>[0]) => describeRow(row).sentence;
+    expect(sentence(capture({ status: 'no_content', gate: 'quiet' }))).toBe('Nothing heard');
+    expect(sentence(capture({ status: 'no_content', gate: 'no_speech' }))).toBe('Nothing heard');
+    expect(sentence(capture({ status: 'no_content', gate: 'hint_echo' }))).toBe('Nothing heard');
+    expect(sentence(capture({ status: 'no_content', gate: null }))).toBe('Nothing to save from that recording');
+    expect(sentence(capture({ status: 'no_content' }))).toBe('Nothing to save from that recording');
+    // A stopped row has no age: its sentence is the whole of what it says.
+    expect(describeRow(capture({ status: 'failed', created_at: ago(30) }), true, NOW).age).toBe('');
+  });
+
+  it('carries the age of a moving row beside a sentence that only changes with the state', () => {
+    // A row that said only "Filing your recording" for ten minutes gave the
+    // person nothing to judge it by; then it said something might be wrong
+    // and offered nothing. The age is read from the last progress — a
+    // capture that moved a moment ago is young whatever its row's age — and
+    // kept apart from the sentence, which is a live region.
+    const row = (minutes: number) => capture({ created_at: ago(60), last_progress_at: ago(minutes) });
+    const say = (minutes: number) => describeRow(row(minutes), true, NOW);
+    expect(say(0)).toEqual({ sentence: 'Filing your recording', age: '' });
+    expect(say(1)).toEqual({ sentence: 'Filing your recording', age: '1 min' });
+    expect(say(4)).toEqual({ sentence: 'Filing your recording', age: '4 min' });
+    expect(say(10)).toEqual({ sentence: 'Filing your recording', age: '10 min' });
+    // Without `last_progress_at` the row's own age is the age.
+    expect(describeRow(capture({ created_at: ago(7) }), true, NOW).age).toBe('7 min');
+    // Another device's upload keeps its own sentence, stuck or not.
+    expect(describeRow(capture({ status: 'uploaded', created_at: ago(12) }), false, NOW).sentence).toBe(
+      'Waiting for the device that recorded it',
     );
-    expect(describeRow(capture({ status: 'no_content' }), false)).toBe('Nothing to save from that recording');
+  });
+
+  it('names only what the row offers once it is stuck: dismiss alone until the server will take a Retry', () => {
+    // Two fixed sentences by phase. The first draft said "Retry, or dismiss
+    // it." from the tenth minute while the button waited for the fifteenth.
+    const at = (minutes: number, extra: Partial<Parameters<typeof capture>[0]> = {}) =>
+      describeRow(capture({ created_at: ago(60), last_progress_at: ago(minutes), ...extra }), true, NOW);
+    expect(at(12)).toEqual({ sentence: 'Still not done. You can dismiss it.', age: '12 min' });
+    expect(at(16)).toEqual({ sentence: 'Still not done. Retry, or dismiss it.', age: '16 min' });
+    expect(at(180).sentence).toBe('Still not done. Retry, or dismiss it.');
+    expect(at(180).age).toBe('3 h');
+    // The server's word moves the boundary either way.
+    expect(at(12, { retry_after: ago(1) }).sentence).toBe('Still not done. Retry, or dismiss it.');
+    expect(at(16, { retry_after: new Date(NOW + 60_000).toISOString() }).sentence).toBe(
+      'Still not done. You can dismiss it.',
+    );
+  });
+});
+
+describe('retryMessage', () => {
+  it('uses the caller\'s sentence for an error the server never worded', () => {
+    expect(retryMessage(new Error('boom'))).toBe('The retry did not go through. Try again.');
+    expect(retryMessage(new Error('boom'), 'Could not delete the recording. Try again.')).toBe(
+      'Could not delete the recording. Try again.',
+    );
+  });
+});
+
+describe('retryAccepted', () => {
+  it('follows the server\'s retry_after to the second when the wire carries it', () => {
+    const at = (offsetSeconds: number) => new Date(NOW + offsetSeconds * 1000).toISOString();
+    // Young by the client's rule, but the server says it will take a retry now.
+    expect(retryAccepted(capture({ created_at: ago(2), retry_after: at(-1) }), NOW)).toBe(true);
+    expect(retryAccepted(capture({ created_at: ago(2), retry_after: at(0) }), NOW)).toBe(true);
+    // Old by the client's rule, but the server is still holding a lease on it.
+    expect(retryAccepted(capture({ created_at: ago(40), retry_after: at(30) }), NOW)).toBe(false);
+    // Never on a row that has stopped: a failed row's Retry is unconditional
+    // and read elsewhere; an appended one has nothing to retry.
+    expect(retryAccepted(capture({ status: 'appended', retry_after: at(-60) }), NOW)).toBe(false);
+  });
+
+  it('keeps no copy of the rule: a row the server has not dated is never offered Retry', () => {
+    // The stub derives `retry_after` the server's way, so an aged row is
+    // accepted by the field alone, whatever its status.
+    expect(retryAccepted(capture({ created_at: ago(14) }), NOW)).toBe(false);
+    expect(retryAccepted(capture({ created_at: ago(16) }), NOW)).toBe(true);
+    expect(retryAccepted(capture({ status: 'appending', created_at: ago(16) }), NOW)).toBe(true);
+    // Null, absent or unreadable: never, rather than a guess.
+    expect(retryAccepted(capture({ created_at: ago(30), retry_after: null }), NOW)).toBe(false);
+    expect(retryAccepted(capture({ created_at: ago(30), retry_after: 'soon' }), NOW)).toBe(false);
   });
 });
 

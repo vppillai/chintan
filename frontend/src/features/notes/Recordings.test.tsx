@@ -78,7 +78,7 @@ describe('deleting a recording', () => {
     const user = userEvent.setup();
     bucketStub();
     const api = apiStub(
-      { ...NOTE, captures: [{ ...CAPTURE, status: 'transcribing' }] },
+      { ...NOTE, captures: [{ ...CAPTURE, status: 'transcribing', last_progress_at: new Date().toISOString() }] },
       {
         delete: () =>
           json(
@@ -438,7 +438,7 @@ describe('a recording still being made into this note', () => {
 
   it('shows the filing stages under a row the pipeline is still working on, and asks for no audio', async () => {
     bucketStub();
-    const api = apiStub({ ...NOTE, captures: [{ ...CAPTURE, id: 'cap-2', status: 'transcribing' }, CAPTURE] });
+    const api = apiStub({ ...NOTE, captures: [{ ...CAPTURE, id: 'cap-2', status: 'transcribing', last_progress_at: new Date().toISOString() }, CAPTURE] });
     mount(api.fetchImpl);
 
     const rows = await recordingRows();
@@ -462,7 +462,7 @@ describe('a recording still being made into this note', () => {
 
   it('opens itself when it lands', async () => {
     bucketStub();
-    const moving: CaptureWire = { ...CAPTURE, id: 'cap-2', status: 'transcribing' };
+    const moving: CaptureWire = { ...CAPTURE, id: 'cap-2', status: 'transcribing', last_progress_at: new Date().toISOString() };
     const api = apiStub({ ...NOTE, captures: [moving] });
     const queryClient = testQueryClient();
     mount(api.fetchImpl, queryClient);
