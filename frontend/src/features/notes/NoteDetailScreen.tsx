@@ -1,5 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import {
+  Suspense,
+  lazy,
   useCallback,
   useEffect,
   useId,
@@ -40,12 +42,7 @@ import { CleanedPanel } from './CleanedPanel.tsx';
 import { FindBar, type FindTarget } from './FindBar.tsx';
 import { NoteMenu } from './NoteActions.tsx';
 import { isUntouchedPlaceholder } from './newNote.ts';
-import {
-  NoteDrawer,
-  noteLanguageFieldId,
-  notePanelHeadingId,
-  type NotePanelKind,
-} from './NoteDrawer.tsx';
+import { noteLanguageFieldId, notePanelHeadingId, type NotePanelKind } from './notePanel.ts';
 import {
   NoteTabList,
   noteTabId,
@@ -62,6 +59,14 @@ import { describeProgress, parseChecklist, progressOf } from './checklist.ts';
 import { describePurge, purgeCountdown } from './purge.ts';
 import { TextPanel, type Flash } from './TextPanel.tsx';
 import { useNoteEditor, type NoteEditor } from './useNoteEditor.ts';
+
+/*
+ * The Details/Share drawer is its own chunk: a launch never opens it, and
+ * with the capture screen in the main chunk the drawer's tag, alias and
+ * share editors are what made room for it (`app/router.tsx`). It is fetched
+ * when a note opens, which the precache makes free after the first visit.
+ */
+const NoteDrawer = lazy(() => import('./NoteDrawer.tsx').then((m) => ({ default: m.NoteDrawer })));
 
 /**
  * A note.
@@ -192,6 +197,9 @@ export function NoteDetailScreen() {
       });
       const target =
         kind === 'details' ? noteLanguageFieldId(note.id) : notePanelHeadingId(note.id);
+      // The drawer is a lazy chunk whose import starts with this screen's
+      // first render; a ⋮ opened inside that window finds no element and
+      // focus stays on the menu's trigger, which is the fallback either way.
       document.getElementById(target)?.focus();
     },
     [note],
@@ -412,16 +420,18 @@ export function NoteDetailScreen() {
         selection ends. The drawer is outside the panels, so it is there on
         every tab.
       */}
-      <NoteDrawer
-        note={note}
-        editor={editor}
-        hidden={selectingRecordings}
-        // A conflict is resolved before anything else, and at a laptop height
-        // the open Details panel covered the banner's two buttons. The panel
-        // steps aside while the banner is up and is back as it was after.
-        open={editor.model.state === 'conflict' ? null : panel}
-        onOpenChange={changePanel}
-      />
+      <Suspense fallback={null}>
+        <NoteDrawer
+          note={note}
+          editor={editor}
+          hidden={selectingRecordings}
+          // A conflict is resolved before anything else, and at a laptop height
+          // the open Details panel covered the banner's two buttons. The panel
+          // steps aside while the banner is up and is back as it was after.
+          open={editor.model.state === 'conflict' ? null : panel}
+          onOpenChange={changePanel}
+        />
+      </Suspense>
     </div>
   );
 }

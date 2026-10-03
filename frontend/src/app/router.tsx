@@ -2,6 +2,7 @@ import { lazy } from 'react';
 import type { RouteObject } from 'react-router';
 
 import { AppShell } from '@/components/AppShell.tsx';
+import { CaptureScreen } from '@/features/capture/CaptureScreen.tsx';
 import { NoteDetailScreen } from '@/features/notes/NoteDetailScreen.tsx';
 import { NotFoundScreen } from '@/screens/NotFoundScreen.tsx';
 import { NotesScreen } from '@/screens/NotesScreen.tsx';
@@ -11,13 +12,17 @@ import { RouteError } from './RouteError.tsx';
 import { LEGACY_ROUTES, ROUTES } from './routes.ts';
 
 /*
- * Loaded when first visited, not with Home (round-3 T47): the bundle was one
- * 548 KB chunk, and someone opening the app to record paid for the usage
- * chart and the About page on the way. Each is its own chunk; the shell's
- * <Suspense> shows nothing in the outlet for the moment it takes, and the
- * service worker precaches every chunk, so it is a first-visit cost only.
- * The library and the note screen stay in the main chunk: they are where
- * every launch lands.
+ * Loaded when first visited, not with Home: someone opening the app to
+ * record must not pay for the usage chart and the About page on the way.
+ * Each is its own chunk; the shell's <Suspense> shows nothing in the outlet
+ * for the moment it takes, and the service worker precaches every chunk, so
+ * it is a first-visit cost only. The library, the note screen and the
+ * capture screen stay in the main chunk: they are where a launch lands. The
+ * capture screen was a lazy chunk once, and the manifest's "Record a
+ * thought" shortcut paid one extra round trip for it on every cold launch —
+ * measured at 650 ms of the 3.1 s to a live microphone on Fast 3G
+ * (`e2e/launch-latency.spec.ts`); the note screen's drawer and the zip
+ * writer left the main chunk to make room for it.
  */
 const SettingsScreen = lazy(() =>
   import('@/features/settings/SettingsScreen.tsx').then((m) => ({ default: m.SettingsScreen })),
@@ -27,9 +32,6 @@ const UsageScreen = lazy(() =>
 );
 const AboutScreen = lazy(() =>
   import('@/screens/AboutScreen.tsx').then((m) => ({ default: m.AboutScreen })),
-);
-const CaptureScreen = lazy(() =>
-  import('@/features/capture/CaptureScreen.tsx').then((m) => ({ default: m.CaptureScreen })),
 );
 
 /**

@@ -128,8 +128,9 @@ export default defineConfig(({ mode }) => {
        * two lazy screens. Accepted. Rolldown's `codeSplitting.minSize` was
        * tried and left them as they were while splitting `jsx-runtime` out of
        * `routes` into a 9 kB chunk every launch would fetch (review
-       * 2026-10-01, FE-2). The main chunk's size is held by
-       * scripts/check-bundle.mjs, CI's step after the build.
+       * 2026-10-01, FE-2). What a launch fetches — the main chunk and the
+       * chunks index.html preloads — is held by scripts/check-bundle.mjs,
+       * CI's step after the build.
        */
     },
     server: {

@@ -346,6 +346,9 @@ const SURFACES: readonly Surface[] = [
     needsMicrophone: true,
     open: async (page) => {
       await page.goto('/capture');
+      // A Stop inside the first encoder frame can finish with nothing to
+      // review; the clock moving means a chunk is on its way.
+      await expect(page.locator('.capture__timer')).not.toHaveText('00:00');
       await page.getByRole('button', { name: 'Stop' }).click();
       await expect(page.locator('.capture__state')).toHaveText('Ready to send');
     },

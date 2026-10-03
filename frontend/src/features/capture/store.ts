@@ -15,6 +15,7 @@ import { errorFeedback, startFeedback, stopFeedback } from './feedback.ts';
 import {
   INITIAL_CAPTURE,
   captureReducer,
+  elapsedAt,
   type CaptureEvent,
   type CaptureModel,
 } from './machine.ts';
@@ -127,13 +128,24 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
     // A changed target is rewritten too, or a recording resumed from disk
     // after a reload would be sent to the note the user had moved it away from.
     const retargeted = event.type === 'target' && after.state !== 'requesting';
-    if ((started || reviewed || retargeted) && after.localId) {
+    /*
+     * Behind a locked screen the record is kept truthful for as long as the
+     * recording lasts: on the hide itself and on every chunk after it, with
+     * the clock read now rather than from the last tick, which a hidden
+     * page's throttled timers leave behind. A page the OS then kills leaves
+     * `ResumePrompt` a recording of its real length, not the 0:00 the first
+     * write carried.
+     */
+    const parked =
+      (event.type === 'pageHidden' || (event.type === 'data' && after.hidden)) &&
+      (after.state === 'recording' || after.state === 'paused');
+    if ((started || reviewed || retargeted || parked) && after.localId) {
       void saveCaptureRecord({
         localId: after.localId,
         serverCaptureId: null,
         noteId: after.noteId,
         contentType: controller?.current()?.encoder.contentType ?? 'audio/webm',
-        durationMs: after.elapsedMs,
+        durationMs: parked ? elapsedAt(after, recorderDeps.now()) : after.elapsedMs,
         bytes: after.bytes,
         chunkCount: after.chunks,
         createdAt: Date.now(),

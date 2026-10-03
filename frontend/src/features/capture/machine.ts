@@ -97,6 +97,14 @@ export interface CaptureModel {
   micTaken: boolean;
   /** Recording again after a `micTaken` pause. Cleared by the next pause or stop. */
   micReturned: boolean;
+  /** The page is hidden right now: the screen locked, or another app is in front. */
+  hidden: boolean;
+  /**
+   * The current pause or interruption arrived while the page was hidden. On a
+   * phone that is the screen locking, and the screen says so — "the
+   * microphone was taken by another app" would blame the wrong thing.
+   */
+  background: boolean;
   /** Which cap stopped the recording, if either did. */
   capReached: CapReason | null;
   nearDurationLimit: boolean;
@@ -121,14 +129,17 @@ export type CaptureEvent =
   | { type: 'pause'; now: number }
   | { type: 'resume'; now: number }
   | { type: 'stop'; now: number }
-  /** The recorder emitted its final chunk; the buffer is complete. */
-  | { type: 'finalised' }
+  /** The recorder emitted its final chunk; the buffer is complete. `now` settles a stop nobody asked for. */
+  | { type: 'finalised'; now?: number }
   | { type: 'recorderError'; message?: string }
   /** A track ended — an incoming call, a disconnected headset. */
   | { type: 'trackEnded'; now: number }
   /** The OS took the microphone without ending the track. Timed: it pauses. */
   | { type: 'trackMuted'; now: number }
   | { type: 'trackUnmuted'; now: number }
+  /** The document went hidden — the screen locked, or the app went behind another. */
+  | { type: 'pageHidden'; now: number }
+  | { type: 'pageVisible'; now: number }
   | { type: 'uploadStart' }
   | { type: 'uploadProgress'; progress: number }
   | { type: 'captureCreated'; serverCaptureId: string }
@@ -155,6 +166,8 @@ export const INITIAL_CAPTURE: CaptureModel = {
   interrupted: false,
   micTaken: false,
   micReturned: false,
+  hidden: false,
+  background: false,
   capReached: null,
   nearDurationLimit: false,
   nearSizeLimit: false,
@@ -198,7 +211,8 @@ export function canRetryUpload(model: CaptureModel): boolean {
   return model.state === 'failed' && (model.failure?.recoverable ?? false) && model.bytes > 0;
 }
 
-function elapsedAt(model: CaptureModel, now: number): number {
+/** The recording's length at `now`, the running segment included. */
+export function elapsedAt(model: CaptureModel, now: number): number {
   return model.accumulatedMs + (model.startedAt === null ? 0 : now - model.startedAt);
 }
 
@@ -312,6 +326,7 @@ export function captureReducer(model: CaptureModel, event: CaptureEvent): Captur
         startedAt: event.now,
         micTaken: false,
         micReturned: false,
+        background: false,
       };
 
     case 'stop':
@@ -321,16 +336,40 @@ export function captureReducer(model: CaptureModel, event: CaptureEvent): Captur
         state: 'stopping',
         micTaken: false,
         micReturned: false,
+        background: false,
       };
 
-    case 'finalised':
+    case 'finalised': {
+      /*
+       * A final chunk nobody asked for: the platform stopped the recorder
+       * itself — a page thawed after the screen was locked, a recorder the OS
+       * ended without ending the track. Settled as an interruption, with the
+       * audio kept; left as it was, the screen said "Recording" over a dead
+       * recorder until Stop was tapped.
+       */
+      if (RECORDING_STATES.has(model.state)) {
+        const settled =
+          event.now === undefined
+            ? { ...model, accumulatedMs: model.elapsedMs, startedAt: null }
+            : settle(model, event.now);
+        if (settled.bytes === 0) {
+          return fail(settled, 'recorder-failed', 'Recording was interrupted.', false);
+        }
+        return { ...settled, state: 'review', interrupted: true, background: model.hidden };
+      }
       if (model.state !== 'stopping') return model;
       // No audio at all is a failure, not an empty note: uploading zero bytes
       // would burn a transcription call to produce nothing.
       if (model.bytes === 0) {
-        return fail(model, 'recorder-failed', 'Nothing was recorded.', false);
+        return fail(
+          model,
+          'recorder-failed',
+          model.interrupted ? 'Recording was interrupted.' : 'Nothing was recorded.',
+          false,
+        );
       }
       return { ...model, state: 'review' };
+    }
 
     case 'recorderError':
       // If audio was already buffered, keep it — a partial recording is worth
@@ -341,6 +380,7 @@ export function captureReducer(model: CaptureModel, event: CaptureEvent): Captur
           state: 'review',
           startedAt: null,
           interrupted: true,
+          background: model.hidden,
         };
       }
       return fail(
@@ -350,16 +390,17 @@ export function captureReducer(model: CaptureModel, event: CaptureEvent): Captur
         false,
       );
 
-    case 'trackEnded': {
-      // An incoming call, or the headset being unplugged. The recording so far
-      // is good; stop cleanly and let the user review it.
+    case 'trackEnded':
+      /*
+       * An incoming call, or the headset being unplugged. The recording so
+       * far is good; stop cleanly and let the user review it. Whether there
+       * is any is `finalised`'s to say, not this event's: the first chunk
+       * arrives three seconds in, and a track that ended before it used to
+       * be failed here at once, when the recorder's final chunk — the
+       * seconds already spoken — was still on its way.
+       */
       if (!RECORDING_STATES.has(model.state)) return model;
-      const settled = settle(model, event.now);
-      if (settled.bytes === 0) {
-        return fail(settled, 'recorder-failed', 'Recording was interrupted.', false);
-      }
-      return { ...settled, state: 'stopping', interrupted: true };
-    }
+      return { ...settle(model, event.now), state: 'stopping', interrupted: true, background: model.hidden };
 
     case 'trackMuted':
       /*
@@ -374,7 +415,13 @@ export function captureReducer(model: CaptureModel, event: CaptureEvent): Captur
        * chose to stop, and a call ending must not restart them.
        */
       if (model.state !== 'recording') return model;
-      return { ...settle(model, event.now), state: 'paused', micTaken: true, micReturned: false };
+      return {
+        ...settle(model, event.now),
+        state: 'paused',
+        micTaken: true,
+        micReturned: false,
+        background: model.hidden,
+      };
 
     case 'trackUnmuted':
       if (model.state !== 'paused' || !model.micTaken) return model;
@@ -384,7 +431,20 @@ export function captureReducer(model: CaptureModel, event: CaptureEvent): Captur
         startedAt: event.now,
         micTaken: false,
         micReturned: true,
+        background: false,
       };
+
+    case 'pageHidden':
+      // Nothing stops here. Android keeps the recorder running behind a
+      // locked screen; iOS mutes the track or freezes the page, and those
+      // arrive as their own events. The flag is what tells them apart from a
+      // call taking the microphone.
+      if (model.hidden) return model;
+      return { ...model, hidden: true };
+
+    case 'pageVisible':
+      if (!model.hidden) return model;
+      return { ...model, hidden: false };
 
     case 'uploadStart':
       if (model.state !== 'review' && model.state !== 'failed') return model;

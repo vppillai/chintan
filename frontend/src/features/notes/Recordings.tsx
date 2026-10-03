@@ -25,7 +25,6 @@ import {
   type Notice,
 } from './recordings/labels.ts';
 import { useRetranscribeCapture } from './recordings/useRetranscribeCapture.ts';
-import { archiveName, zipRecordings } from './zipRecordings.ts';
 
 type DownloadProgress = { phase: 'idle' } | { phase: 'working'; done: number; total: number };
 
@@ -277,6 +276,9 @@ export function Recordings({
         if (!response.ok) throw new Error(`audio fetch failed: ${String(response.status)}`);
         saveBlob(await response.blob(), item.filename);
       } else {
+        // The zip writer and `fflate` arrive only when an archive is asked
+        // for: no launch needs them, and they are a chunk of their own.
+        const { archiveName, zipRecordings } = await import('./zipRecordings.ts');
         const blob = await zipRecordings(items, (done, total) => {
           setDownload({ phase: 'working', done, total });
         });

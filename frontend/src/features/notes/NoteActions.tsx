@@ -19,7 +19,7 @@ import { showDeleted } from '@/components/Toast.tsx';
 import { isStuck } from '@/features/capture/filing/model.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 
-import type { NotePanelKind } from './NoteDrawer.tsx';
+import type { NotePanelKind } from './notePanel.ts';
 import { parseChecklist } from './checklist.ts';
 import { useStartTidy, useTidying } from './useTidyList.ts';
 

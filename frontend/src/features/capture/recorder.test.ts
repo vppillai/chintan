@@ -602,3 +602,57 @@ describe('the live waveform starts empty', () => {
     expect(h.controller.recentAmplitudes(8)).toEqual([]);
   });
 });
+
+describe('a recorder the platform has already stopped', () => {
+  it('lets its queued final chunk and onstop finish the recording', async () => {
+    const h = harness();
+    await h.start();
+    // The OS ended the track: the recorder is inactive before `stop()` runs,
+    // but its last chunk and `stop` event are still on the way.
+    h.recorder.state = 'inactive';
+    await h.controller.stop();
+    expect(kinds(h.events)).not.toContain('finalised');
+
+    h.recorder.emitChunk(640);
+    h.recorder.onstop?.();
+    expect(h.model().state).toBe('review');
+    expect(h.model().bytes).toBe(640);
+  });
+});
+
+describe('the page goes hidden', () => {
+  function setVisibility(state: 'hidden' | 'visible'): void {
+    Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }
+
+  it('asks the recorder for the chunk it is holding and tells the machine', async () => {
+    const h = harness();
+    await h.start();
+    const requested: number[] = [];
+    (h.recorder as unknown as { requestData: () => void }).requestData = () => {
+      requested.push(1);
+    };
+
+    setVisibility('hidden');
+    expect(requested).toHaveLength(1);
+    expect(kinds(h.events)).toContain('pageHidden');
+    expect(h.model().hidden).toBe(true);
+    expect(h.model().state).toBe('recording');
+
+    setVisibility('visible');
+    expect(h.model().hidden).toBe(false);
+    // Only a running recorder has a chunk worth asking for.
+    expect(requested).toHaveLength(1);
+  });
+
+  it('stops listening once the recording is torn down', async () => {
+    const h = harness();
+    await h.start();
+    await h.controller.stop();
+    const before = h.events.length;
+    setVisibility('hidden');
+    setVisibility('visible');
+    expect(h.events).toHaveLength(before);
+  });
+});
