@@ -425,3 +425,19 @@ Also in: the routing decision line carries the capture id, the tidy path's recei
 1. Your AWS session on orb has expired. After `aws login` there, two one-command runs are owed: the noise probe (three generated clips plus, please, two or three short Malayalam clips of your own) and the live tidy eval with the four-level case. Both commands are in the backlog rows PR12-20 and PR12-7.
 2. Paste a copied checklist into WhatsApp and Messages once and say if the format reads right.
 3. The vm-threads Vitest pool stays off: two tests still fail under it (one jsdom `location` stub, one fake-indexeddb abort); a third off the wall time is available when those are fixed.
+
+## 3 Oct, early — round 13: the recording stuck at "Filing"
+
+You reported a capture stuck at "Filing your recording" with no way out, which flipped to "Something might have gone wrong" after ten minutes. Here is what happened, what was missing, and what is now in place.
+
+**What happened.** Your 4.7 s recording went through transcribe, route and tidy in 4.4 s; every artefact landed. The append stage wrote the row and immediately read it back to take the exactly-once claim. That read was eventually consistent and returned the version from before the write, so the claim's conditional write failed. The code took "no claim, no owner token" to mean another delivery owned the capture and returned cleanly: no paragraph written, no error, no log line, no metric. The invocation succeeded, so there was no retry, no dead-letter record, and no alarm. The row sat at `appending` until the reaper below resumed it at 03:13 UTC; it is filed now.
+
+**What was missing.** Every alarm keyed on an error, a bad payload or an exhausted retry; a worker that swallows a lost claim and exits zero produced none of those. The tray offered an exit only after ten minutes, the server accepted Retry only after fifteen, and the Recordings tab never offered one.
+
+**In prod now (#239).** The claim's read is strongly consistent (and every other read-then-conditional-write was audited; the device read had the same hazard and is fixed). A lost claim with no owner is an error that retries. Any run that ends in a non-terminal state fails the invocation, is counted as `CaptureOrphaned` and pages. A reaper runs every fifteen minutes: it resumes anything stuck past the threshold and marks it failed with a reason if it stays stuck, with its own alarm; it skips an upload that never landed and a capture another delivery just took over. The capture-failure alarm pages on the first failure, not the second (zero datapoints in thirty days, so no noise history). Fifteen alarms per stack now. Every in-flight capture carries `retry_after` on the wire so the client stops guessing.
+
+**On your phone (#238).** The Recordings tab treats a stuck recording like a failed one: no stage strip, "Still not done after N min", Retry and Delete. The tray shows the age while filing and says "You can dismiss it" or "Retry, or dismiss it" depending on what the server will accept; Retry appears exactly when the server allows it. Dismiss on a stuck row deletes it when the server allows and only hides it locally, with the server's sentence, when it does not. Transcribe again is not offered for a stalled recording whose transcript exists; Retry is.
+
+**Open, unowned:** phone clock skew makes every "how long" comparison drift; the fix is an offset from the response Date header (PR13-17).
+
+Nothing here needs a decision from you.
