@@ -141,7 +141,7 @@ describe('interruption produces a saved partial, never a discard', () => {
   });
 
   it('fails honestly when the interruption arrived before any audio', () => {
-    const model = run([...requestAndStart, { type: 'trackEnded', now: T0 + 500 }]);
+    const model = run([...requestAndStart, { type: 'trackEnded', now: T0 + 500 }, { type: 'finalised' }]);
     expect(model.state).toBe('failed');
     expect(model.failure?.kind).toBe('recorder-failed');
   });
@@ -501,5 +501,66 @@ describe('discard and reset', () => {
   it('keeps the chosen target note across a fresh request', () => {
     const model = run([{ type: 'request', localId: 'cap-2', noteId: 'roof-repair' }]);
     expect(model.noteId).toBe('roof-repair');
+  });
+});
+
+describe('the screen locks', () => {
+  const hidden: CaptureEvent[] = [...requestAndStart, { type: 'data', bytes: 1024 }, { type: 'pageHidden', now: T0 + 5_000 }];
+
+  it('does not stop a recording the page going hidden leaves running', () => {
+    // Android keeps the recorder alive behind a locked screen; the flag
+    // only tells the events that may follow apart from a call.
+    const model = run(hidden);
+    expect(model.state).toBe('recording');
+    expect(model.hidden).toBe(true);
+    expect(model.background).toBe(false);
+  });
+
+  it('reports a mute behind a hidden page as the lock, and the unmute as the return', () => {
+    const paused = run([...hidden, { type: 'trackMuted', now: T0 + 6_000 }]);
+    expect(paused.state).toBe('paused');
+    expect(paused.background).toBe(true);
+    expect(paused.elapsedMs).toBe(6_000);
+
+    const back = run(
+      [
+        { type: 'pageVisible', now: T0 + 60_000 },
+        { type: 'trackUnmuted', now: T0 + 60_000 },
+      ],
+      paused,
+    );
+    expect(back.state).toBe('recording');
+    expect(back.background).toBe(false);
+    expect(back.micReturned).toBe(true);
+    expect(back.hidden).toBe(false);
+  });
+
+  it('keeps the audio when the track ends behind a hidden page, marked as the lock', () => {
+    const model = run([...hidden, { type: 'trackEnded', now: T0 + 6_000 }, { type: 'finalised' }]);
+    expect(model.state).toBe('review');
+    expect(model.interrupted).toBe(true);
+    expect(model.background).toBe(true);
+    expect(model.bytes).toBe(1024);
+  });
+
+  it('settles a final chunk nobody asked for as an interruption, not a live recording', () => {
+    // A thawed page whose recorder the OS stopped: `onstop` with no `stop`.
+    const model = run([...hidden, { type: 'finalised', now: T0 + 6_000 }]);
+    expect(model.state).toBe('review');
+    expect(model.interrupted).toBe(true);
+    expect(model.background).toBe(true);
+    expect(model.elapsedMs).toBe(6_000);
+  });
+
+  it('fails a spontaneous stop with nothing recorded rather than reviewing silence', () => {
+    const model = run([...requestAndStart, { type: 'finalised', now: T0 + 500 }]);
+    expect(model.state).toBe('failed');
+    expect(model.failure?.kind).toBe('recorder-failed');
+  });
+
+  it('is not the lock when a call takes the microphone on a visible page', () => {
+    const model = run([...requestAndStart, { type: 'trackMuted', now: T0 + 1_000 }]);
+    expect(model.background).toBe(false);
+    expect(model.micTaken).toBe(true);
   });
 });

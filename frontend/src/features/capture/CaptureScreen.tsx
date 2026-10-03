@@ -293,7 +293,9 @@ export function CaptureScreen() {
 
       {model.interrupted && model.state !== 'recording' && (
         <p className="capture__warning">
-          The recording was interrupted. What was captured before that is here.
+          {model.background
+            ? 'The recording stopped while the screen was locked or the app was in the background. What was captured before that is here.'
+            : 'The recording was interrupted. What was captured before that is here.'}
         </p>
       )}
 
@@ -365,8 +367,10 @@ function statusLabel(model: CaptureModel): string {
     case 'recording':
       return 'Recording';
     case 'paused':
-      // The OS lent the microphone to a call or another app. Said plainly, and
-      // undone by itself when the track unmutes — see the machine.
+      // The OS lent the microphone to a call or another app, or the screen
+      // locked and the OS muted the track. Said plainly, and undone by itself
+      // when the track unmutes — see the machine.
+      if (model.background) return 'Paused — the screen locked or the app went to the background';
       return model.micTaken ? 'Paused — the microphone was taken by another app' : 'Paused';
     case 'stopping':
       return 'Finishing…';

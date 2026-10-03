@@ -530,3 +530,36 @@ describe('Retry after the upload link has expired', () => {
     expect(puts).toEqual([STALE, FRESH]);
   });
 });
+
+describe('behind a locked screen', () => {
+  const setVisibility = (state: 'hidden' | 'visible') => {
+    Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  };
+
+  afterEach(() => {
+    setVisibility('visible');
+  });
+
+  it('rewrites the record with the real length on the hide and on every chunk after it', async () => {
+    await useCaptureStore.getState().start();
+    const { localId } = useCaptureStore.getState().model;
+    recorder.emitChunk(1_000);
+    await flush();
+    // The first write names the recording before a second has passed.
+    expect((await readCaptureRecord(localId))?.durationMs).toBe(0);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    setVisibility('hidden');
+    await flush();
+    const hidden = await readCaptureRecord(localId);
+    expect(hidden?.durationMs).toBeGreaterThan(0);
+    expect(hidden?.bytes).toBe(1_000);
+
+    // Android keeps recording behind the lock; each chunk refreshes the record.
+    recorder.emitChunk(500);
+    await flush();
+    expect((await readCaptureRecord(localId))?.bytes).toBe(1_500);
+    expect(useCaptureStore.getState().model.state).toBe('recording');
+  });
+});

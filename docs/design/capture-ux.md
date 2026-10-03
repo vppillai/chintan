@@ -215,6 +215,42 @@ server.
   it fails the row's Retry stays. A take at `review` waits for the person,
   and a spend cap is not retried, because a connection does not fix it.
 
+## What happens when the screen locks
+
+The recorder is built on three browser signals and holds one lock. What each
+platform does with them is the browser's; what the app does with each is
+`recorder.ts` and the machine. Nothing stops on the hide itself: Android
+keeps the recorder running behind a locked screen, and a stop there would
+truncate a recording that was going to survive.
+
+| Signal | Android Chrome | iOS Safari and the installed app | What the app does |
+|---|---|---|---|
+| The page goes hidden (`visibilitychange`) | Fires when the screen locks or another app comes in front. Chrome keeps the renderer alive while the tab holds the microphone and shows its recording notification; `MediaRecorder` keeps delivering timeslices; `setInterval` is throttled, so the clock's ticks lag and catch up. | Fires; WebKit mutes the capture track and freezes the page within moments; the installed app may be jettisoned while hidden. | The recorder asks `MediaRecorder` for the chunk it is holding (`requestData`, up to `CHUNK_INTERVAL_MS` of speech) so it is on disk before anything else happens; the machine marks `hidden`; the capture record is rewritten with the recording's real length on the hide and on every chunk after it (`store.ts`), so a killed page leaves a record of the right length. The recording goes on. |
+| The track mutes (`mute`) | A call, Siri's equivalent, another app taking the microphone — not the lock. | The lock, and any backgrounding; `unmute` on return. | The recorder pauses and the clock stops. The state reads "Paused — the screen locked or the app went to the background" when the page was hidden, "Paused — the microphone was taken by another app" otherwise; Cancel · Resume · Stop · Send. `unmute` resumes by itself with "Resumed — the microphone is back.", unless the person had paused first. |
+| The track ends (`ended`) | A call, a headset unplugged. | The same, and the OS reclaiming the device. | Stop; review with the audio so far — "The recording stopped while the screen was locked or the app was in the background. What was captured before that is here." when the page was hidden, "The recording was interrupted. …" otherwise — with Discard · Re-record · Send. |
+| The recorder stops on its own (`onstop` with no Stop) | Not observed. | A thawed page whose recorder the OS ended. | A final chunk nobody asked for is settled as an interruption: review with the audio and the sentence above, or "Recording was interrupted." when nothing was recorded. The screen never says "Recording" over a dead recorder. |
+| The page is killed | Chrome discards a tab capturing audio only as a last resort. | Freely, once hidden. | Every chunk handed over is in IndexedDB and the record names it with its length as of the last chunk; Home's `ResumePrompt` offers it with Send and Discard. |
+| The wake lock | Held for the recording; the browser releases it when the page hides; `wakeLock.ts` re-requests it when the page is visible again. | The same from the versions that have it; none before. | Keeps the screen from sleeping by itself. The power button locks it anyway, and the rows above are what happens then. |
+
+Chromium cannot lock a screen, so `e2e/capture.spec.ts` "the screen locks
+while recording" raises the same signals on the real stream and document —
+hidden, then `mute` or `ended` — and asserts the sentences, the controls,
+and the record on disk. What only a phone can confirm is the **owner's
+check**, one installed app on each:
+
+1. Open the "Record a thought" shortcut and speak a sentence. At 0:10 press
+   the power button. Wait a minute, speak a second sentence, unlock.
+2. Android, expected: still "Recording", the clock past 1:10, both sentences
+   in the note after Send. If the screen reads "Paused — the screen locked
+   or the app went to the background", Android muted the track: Resume, and
+   report it.
+3. iPhone, expected one of: "Paused — the screen locked or the app went to
+   the background" then "Resumed — the microphone is back." within a second,
+   with the second sentence in the note after Send; or Home with "You have
+   an unsent recording from a moment ago" at 0:10, which Send files. If the
+   clock counted through the lock and the note has only the first sentence,
+   the track did not mute while the recorder ran on silence: report it.
+
 ## Receipts on Home
 
 The top of the library is where a recording's filing is watched and where
@@ -382,7 +418,9 @@ button; the manifest shortcuts are the limit. A native wrapper — an Android
 TWA carrying a widget, or an iOS Shortcut on the Action button — posts to the
 inbox (`docs/design/inbox.md`), which needs nothing more to receive it.
 
-Tests: `machine.test.ts`, `store.test.ts` (stop-and-send), `recorder.test.ts`,
+Tests: `machine.test.ts` (the lock's pause, stop and spontaneous stop),
+`store.test.ts` (stop-and-send, the record behind a hidden page),
+`recorder.test.ts` (the hide's flush and the listener's lifetime),
 `buffer.test.ts`, `uploader.test.ts`, `CaptureScreen.test.tsx`,
 `FilingBanner.test.tsx`, `FilingRow.test.tsx` (the tiers, the receipts, the
 poll's ladder and focus refetch), `ResumePrompt.test.tsx`,
@@ -396,8 +434,9 @@ hand-off to `/capture`, R, the coach); end to end, `frontend/e2e/capture.spec.ts
 (Send while recording, the return and the banner, the four discs on one row
 at 320 px, hold to send, drag left to cancel, the hint's 16 px edge, drag up
 to lock onto the recording screen and then Send or Cancel there, the
-ten-second confirm, the touch slide on a phone), `layout.spec.ts`,
-`manifest.spec.ts`.
+ten-second confirm, the touch slide on a phone, the screen locking),
+`layout.spec.ts`, `manifest.spec.ts`, `launch-latency.spec.ts` (the
+shortcut's numbers, by hand).
 
 History: `docs/backlog.md` (R5-RC-3/4 for the poll ladder and the focus
 refetch, R8 F5–F7 for the hold, R7-7 and F9 for the receipts, D1 for the

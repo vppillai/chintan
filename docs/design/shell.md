@@ -135,6 +135,32 @@ must paint the ground the first frame paints. Tests: `pwa/manifest.test.ts`,
 `e2e/manifest.spec.ts`. The app relies on the browser's own install
 affordance; it has no install prompt of its own.
 
+## What a launch downloads
+
+The build is one main chunk plus chunks a launch never needs. The main
+chunk (`dist/assets/index-*.js`) carries React, the router, the query
+client, the shell, Home, the note screen and the capture screen — the three
+places a launch lands: Home, a note from a notification or a link, and
+`/capture` from the manifest's shortcut. What a launch fetches — that chunk
+and every chunk `index.html` preloads — is held under `BUDGET_BYTES` in
+`frontend/scripts/check-bundle.mjs`, CI's step after the build; the ratchet
+rule is in its header. Everything else is a chunk fetched when first
+wanted and precached by the worker from then on: You (`SettingsScreen`),
+Usage, About, the Ask panel, the note's Details/Share drawer (`NoteDrawer`,
+`React.lazy` behind a `Suspense` in `NoteDetailScreen`) and the zip writer
+with `fflate` (`zipRecordings`, an `import()` when an archive is asked for).
+The capture screen is in the main chunk on purpose: as a lazy chunk it cost
+the shortcut one round trip after the main chunk had run — 650 ms of the
+3.1 s to a live microphone on a cold Fast 3G launch, nothing on a warm one.
+`index.html` carries `preconnect` hints for the API and Cognito origins
+(`vite.config.ts`), so the first request's handshakes overlap the module
+download. A lazy chunk that fails to load is a render fault like
+any other: the route's `RouteError` (`navigation.md`) is drawn inside the
+shell. Tests: `app/lazyRoute.test.tsx`; the measurement is
+`e2e/launch-latency.spec.ts` (`LAUNCH_PERF=1`: Home and `/capture`, worker
+cold and warm, Fast 3G with a 4× CPU slowdown on a 360 px phone, median of
+three), which prints and asserts nothing.
+
 ## Tokens and themes
 
 `src/styles/tokens.css` is the only file allowed a literal colour or font

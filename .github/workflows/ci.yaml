@@ -329,7 +329,8 @@ jobs:
       - name: Build
         working-directory: frontend
         run: bun run build
-      # The main chunk against a committed budget (scripts/check-bundle.mjs,
+      # What a launch fetches — the main chunk and the chunks index.html
+      # preloads — against a committed budget (scripts/check-bundle.mjs,
       # owner decision D2). Its own step, not part of `build`: Playwright's
       # second web server passes `--outDir` through `bun run build`, and a
       # script chained onto it would swallow that argument.

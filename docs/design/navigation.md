@@ -31,8 +31,9 @@ the equivalent query; `legacyRedirect` carries the query string across, so
 `/search?q=` keeps its `q`. `Redirect` replaces the alias entry rather than
 pushing (Back must not land on it and bounce forward) and seeds Home beneath
 a destination that is not the bare library. Unknown paths render
-`NotFoundScreen`. Settings, Usage, About and Capture are lazy chunks; the
-library and the note stay in the main chunk, where every launch lands.
+`NotFoundScreen`. Settings, Usage and About are lazy chunks; the library,
+the note and the capture screen stay in the main chunk, where a launch
+lands (`shell.md`, "What a launch downloads").
 
 The router's `basename` is Vite's `BASE_URL` with its trailing slash
 (`routerBasename`), because that slash is the manifest's `scope` and

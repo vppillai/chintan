@@ -90,6 +90,8 @@ export class RecorderController {
   private chunkIndex = 0;
   private session: RecorderSession | null = null;
   private stopping = false;
+  /** The page-visibility listener of the current recording, so teardown can remove it. */
+  private onVisibility: (() => void) | null = null;
   /**
    * The recorder is paused because the track muted, not because the user
    * asked. Only this kind of pause is undone by `unmute`; a user's pause is
@@ -271,7 +273,7 @@ export class RecorderController {
     };
 
     recorder.onstop = () => {
-      this.emit({ type: 'finalised' });
+      this.emit({ type: 'finalised', now: this.deps.now() });
       this.teardown();
     };
 
@@ -282,6 +284,30 @@ export class RecorderController {
       this.emit({ type: 'recorderError' });
       return;
     }
+
+    /*
+     * The screen locking, or another app coming in front. Android keeps the
+     * recorder running; iOS mutes the track or freezes the page within
+     * moments and may never thaw it. So the chunk the recorder is still
+     * accumulating — up to CHUNK_INTERVAL_MS of speech — is asked for now,
+     * and is on disk before any of that happens. The machine is told either
+     * way, so a pause or a stop that follows is reported as the lock's.
+     */
+    this.onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        if (this.recorder?.state === 'recording') {
+          try {
+            this.recorder.requestData();
+          } catch {
+            /* Inactive. */
+          }
+        }
+        this.emit({ type: 'pageHidden', now: this.deps.now() });
+      } else {
+        this.emit({ type: 'pageVisible', now: this.deps.now() });
+      }
+    };
+    document.addEventListener('visibilitychange', this.onVisibility);
 
     // The wake lock is the second await, and a cancel can land across it too:
     // `cancel()` has already torn everything down by then, so assigning the
@@ -324,11 +350,11 @@ export class RecorderController {
       if (this.recorder && this.recorder.state !== 'inactive') {
         this.recorder.stop();
       } else {
-        this.emit({ type: 'finalised' });
+        this.emit({ type: 'finalised', now: this.deps.now() });
         this.teardown();
       }
     } catch {
-      this.emit({ type: 'finalised' });
+      this.emit({ type: 'finalised', now: this.deps.now() });
       this.teardown();
     }
   }
@@ -462,6 +488,8 @@ export class RecorderController {
   private teardown(): void {
     this.stopTicking();
     this.pausedByMute = false;
+    if (this.onVisibility) document.removeEventListener('visibilitychange', this.onVisibility);
+    this.onVisibility = null;
     for (const track of this.stream?.getTracks() ?? []) {
       try {
         track.stop();

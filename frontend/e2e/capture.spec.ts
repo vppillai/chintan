@@ -847,3 +847,99 @@ for (const [width, height] of [
     });
   });
 }
+
+/**
+ * The screen locks mid-recording. Chromium cannot lock a screen, so the
+ * signals the platforms send are raised by hand on the real stream and
+ * document: `visibilitychange` with the document hidden, then the track's
+ * `mute` (iOS) or `ended`. What is asserted is the app's side of the
+ * contract — the sentence, the controls, and the record on disk pointing at
+ * the chunks with the recording's real length.
+ */
+test.describe('the screen locks while recording', () => {
+  test.beforeEach(async ({ page }) => {
+    // The stream the recorder is given, kept where the test can reach its track.
+    await page.addInitScript(() => {
+      const devices = navigator.mediaDevices;
+      const original = devices.getUserMedia.bind(devices);
+      devices.getUserMedia = async (constraints) => {
+        const stream = await original(constraints);
+        (window as unknown as { __stream: MediaStream }).__stream = stream;
+        return stream;
+      };
+    });
+  });
+
+  const lock = (page: Page, then: 'mute' | 'ended') =>
+    page.evaluate((event) => {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      const stream = (window as unknown as { __stream: MediaStream }).__stream;
+      stream.getAudioTracks()[0]?.dispatchEvent(new Event(event));
+    }, then);
+
+  const unlock = (page: Page) =>
+    page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      const stream = (window as unknown as { __stream: MediaStream }).__stream;
+      stream.getAudioTracks()[0]?.dispatchEvent(new Event('unmute'));
+    });
+
+  /** The capture records on this device, as `ResumePrompt` would read them. */
+  const storedCaptures = (page: Page) =>
+    page.evaluate(
+      () =>
+        new Promise<{ durationMs: number; bytes: number }[]>((resolve, reject) => {
+          const open = indexedDB.open('chintan');
+          open.onerror = () => reject(new Error('no db'));
+          open.onsuccess = () => {
+            const request = open.result.transaction('captures').objectStore('captures').getAll();
+            request.onsuccess = () => resolve(request.result as { durationMs: number; bytes: number }[]);
+            request.onerror = () => reject(new Error('no captures'));
+          };
+        }),
+    );
+
+  test('a mute behind the lock pauses with the lock named, and the return resumes', async ({ page }) => {
+    await page.goto('/capture');
+    await expect(page.locator('.capture__state')).toHaveText('Recording');
+    await expect(page.locator('.capture__timer')).not.toHaveText('00:00');
+
+    await lock(page, 'mute');
+    await expect(page.locator('.capture__state')).toHaveText(
+      'Paused — the screen locked or the app went to the background',
+    );
+    // Send and Cancel are there on return, as on any pause.
+    await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
+    // The record on disk already carries the recording's length, so a page
+    // the OS kills next is offered back as what it is, not as 0:00.
+    const [record] = await storedCaptures(page);
+    expect(record?.durationMs ?? 0).toBeGreaterThan(0);
+
+    await unlock(page);
+    await expect(page.locator('.capture__state')).toHaveText('Recording');
+    await expect(page.getByText('Resumed — the microphone is back.')).toBeVisible();
+  });
+
+  test('a track ended behind the lock keeps the audio and says why it stopped', async ({ page }) => {
+    await page.goto('/capture');
+    await expect(page.locator('.capture__state')).toHaveText('Recording');
+    await expect(page.locator('.capture__timer')).not.toHaveText('00:00');
+
+    await lock(page, 'ended');
+    await expect(page.locator('.capture__state')).toHaveText('Ready to send');
+    await expect(
+      page.getByText(
+        'The recording stopped while the screen was locked or the app was in the background. What was captured before that is here.',
+      ),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Discard' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByText(/Filed into|Filing your recording|Uploading/)).toBeVisible();
+  });
+});

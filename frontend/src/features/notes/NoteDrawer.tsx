@@ -31,6 +31,7 @@ import { checklistToProse, parseChecklist, proseToChecklist } from './checklist.
 import { parseMotionMs } from './ChecklistEditor.tsx';
 import { checklistClipboard } from './checklistClipboard.ts';
 import { cleanedDocument, cleanedMarkdown } from './cleaned.ts';
+import { noteLanguageFieldId, notePanelHeadingId, type NotePanelKind } from './notePanel.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
 import { useApplyTidy, useStartTidy } from './useTidyList.ts';
 
@@ -47,18 +48,6 @@ import { useApplyTidy, useStartTidy } from './useTidyList.ts';
  * (`noteLanguageFieldId`, `notePanelHeadingId`) and back to the menu's
  * trigger when it closes.
  */
-export type NotePanelKind = 'details' | 'share';
-
-/** The id of a note's language select, so the meta line can send focus to it. */
-export function noteLanguageFieldId(noteId: string): string {
-  return `note-language-${noteId}`;
-}
-
-/** The id of the open drawer's heading, so the screen can send focus to it. */
-export function notePanelHeadingId(noteId: string): string {
-  return `note-panel-heading-${noteId}`;
-}
-
 /**
  * The open disclosure — Details or Share — in a drawer at the foot of the
  * scroll region, above the tab bar. Nothing is rendered while neither is

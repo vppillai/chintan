@@ -602,3 +602,40 @@ describe('the live waveform starts empty', () => {
     expect(h.controller.recentAmplitudes(8)).toEqual([]);
   });
 });
+
+describe('the page goes hidden', () => {
+  function setVisibility(state: 'hidden' | 'visible'): void {
+    Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }
+
+  it('asks the recorder for the chunk it is holding and tells the machine', async () => {
+    const h = harness();
+    await h.start();
+    const requested: number[] = [];
+    (h.recorder as unknown as { requestData: () => void }).requestData = () => {
+      requested.push(1);
+    };
+
+    setVisibility('hidden');
+    expect(requested).toHaveLength(1);
+    expect(kinds(h.events)).toContain('pageHidden');
+    expect(h.model().hidden).toBe(true);
+    expect(h.model().state).toBe('recording');
+
+    setVisibility('visible');
+    expect(h.model().hidden).toBe(false);
+    // Only a running recorder has a chunk worth asking for.
+    expect(requested).toHaveLength(1);
+  });
+
+  it('stops listening once the recording is torn down', async () => {
+    const h = harness();
+    await h.start();
+    await h.controller.stop();
+    const before = h.events.length;
+    setVisibility('hidden');
+    setVisibility('visible');
+    expect(h.events).toHaveLength(before);
+  });
+});
