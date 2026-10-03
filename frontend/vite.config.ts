@@ -138,6 +138,13 @@ export default defineConfig(({ mode }) => {
     },
     test: {
       environment: 'jsdom',
+      // One jsdom per worker and a vm context per file: the suite runs in
+      // about 7.5 s against 12.5 s with a jsdom per file (`threads`), with
+      // the same per-file isolation. The realm is the window, so a test
+      // may not redefine `location`, and work left in flight at a file's
+      // end runs after the realm is gone (`settleDatabase` in test/setup.ts
+      // ends IndexedDB work inside each test).
+      pool: 'vmThreads',
       globals: true,
       setupFiles: ['./src/test/setup.ts'],
       css: false,
@@ -145,6 +152,11 @@ export default defineConfig(({ mode }) => {
       include: ['src/**/*.test.{ts,tsx}'],
       exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
       restoreMocks: true,
+      // A test's fake clock stops the page's timers, never the browser's
+      // IndexedDB; fake-indexeddb runs its queue on `setImmediate`, so that
+      // one stays real, or a cache write left in flight under fake timers
+      // never finishes and the barrier in `test/setup.ts` waits for ever.
+      fakeTimers: { toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] },
     },
   };
 });

@@ -221,11 +221,12 @@ describe('a 401 refreshes before anything reaches the user', () => {
 
   it('never touches window.location', async () => {
     // A `window.location.reload()` after a 401 would destroy unsaved edits and
-    // in-flight recordings.
-    const reload = vi.fn();
-    const assign = vi.fn();
-    vi.stubGlobal('location', { ...window.location, reload, assign });
-
+    // in-flight recordings. `location` cannot be stubbed to watch for one —
+    // jsdom makes it non-configurable where the window is the realm's global
+    // — so the rule is held two ways: the 401 path ends in a rejection with
+    // the document's URL unchanged, and neither the client nor the session
+    // so much as names `location` (their sources, read as text).
+    const href = window.location.href;
     const fetchImpl = vi.fn<typeof fetch>(async () => problemResponse(401));
     const { client } = build(
       fetchImpl,
@@ -235,8 +236,14 @@ describe('a 401 refreshes before anything reaches the user', () => {
     );
 
     await expect(client.request('/v1/notes')).rejects.toBeInstanceOf(ApiError);
-    expect(reload).not.toHaveBeenCalled();
-    expect(assign).not.toHaveBeenCalled();
+    expect(window.location.href).toBe(href);
+    const [clientSource, sessionSource] = await Promise.all([
+      import('./client.ts?raw'),
+      import('./session.ts?raw'),
+    ]);
+    // The session's doc comment names what it refuses to do; the code never does.
+    expect(clientSource.default).not.toMatch(/\blocation\b/);
+    expect(sessionSource.default.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/\blocation\b/);
   });
 
   it('coalesces concurrent 401s onto a single refresh', async () => {
