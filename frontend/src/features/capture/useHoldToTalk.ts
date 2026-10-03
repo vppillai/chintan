@@ -52,9 +52,9 @@ import { useCaptureStore } from './store.ts';
  * The navigation state of a lock's hand-off, so the shell announces
  * "Recording, hands-free" on the capture screen rather than its name.
  */
-export const HANDS_FREE = { handsFree: true } as const;
+const HANDS_FREE = { handsFree: true } as const;
 
-export interface HoldHandlers {
+interface HoldHandlers {
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;

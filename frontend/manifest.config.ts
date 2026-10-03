@@ -36,7 +36,7 @@ import type { AppIdentity } from './src/config/identity.ts';
  */
 const GROUND = '#fbf9f4';
 
-export interface ManifestIcon {
+interface ManifestIcon {
   src: string;
   sizes: string;
   type?: string;
@@ -44,7 +44,7 @@ export interface ManifestIcon {
 }
 
 /** One of the two install-sheet pictures; `form_factor` picks which sheet shows it. */
-export interface ManifestScreenshot {
+interface ManifestScreenshot {
   src: string;
   sizes: string;
   type: string;

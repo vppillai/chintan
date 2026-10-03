@@ -130,7 +130,7 @@ export function bannerCapture(
 }
 
 /** How long "Added at the end · Show" stands once the recording lands. */
-export const LANDED_MS = 6000;
+const LANDED_MS = 6000;
 
 /**
  * The recording the banner was just showing, once it has appended: its id and

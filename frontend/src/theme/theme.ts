@@ -15,7 +15,7 @@ export type ThemePreference = (typeof THEME_PREFERENCES)[number];
 /** The two themes that actually exist. `system` always resolves to one of these. */
 export type ResolvedTheme = 'ink' | 'nocturne';
 
-export const DEFAULT_THEME: ThemePreference = 'ink';
+const DEFAULT_THEME: ThemePreference = 'ink';
 
 export const THEME_STORAGE_KEY = 'chintan.theme';
 

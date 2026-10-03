@@ -62,7 +62,7 @@ const ENCODER = new TextEncoder();
  * worker's turn, polled; `timeout` is the client giving up on the poll, which
  * the server never reports — it may still answer, but nobody is waiting.
  */
-export type TurnStatus = 'asking' | 'pending' | 'answered' | 'failed' | 'timeout';
+type TurnStatus = 'asking' | 'pending' | 'answered' | 'failed' | 'timeout';
 
 export interface AskTurn {
   /** Client-side identity, also the request's idempotency key. */

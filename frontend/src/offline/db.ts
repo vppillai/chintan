@@ -121,8 +121,11 @@ interface ChintanDB extends DBSchema {
 export type ChintanDatabase = IDBPDatabase<ChintanDB>;
 
 let dbPromise: Promise<ChintanDatabase> | null = null;
+/** Tests only: between `settleDatabase` and the next `resetDatabaseHandle`, nothing may open the store. */
+let sealed = false;
 
 export function openChintanDB(): Promise<ChintanDatabase> {
+  if (sealed) return Promise.reject(new Error('IndexedDB is closed between tests'));
   dbPromise ??= openDB<ChintanDB>(DB_NAME, DB_VERSION, {
     upgrade(db) {
       if (!db.objectStoreNames.contains('captureChunks')) {
@@ -161,6 +164,34 @@ export function openChintanDB(): Promise<ChintanDatabase> {
 /** Tests reopen a fresh database between cases. */
 export function resetDatabaseHandle(): void {
   dbPromise = null;
+  sealed = false;
+}
+
+/**
+ * Tests: ends the test's IndexedDB work inside the test. A readwrite
+ * transaction over every store may start only once each earlier transaction
+ * that overlaps it has finished, so its `done` is a barrier behind the cache
+ * writes and queue reads the test left in flight; then the connection is
+ * closed and the store sealed until the next test opens it afresh, so a
+ * write that starts later still — a prefetch landing after the barrier —
+ * fails at once in the test's own realm, where the cache writers swallow
+ * it, instead of running after the file's realm is gone, where `idb` finds
+ * no `IDBRequest` and vitest's vm pool reports an unhandled error.
+ */
+export async function settleDatabase(): Promise<void> {
+  const db = await (dbPromise ?? Promise.resolve(null)).catch(() => null);
+  sealed = true;
+  if (!db) return;
+  await db.transaction(['captureChunks', 'captures', 'mutations', 'notes'], 'readwrite').done;
+  // Closing refuses every later `transaction()` on this handle; a transaction
+  // queued behind the barrier still runs, and fake-indexeddb marks the
+  // connection closed only once each one has finished — the exact moment
+  // the test's IndexedDB work is over. (`_closed` is fake-indexeddb's, not
+  // the spec's; this runs under it alone. ponytail: poll, since the spec
+  // gives no event for a normal close.)
+  db.close();
+  const raw = db as unknown as { _closed?: boolean };
+  while (raw._closed === false) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 /**

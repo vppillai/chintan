@@ -38,7 +38,7 @@ import { useSwallowNextClick } from './swallowNextClick.ts';
 
 export const LONG_PRESS_MS = 500;
 
-export interface LongPressHandlers {
+interface LongPressHandlers {
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerUp: () => void;

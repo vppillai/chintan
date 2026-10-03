@@ -8,7 +8,7 @@ import { useCallback, useEffect, useState, type RefObject } from 'react';
  * out of the app on mobile — taking any unsaved edit with it.
  */
 
-export interface PlayerState {
+interface PlayerState {
   playing: boolean;
   currentTime: number;
   duration: number;

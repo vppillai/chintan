@@ -30,7 +30,7 @@ function isAskSettled(ask: AskWire | undefined): boolean {
  * `since` is when the client sent the question, not the row's `created_at`,
  * so a clock skew between device and server cannot cut the wait short.
  */
-export function askPollInterval(
+function askPollInterval(
   ask: AskWire | undefined,
   since: number,
   now: number = Date.now(),

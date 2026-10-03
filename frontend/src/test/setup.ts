@@ -10,7 +10,7 @@ import { cleanup } from '@testing-library/react';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, vi } from 'vitest';
 
-import { resetDatabaseHandle } from '@/offline/db.ts';
+import { resetDatabaseHandle, settleDatabase } from '@/offline/db.ts';
 
 /**
  * jsdom supplies its own `AbortController`/`AbortSignal` but no `Request`, so
@@ -165,6 +165,9 @@ beforeEach(() => {
   installMatchMedia();
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
+  // Every IndexedDB transaction the test left in flight finishes inside the
+  // test's own realm, before the next test swaps the factory under it.
+  await settleDatabase();
 });

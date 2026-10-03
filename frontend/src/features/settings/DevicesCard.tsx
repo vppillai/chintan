@@ -23,7 +23,7 @@ const DAY_MS = 86_400_000;
 /** How close an expiry is before the folded card's summary says so. */
 const SOON_MS = 7 * DAY_MS;
 /** The card's id, and the hash About's link lands on to open it. */
-export const DEVICES_ANCHOR = 'devices';
+const DEVICES_ANCHOR = 'devices';
 
 /**
  * The "Expires after" choices. Never is the default: the ring you use daily

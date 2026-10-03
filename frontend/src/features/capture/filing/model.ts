@@ -1,3 +1,4 @@
+import { serverNow } from '@/api/clock.ts';
 import { ApiError } from '@/api/problem.ts';
 import { STUCK_AFTER_MS, isTerminalStatus, type CaptureStatus, type CaptureWire } from '@/api/schema.ts';
 
@@ -47,7 +48,7 @@ export function stageIndex(status: CaptureStatus): number {
  * age, the stuck rule, the Retry gate and the poll (`capturePollInterval`)
  * all read, so they agree.
  */
-export function progressAt(capture: CaptureWire): number {
+function progressAt(capture: CaptureWire): number {
   return Date.parse(capture.last_progress_at ?? capture.created_at);
 }
 
@@ -58,7 +59,7 @@ export function progressAt(capture: CaptureWire): number {
  * `progressAt`, so a capture that moved into transcribing nine minutes in is
  * not called stuck a minute later.
  */
-export function isStuck(capture: CaptureWire, now: number = Date.now()): boolean {
+export function isStuck(capture: CaptureWire, now: number = serverNow()): boolean {
   if (isTerminalStatus(capture.status)) return false;
   const since = progressAt(capture);
   if (Number.isNaN(since)) return false;
@@ -75,7 +76,7 @@ export function isStuck(capture: CaptureWire, now: number = Date.now()): boolean
  * waits for this. A non-terminal row the server has not dated is never
  * offered Retry: the field is on every such row the server sends.
  */
-export function retryAccepted(capture: CaptureWire, now: number = Date.now()): boolean {
+export function retryAccepted(capture: CaptureWire, now: number = serverNow()): boolean {
   if (isTerminalStatus(capture.status)) return false;
   const told = capture.retry_after ? Date.parse(capture.retry_after) : NaN;
   return !Number.isNaN(told) && now >= told;
@@ -112,7 +113,7 @@ export interface Described {
 export function describe(
   capture: CaptureWire,
   recordedHere = true,
-  now: number = Date.now(),
+  now: number = serverNow(),
 ): Described {
   const said = (sentence: string, age = ''): Described => ({ sentence, age });
   switch (capture.status) {

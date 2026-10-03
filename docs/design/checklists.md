@@ -339,6 +339,28 @@ are `ChecklistEditor.tsx`, the Done disclosure `ChecklistDone.tsx`):
   either axis is not a tap, so a wobble does not open the menu.
 - **Keys on a focused grip**: up and down move the row one slot, right and
   left change its level; the grip's description says so.
+- **Keys in a row's field**, besides Tab and Shift+Tab ("Sub-items"): Enter
+  at the end of the words starts a new item under this one; Enter inside
+  them splits the item there (`splitItem`), the words after the caret
+  starting a new open item at the same level, caret at its start, a
+  selection going with the split as it does in any field. Backspace with
+  the caret at the start joins the item onto the open row shown above it
+  (`mergeItems`) — the row above keeps its level, so a sub-item merging into
+  its parent leaves a parent, and a joined parent's sub-items come up a
+  level; the caret lands at the join. Nothing is said — the save word takes
+  the one region at once, and focus stepping back into the row above is the
+  signal. An emptied item goes the same way, which is how one is removed,
+  and the first row, with nothing above, keeps its words. A paste of several lines
+  becomes several items at the row's level (`pasteItems`): each line is
+  read by the body's own line rule, so `- [ ]` and `- [x]` prefixes are
+  kept and a plain line is an open item; the first line's words go in at
+  the caret, the rest follow as items with their levels relative to the
+  first, the words that stood after the caret end the last of them, and the
+  region says "N items added". Alt+↑/↓ move the row one slot without leaving
+  the field, through the grip's planner (`planMove`), focus and caret kept
+  in the words; a move refused at either end is said. Each of these is an
+  edit, not an act: one body write, no Undo toast (Undo is for a tick,
+  Delete done and Tidy up list, "Done, and the one Undo rule").
 
 ### Sub-items
 

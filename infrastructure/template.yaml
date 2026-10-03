@@ -1880,9 +1880,12 @@ Resources:
           - X-Api-Key
           - X-Amz-Security-Token
         # Correlation ids are only useful to a caller that can read them back;
-        # a cross-origin response hides every header not named here.
+        # a cross-origin response hides every header not named here. Date is
+        # the server's clock: the app corrects the device's by it before it
+        # judges a capture stuck or offers Retry at retry_after.
         ExposeHeaders:
           - X-Correlation-Id
+          - Date
         AllowMethods:
           - GET
           - POST

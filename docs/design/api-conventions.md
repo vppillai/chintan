@@ -128,6 +128,16 @@ keeping its own copy of the two durations; a retry before it is 409
 (`TestCaptureRetryAfterIsTheInstantCaptureStuckFirstHolds`, the
 `captureInFlight` fixture).
 
+The instant is on the server's clock, and so is every timestamp the API
+writes, while the phone's may be minutes off. The gateway exposes the `Date`
+response header (`ExposeHeaders` in `infrastructure/template.yaml`; it is
+not CORS-safelisted, so without that a cross-origin page cannot read it),
+the client reads it off every response in `api/client.ts` and keeps the
+difference as an offset (`api/clock.ts`), and `serverNow()` — the device
+clock plus that offset — is the "now" every comparison with a server
+timestamp reads. Offsets under two seconds are taken as none: the header is
+whole seconds and the response took time to arrive.
+
 ## Rate limits
 
 The gateway stage throttles the whole API at 50 requests a second with a

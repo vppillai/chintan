@@ -158,7 +158,7 @@ export class Session {
  * The response omits `refresh_token`; `tokenSetFromWire` carries the previous
  * one forward. Dropping it logs the user out one window later.
  */
-export class CognitoRefresher implements TokenRefresher {
+class CognitoRefresher implements TokenRefresher {
   constructor(
     private readonly domain: string = config.cognitoDomain,
     private readonly clientId: string = config.clientId,

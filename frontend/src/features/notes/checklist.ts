@@ -190,6 +190,80 @@ export function removeItem(body: string, index: number): string {
   });
 }
 
+/**
+ * Backspace at the start of an item: its words join the end of the item at
+ * `into` — the open row shown above it, as `shiftLevel`'s `above` is — and
+ * its line goes. The row above keeps its level, so a sub-item merging into
+ * its parent leaves a parent, and the merged item's own sub-items come up a
+ * level as `removeItem` brings them. `caret` is where the join is in the
+ * row above's words, for the field to put the caret.
+ */
+export function mergeItems(body: string, index: number, into: number): { next: string; caret: number } {
+  const items = parseChecklist(body);
+  const item = items[index];
+  const above = items[into];
+  if (!item || !above || into >= index) return { next: serialiseChecklist(items), caret: 0 };
+  const caret = above.text.length;
+  above.text += item.text;
+  for (const i of blockOf(items, index).slice(1)) (items[i] as ChecklistItem).depth -= 1;
+  items.splice(index, 1);
+  return { next: serialiseChecklist(items), caret };
+}
+
+/**
+ * Enter inside an item's words: the words before the selection stay, the
+ * words after it start a new open item right under, at the same level — a
+ * split is one line becoming two, not a sub-item — and the selected words,
+ * if any, go, as Enter over a selection does in any field.
+ */
+export function splitItem(body: string, index: number, start: number, end = start): string {
+  return withItems(body, (items) => {
+    const item = items[index];
+    if (!item) return;
+    items[index] = { ...item, text: item.text.slice(0, start) };
+    items.splice(index + 1, 0, { text: item.text.slice(end), done: false, depth: item.depth });
+  });
+}
+
+/**
+ * A paste of several lines into an item's field: each line is an item, read
+ * by the one line rule (`parseChecklist`), so `- [ ]` and `- [x]` prefixes
+ * are kept and a plain line is an open item. The first line's words go in
+ * at the selection; the rest follow as items under it, their levels relative
+ * to the first (clamped to `MAX_DEPTH`), and the words that stood after the
+ * selection end the last of them. A field with no words takes the first
+ * line's done mark too. `null` for a paste of one line, which is the
+ * browser's to put in. `focus` is the body index of the item the caret
+ * lands in and `caret` where in its words.
+ */
+export function pasteItems(
+  body: string,
+  index: number,
+  start: number,
+  end: number,
+  text: string,
+): { next: string; focus: number; caret: number } | null {
+  const pasted = parseChecklist(text);
+  const first = pasted[0];
+  if (!first || pasted.length < 2) return null;
+  const items = parseChecklist(body);
+  const item = items[index];
+  if (!item) return null;
+  const head = item.text.slice(0, start);
+  const tail = item.text.slice(end);
+  const rest = pasted.slice(1).map((line) => ({
+    text: line.text,
+    done: line.done,
+    depth: Math.min(MAX_DEPTH, item.depth + line.depth),
+  }));
+  const last = rest[rest.length - 1] as ChecklistItem;
+  const caret = last.text.length;
+  last.text += tail;
+  items[index] = { ...item, text: head + first.text, done: item.text === '' ? first.done : item.done };
+  items.splice(index + 1, 0, ...rest);
+  return { next: serialiseChecklist(items), focus: index + rest.length, caret };
+}
+
 /** The indices of `index` and every item nested under it: the lines that move and go together. */
 export function blockOf(items: readonly ChecklistItem[], index: number): number[] {
   const block = [index];
