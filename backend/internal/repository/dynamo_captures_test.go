@@ -549,3 +549,80 @@ func (d *captureRacingDynamo) GetItem(ctx context.Context, in *dynamodb.GetItemI
 	}
 	return out, nil
 }
+
+// The claim's read must be the consistent one. A row the worker itself just
+// wrote can come back a version behind on a default read, and a claim
+// conditioned on that version loses to nobody: the capture was left in
+// `appending` with an empty token, and nothing ever came back for it.
+func TestClaimCaptureAppendClaimsUnderAStaleRead(t *testing.T) {
+	store, fake := newTestStore(t)
+	ctx := context.Background()
+
+	c, err := store.PutCapture(ctx, model.CaptureIndex{
+		ID: "c1", UserID: "tenant-a", NoteID: "n1", CreatedAt: model.Now(), Status: model.StatusCleaned,
+	})
+	if err != nil {
+		t.Fatalf("PutCapture: %v", err)
+	}
+	// The status write the pipeline makes on entering the append stage.
+	c.Status = model.StatusAppending
+	if _, err := store.PutCapture(ctx, c); err != nil {
+		t.Fatalf("PutCapture(appending): %v", err)
+	}
+
+	fake.StaleReads = 1
+	claimed, current, err := store.ClaimCaptureAppend(ctx, "tenant-a", "c1", "token-1")
+	if err != nil {
+		t.Fatalf("ClaimCaptureAppend: %v", err)
+	}
+	if !claimed {
+		t.Fatalf("the claim was refused under one stale read; the row is %+v", current)
+	}
+	if fake.StaleReads != 1 {
+		t.Fatalf("the claim made a default read (StaleReads = %d, want 1 untouched); its condition rests on a consistent one", fake.StaleReads)
+	}
+}
+
+// The reconcile task's input: pending rows last written before the cutoff,
+// in every tenant, and nothing that is finished, fresh or not a capture.
+func TestStuckCapturesFindsPendingRowsPastTheCutoffAcrossTenants(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	old := model.FormatTime(time.Date(2026, 10, 3, 1, 41, 59, 0, time.UTC))
+	cutoff := model.FormatTime(time.Date(2026, 10, 3, 1, 56, 59, 0, time.UTC))
+	fresh := model.FormatTime(time.Date(2026, 10, 3, 1, 57, 0, 0, time.UTC))
+
+	for _, c := range []model.CaptureIndex{
+		{ID: "stuck-a", UserID: "tenant-a", Status: model.StatusAppending, LastProgressAt: old},
+		{ID: "stuck-b", UserID: "tenant-b", Status: model.StatusTranscribing, LastProgressAt: old},
+		{ID: "finished", UserID: "tenant-a", Status: model.StatusAppended, LastProgressAt: old},
+		{ID: "fresh", UserID: "tenant-a", Status: model.StatusAppending, LastProgressAt: fresh},
+		{ID: "waiting", UserID: "tenant-a", Status: model.StatusNeedsTarget, LastProgressAt: old},
+	} {
+		c.CreatedAt = c.LastProgressAt
+		if _, err := store.PutCapture(ctx, c); err != nil {
+			t.Fatalf("PutCapture(%s): %v", c.ID, err)
+		}
+	}
+	if _, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{ID: "n1", Title: "Not a capture", UpdatedAt: old}); err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
+
+	got, err := store.StuckCaptures(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("StuckCaptures: %v", err)
+	}
+	ids := map[string]string{}
+	for _, c := range got {
+		ids[c.ID] = c.UserID
+	}
+	want := map[string]string{"stuck-a": "tenant-a", "stuck-b": "tenant-b"}
+	if len(ids) != len(want) {
+		t.Fatalf("StuckCaptures = %v, want exactly %v", ids, want)
+	}
+	for id, tenant := range want {
+		if ids[id] != tenant {
+			t.Errorf("%s: tenant %q, want %q", id, ids[id], tenant)
+		}
+	}
+}
