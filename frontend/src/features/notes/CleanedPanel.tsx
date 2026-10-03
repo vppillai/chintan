@@ -246,7 +246,7 @@ interface Queued {
  * reports an error on it, or `CLEAN_POLL_TIMEOUT_MS` has passed — a worker
  * that never answers must not leave the screen saying "Rewriting…" for good.
  */
-export function useRegenerateCleaned(note: Pick<NoteDetailWire, 'id' | 'cleaned'>): {
+function useRegenerateCleaned(note: Pick<NoteDetailWire, 'id' | 'cleaned'>): {
   regenerate: (mode?: CleanedMode) => void;
   pending: boolean;
   notice: string | null;

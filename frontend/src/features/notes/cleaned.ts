@@ -10,8 +10,8 @@ import type { CleanedMode, CleanedWire } from '@/api/schema.ts';
  */
 
 export const CLEAN_POLL_MS = 2_000;
-export const CLEAN_POLL_SLOW_MS = 5_000;
-export const CLEAN_POLL_FAST_WINDOW_MS = 10_000;
+const CLEAN_POLL_SLOW_MS = 5_000;
+const CLEAN_POLL_FAST_WINDOW_MS = 10_000;
 export const CLEAN_POLL_TIMEOUT_MS = 60_000;
 
 /**

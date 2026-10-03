@@ -84,14 +84,14 @@ import { useSwallowNextClick } from './swallowNextClick.ts';
  */
 
 /** A start this close to either screen edge is the system's. */
-export const SWIPE_EDGE_PX = 24;
+const SWIPE_EDGE_PX = 24;
 /* Letting go this far across the region steps, or a flick this fast however
    short: the drawer's drag-to-close shares both numbers (`gesture.ts`). */
 export { SWIPE_COMMIT_FRACTION, SWIPE_FLICK_PX_PER_MS };
 /** The rubber band's asymptote, as a fraction of the width. */
 export const SWIPE_RUBBER_FRACTION = 0.15;
 /** How much the panel fades at a full width of travel. */
-export const SWIPE_FADE = 0.4;
+const SWIPE_FADE = 0.4;
 /** Controls whose own gesture is horizontal: the swipe never starts on them. */
 const OWN_GESTURE =
   '.checklist__grip, [role="slider"], .scrubber__track, .overflow-menu, select, input[type="range"]';
@@ -124,7 +124,7 @@ interface Gesture {
  * clamped to the width, and rubber-banded where there is none —
  * `R·(1 − 1/(1 + |dx|/R))`, which never reaches `R`.
  */
-export function followOf(dx: number, width: number, neighbour: boolean): number {
+function followOf(dx: number, width: number, neighbour: boolean): number {
   const clamped = Math.max(-width, Math.min(width, dx));
   if (neighbour) return clamped;
   const r = width * SWIPE_RUBBER_FRACTION;

@@ -32,7 +32,7 @@ function useAuthenticated(): boolean {
   );
 }
 
-export type AuthPhase =
+type AuthPhase =
   /** No token, nothing in flight. The sign-in surface. */
   | 'signed-out'
   /** Sending the browser to the hosted UI. */

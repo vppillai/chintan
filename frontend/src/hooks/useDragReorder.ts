@@ -87,7 +87,7 @@ interface Drag<T> {
   order: T[];
 }
 
-export interface DragReorderHandlers {
+interface DragReorderHandlers {
   onPointerDownCapture: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;

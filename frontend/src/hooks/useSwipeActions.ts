@@ -68,7 +68,7 @@ interface Gesture {
   width: number;
 }
 
-export interface SwipeHandlers {
+interface SwipeHandlers {
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;

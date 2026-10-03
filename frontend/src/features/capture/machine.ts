@@ -35,7 +35,7 @@ export type CaptureState =
   | 'uploaded'
   | 'failed';
 
-export type CaptureFailureKind =
+type CaptureFailureKind =
   | 'permission-denied'
   | 'no-microphone'
   | 'recorder-failed'
@@ -50,7 +50,7 @@ export interface CaptureFailure {
   recoverable: boolean;
 }
 
-export type CapReason = 'duration' | 'size';
+type CapReason = 'duration' | 'size';
 
 /* ---------------------------------------------------------------------------
    Limits

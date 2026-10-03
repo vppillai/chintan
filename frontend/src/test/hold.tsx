@@ -33,7 +33,7 @@ class FakeStream {
   }
 }
 
-export class FakeRecorder {
+class FakeRecorder {
   state: 'inactive' | 'recording' | 'paused' = 'inactive';
   ondataavailable: ((event: BlobEvent) => void) | null = null;
   onerror: (() => void) | null = null;

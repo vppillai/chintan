@@ -1,5 +1,4 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignore": ["src/api/__fixtures__/**", "src/sw.ts", "scripts/make-icons.mjs"],
-  "ignoreExportsUsedInFile": true
+  "ignore": ["src/api/__fixtures__/**", "src/sw.ts", "scripts/make-icons.mjs"]
 }

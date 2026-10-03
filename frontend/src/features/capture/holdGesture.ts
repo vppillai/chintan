@@ -28,7 +28,7 @@ export type MicPermission = 'granted' | 'prompt' | 'denied' | 'unknown';
  */
 export type HoldSource = 'pointer' | 'space' | 'key';
 
-export type GesturePhase =
+type GesturePhase =
   /** Nothing pressed. */
   | 'idle'
   /** Pressed, not yet a hold: the release may still be a tap. No microphone yet. */
@@ -138,7 +138,7 @@ function clamp01(value: number): number {
 }
 
 /** The recording's length now; a settled recording's clock has stopped. */
-export function elapsedNow(model: CaptureModel, now: number): number {
+function elapsedNow(model: CaptureModel, now: number): number {
   return model.startedAt === null ? model.elapsedMs : model.accumulatedMs + now - model.startedAt;
 }
 

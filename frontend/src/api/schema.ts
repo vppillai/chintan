@@ -59,7 +59,7 @@ export interface ReadinessWire {
   checks: Record<string, { ok?: boolean; latency_ms?: number }>;
 }
 
-export type ThemeSetting = 'ink' | 'nocturne' | 'system';
+type ThemeSetting = 'ink' | 'nocturne' | 'system';
 
 /**
  * Per-recording cleanup is faithful for everyone since 2026-09-27; the
@@ -160,7 +160,7 @@ export interface NoteWire {
  * list asks for and writes into the body (`useTidyList.ts`). The server
  * refuses `tasks` for a plain note and the other two for a checklist.
  */
-export type NoteCleanMode = 'polished' | 'structured' | 'tasks';
+type NoteCleanMode = 'polished' | 'structured' | 'tasks';
 
 /**
  * The whole-note cleaned view: one pass of the cleanup model over the entire
@@ -200,7 +200,7 @@ export interface NoteDetailWire extends NoteWire {
 }
 
 /** Body of `POST /v1/notes/{id}/clean`; the whole body is optional. */
-export interface NoteCleanRequestWire {
+interface NoteCleanRequestWire {
   /** Absent means the note's `cleaned_mode`, else `'structured'`. */
   mode?: NoteCleanMode;
 }
@@ -448,7 +448,7 @@ export interface CaptureCreatedWire {
 
 export type CaptureTargetWire = { note_id: string } | { new_note_title: string };
 
-export type CaptureListStatus = 'pending' | 'failed' | 'needs_target' | 'all';
+type CaptureListStatus = 'pending' | 'failed' | 'needs_target' | 'all';
 
 export interface CaptureListQuery extends PageQuery {
   status?: CaptureListStatus;
@@ -490,7 +490,7 @@ export interface RecordingUrlsWire {
    Match and search
    --------------------------------------------------------------------------- */
 
-export interface MatchCandidateWire {
+interface MatchCandidateWire {
   note_id: string;
   title: string;
   score: number;
@@ -524,7 +524,7 @@ export interface SearchHitWire {
    Ask — a question answered from the notes
    --------------------------------------------------------------------------- */
 
-export type AskStatus = 'pending' | 'answered' | 'failed';
+type AskStatus = 'pending' | 'answered' | 'failed';
 
 /** One earlier exchange of the same conversation, sent back as context. */
 export interface AskTurnWire {
@@ -610,7 +610,7 @@ export interface UsageAwsWire {
 }
 
 /** Authenticated API requests this month by this user. Health and 401s excluded. */
-export interface UsageApiWire {
+interface UsageApiWire {
   requests: number;
 }
 
@@ -619,7 +619,7 @@ export interface UsageApiWire {
  * `approximate` is true when the count stopped at the row cap, so the figures
  * are a floor rather than a total.
  */
-export interface UsageStorageWire {
+interface UsageStorageWire {
   recordings: number;
   audio_seconds: number;
   audio_bytes: number;

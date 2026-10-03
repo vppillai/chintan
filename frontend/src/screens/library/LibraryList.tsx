@@ -313,7 +313,7 @@ function failureMessage(error: unknown): string {
  * failure or a cancelled request is "offline"; a 401 has its own way back
  * (signing in), which the shell's session handling takes.
  */
-export function serverFailed(error: unknown, online: boolean, paused: boolean): boolean {
+function serverFailed(error: unknown, online: boolean, paused: boolean): boolean {
   return (
     online &&
     !paused &&

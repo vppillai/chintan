@@ -426,7 +426,7 @@ export class ChintanApi {
  * worth another attempt, and treating them alike is what turned an expired
  * credential into five identical requests.
  */
-export class PresignRejected extends Error {
+class PresignRejected extends Error {
   constructor(readonly status: number) {
     super(`Upload rejected with ${status}`);
     this.name = 'PresignRejected';

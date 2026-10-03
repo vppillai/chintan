@@ -63,7 +63,7 @@ export interface ApiState {
  * about the *request*: that a PKCE challenge was sent, that the verifier came
  * back on the exchange, that the logout named the client.
  */
-export interface AuthState {
+interface AuthState {
   authorize: Record<string, string>[];
   token: Record<string, string>[];
   logout: Record<string, string>[];
