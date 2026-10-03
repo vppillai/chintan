@@ -278,7 +278,8 @@ describe('ChecklistEditor', () => {
     const party = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Item 1' });
     expect(party).toHaveFocus();
     expect(party.selectionStart).toBe(5);
-    expect(screen.getByText('Joined with the item above')).toBeInTheDocument();
+    // Nothing said: the save word takes the region; the focus move is the signal.
+    expect(screen.queryByText(/joined/i)).toBeNull();
     expect(log.saves).toBeGreaterThanOrEqual(1);
     expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
 

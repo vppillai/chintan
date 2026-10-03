@@ -120,12 +120,12 @@ import { useTidying } from './useTidyList.ts';
  * item onto the open row shown above it, caret at the join, the row above
  * keeping its level and a joined parent's sub-items coming up a level
  * (`mergeItems`; an emptied item goes the same way, which is how it is
- * removed); a paste of several lines becomes several items at the row's
+ * removed; nothing is said, the save word takes the region); a paste of several lines becomes several items at the row's
  * level, each line read by the body's line rule (`pasteItems`); Alt+↑/↓
  * move the row a slot from its field (`planMove`, as the grip's arrows and
  * menu). Each is an edit, not an act: one body write, no Undo toast, and the
- * status region says what cannot be seen — a join, a paste's count, a move
- * refused or one that changed the level. Enter in the add row adds and stays
+ * status region says what cannot be seen — a paste's count, a move refused
+ * or one that changed the level. Enter in the add row adds and stays
  * there for the next. A move that lands a row on a slot of another level
  * changes its level (`moveItem`), and the status line says so, since neither
  * the menu nor the arrow keys offered a choice.
@@ -402,8 +402,8 @@ export function ChecklistEditor({
     const { next, caret } = mergeItems(body, index, previous.index);
     caretAfterWrite.current = [caret, caret];
     write(next, previous.index);
-    // Nothing is said for an emptied line: the focus stepping back is the signal.
-    if (item.text !== '') announce('Joined with the item above');
+    // Nothing is said: the save word takes the one region at once, and the
+    // focus stepping back into the row above, caret at the join, is the signal.
     save();
   };
 

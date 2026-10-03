@@ -347,10 +347,10 @@ are `ChecklistEditor.tsx`, the Done disclosure `ChecklistDone.tsx`):
   the caret at the start joins the item onto the open row shown above it
   (`mergeItems`) — the row above keeps its level, so a sub-item merging into
   its parent leaves a parent, and a joined parent's sub-items come up a
-  level; the caret lands at the join and the region says "Joined with the
-  item above". An emptied item goes the same way, which is how one is
-  removed (nothing said; the focus stepping back is the signal), and the
-  first row, with nothing above, keeps its words. A paste of several lines
+  level; the caret lands at the join. Nothing is said — the save word takes
+  the one region at once, and focus stepping back into the row above is the
+  signal. An emptied item goes the same way, which is how one is removed,
+  and the first row, with nothing above, keeps its words. A paste of several lines
   becomes several items at the row's level (`pasteItems`): each line is
   read by the body's own line rule, so `- [ ]` and `- [x]` prefixes are
   kept and a plain line is an open item; the first line's words go in at
