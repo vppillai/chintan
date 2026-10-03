@@ -51,10 +51,11 @@ the sanitisers keep it from breaking the prompt's shape, not from being read.
   (`provider.parseRouteDecision`: a number off the list or an id that was
   not offered is an error, which `route` answers with a new note holding the
   dictation), and an append it is not sure of is parked for the person to
-  confirm, never filed (`routing.AppendConfidence`, `pipeline.outcomeOf`). The
-  rescue rules fire only on a name the transcript itself speaks
-  (`pipeline.existingNoteNamed`), so a steering title that was not spoken
-  rescues nothing. The content is never the model's: it is the transcript
+  confirm, never filed (`routing.AppendConfidence`, `pipeline.outcomeOf`). Of
+  the rescue rules (`pipeline.existingNoteNamed`), `prefix_transcript` and
+  `spoken_name` read the transcript; the exact-title rule and `prefix_title`
+  read the model's title, so a steering name reaches them only through the
+  model's own reply. The content is never the model's: it is the transcript
   with the model's spans deleted, and spans that would delete more than an
   instruction holds, cover a recording too long to be instruction-only, or
   do not fit are discarded whole and the dictation kept
@@ -96,18 +97,26 @@ made of the system prompt's words, an answer citing an id no packed note has
 — through the same parsing and rules, and asserts the outcome the person
 sees: the dictation whole in a new note, a park at `needs_target`, the
 recording as one item, the body untouched, an ungrounded answer with no
-source.
+source. A sixth case documents the outcome that stands rather than the one
+wanted: a "new" reply titled with a steering candidate's name is filed into
+that note (below).
 
 ## What it does not prevent
 
-- **A confident wrong destination.** A title written as an instruction can
-  make the model append to that note at confidence 1, and the deterministic
-  layer files a confident append. The person's text lands in the wrong note,
-  whole and under its own marker, and Move puts it right; nothing is lost.
-  Only the person can write such a title.
+- **A wrong destination through the model's reply.** A title written as an
+  instruction can make the model append to that note at confidence 1, and
+  the deterministic layer files a confident append; it can also make the
+  model answer "new" with that title, and the exact-title rule — which reads
+  the model's title, not the transcript — files it into that note at
+  confidence 1 with nothing spoken (`matched_by` `title`; the sixth replay
+  case). The person's text lands in the wrong note, whole and under its own
+  marker, and Move puts it right; nothing is lost. Only the person can write
+  such a title. Requiring the title rules to find the name in the transcript
+  is a rule change behind the live eval.
 - **Cleanup output is trusted.** The per-capture cleanup and the two cleaned
   views store the model's text as returned: no words check runs on them in
-  the worker (`llm.VerifySubsequence` is the eval's and the router's). A
+  the worker (`llm.VerifySubsequence` is the router's, Split up's and the
+  eval's). A
   reply that obeyed "translate this" is stored as the cleaned paragraph; the
   raw transcript stays and Transcribe again replaces it.
 - **Item texts are trusted.** `ParseItems` bounds an item's length and the
@@ -121,5 +130,6 @@ source.
 
 Each gap is a backlog row with the cheap mitigation it would take (a words
 bound on the cleaned text, a words check on item texts, a sentence on the
-title line); each is a prompt or bound change, so it ships with its live
-eval and its re-recorded replay set (`prompts.md`, "Changing a prompt").
+title line, the title rules held to the transcript's words); each is a
+prompt, bound or rule change, so it ships with its live eval and its
+re-recorded replay set (`prompts.md`, "Changing a prompt").

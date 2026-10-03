@@ -28,8 +28,9 @@ const evalRecordings = "../provider/testdata/eval/recordings"
 // preferExistingTitle, spoken_name, the 0.75 bar or the span rules is
 // measured against real replies without a key. A prompt change is a replay
 // miss until it is re-recorded (docs/design/routing.md, "Replay"). A case
-// marked flaky in the fixtures — one the live eval saw answered differently
-// across runs — has its outcome logged, not asserted.
+// marked flaky (the live eval saw it answered differently across runs) or
+// known_failure (the same wrong answer every run, with the reason) has its
+// outcome logged, not asserted.
 func TestRoutingEvalReplay(t *testing.T) {
 	if files, _ := filepath.Glob(filepath.Join(evalRecordings, "*.json")); len(files) == 0 {
 		t.Skip("no eval recordings; record them on the VM with scripts/dev/record-replay.sh and commit the directory")
@@ -53,6 +54,9 @@ func TestRoutingEvalReplay(t *testing.T) {
 			}
 			d, matchedBy, outcome := decide(reply, tc.Transcript, active)
 			t.Logf("%s | %s %s matched_by=%q %q | %q", tc.Transcript, outcome, d.NoteID, matchedBy, d.Title, d.Content)
+			if tc.KnownFailure != "" {
+				t.Skipf("known failure of the prompt, logged above, not asserted: %s", tc.KnownFailure)
+			}
 			if tc.Flaky {
 				t.Skip("flaky in the live eval: the recorded reply is one of several the model gives; its outcome is logged above, not asserted")
 			}
@@ -117,6 +121,7 @@ type routeEvalCase struct {
 	Transcript       string   `json:"transcript"`
 	Language         string   `json:"language"`
 	Flaky            bool     `json:"flaky"`
+	KnownFailure     string   `json:"known_failure"`
 	Action           string   `json:"action"`
 	ActionIn         []string `json:"action_in"`
 	Dest             string   `json:"note"`

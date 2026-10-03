@@ -38,6 +38,17 @@ CI shellchecks and shfmt-checks every `*.sh` here.
    CI checks), the morning queue for the owner, and the review ledger's
    outcome rows.
 
+## The replay set
+
+`record-replay.sh` is the owner's one command for the prompt evaluation's
+recordings (`docs/design/routing.md` → "Replay"): on the VM, in a mirror of
+a worktree, it reads the instance's LLM key from SSM into the environment of
+three `go test` runs and never prints it, keeps per prompt the reply a
+majority of runs gave, and writes `backend/internal/provider/testdata/eval/recordings/`
+and the runs' logs beside it. Copy both back, commit, and CI replays them
+with no key. `CHINTAN_INSTANCE` (default `dev`) and `CHINTAN_RUNS` (default
+3) are its knobs.
+
 ## The gate
 
 `protect-main.sh` is the merge rule (README → Operate → Release flow) as code:

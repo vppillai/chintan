@@ -359,10 +359,14 @@ holds no file. It is filled on the VM by `scripts/dev/record-replay.sh`: the
 instance's key from SSM into the environment of three `go test` runs, never
 printed; per prompt the reply a majority of the runs gave is kept, so a
 recording is the model's usual answer and not a one-off; the directory is
-then copied back and committed. A case the live eval sees answered
-differently across runs carries `flaky: true` in the fixture: the replay
-logs the outcome of the recorded reply and skips the expectation, the live
-eval asserts it as it does every other case.
+then copied back and committed, with the runs' logs beside it
+(`testdata/eval/record-logs/`). Two fixture keys say what the model does
+with a case rather than what the case wants: `flaky: true` on one the live
+eval sees answered differently across runs (set from the script's split
+report), and `known_failure: "<reason>"` on one it answers the same wrong
+way every run (cleared only when a prompt change fixes it). The replay logs
+such a case's outcome and skips its expectation; the live eval asserts both
+as it does every other case.
 
 Record with the default `LLM_MODEL`, which the replay also uses. The
 hand-written recordings in the tree are not eval data — each is a second
@@ -373,7 +377,8 @@ the current prompt to prove the path end to end (a "new Roof repair" reply
 turned by `decide` into an append to the listed Roof repair);
 `synthetic-tasks.json` for `restoreLevels`; and the `injection-*.json`
 replies, in which the model did what an injected text asked, which
-`TestInjectionReplayLeavesTheOutcomeUnchanged` runs through the same rules
+`TestInjectionReplayLeavesTheOutcomeUnchanged` runs through the same rules,
+one of them documenting an outcome that stands rather than one wanted
 (`prompt-safety.md`). Once a set is recorded, a change to a rule needs no
 re-record — that is what the replay measures — and a change to a prompt's
 text, the model or a fixture is a miss, so it is re-recorded in the same

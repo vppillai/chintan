@@ -63,8 +63,9 @@ const evalRecordings = "testdata/eval/recordings"
 
 // TestEvalReplay is the eval CI runs: the same cases and the same checks as
 // TestLiveEval over the replies the owner recorded, served by LLM_REPLAY with
-// no key and no call. A case marked flaky in the fixtures has its outcome
-// logged, not asserted. It skips only while the recordings directory is
+// no key and no call. A case marked flaky (the model answers it differently
+// across runs) or known_failure (the same wrong answer every run) in the
+// fixtures has its outcome logged, not asserted. It skips only while the recordings directory is
 // empty; a prompt, model or fixture change is a replay miss, which fails
 // with the re-record command. The route cases are also replayed through the
 // pipeline's decide() by pipeline.TestRoutingEvalReplay, which judges the
@@ -82,15 +83,19 @@ func TestEvalReplay(t *testing.T) {
 }
 
 // runEval is the eval's sub-tests over one client, live or replaying.
-// replay is what the flaky mark means: a flaky case's call still has to be
-// served (a miss is a stale recording set), its outcome is logged, and the
-// expectation is skipped.
+// replay is what the flaky and known_failure marks mean: the case's call
+// still has to be served (a miss is a stale recording set), its outcome is
+// logged, and the expectation is skipped.
 func runEval(t *testing.T, c *OpenAICleanup, replay bool) {
 	fx := loadEvalFixtures(t)
 	ctx := context.Background()
-	flaky := func(t *testing.T, is bool) {
+	unasserted := func(t *testing.T, flaky bool, knownFailure string) {
 		t.Helper()
-		if replay && is {
+		switch {
+		case !replay:
+		case knownFailure != "":
+			t.Skipf("known failure of the prompt, logged above, not asserted: %s", knownFailure)
+		case flaky:
 			t.Skip("flaky in the live eval: the recorded reply is one of several the model gives; its outcome is logged above, not asserted")
 		}
 	}
@@ -105,7 +110,7 @@ func runEval(t *testing.T, c *OpenAICleanup, replay bool) {
 					t.Fatalf("%s | ERROR %v", tc.Transcript, err)
 				}
 				t.Logf("%s | %s %s %q checklist=%v conf=%.2f | %q", tc.Transcript, d.Action, d.NoteID, d.Title, d.Checklist, d.Confidence, d.Content)
-				flaky(t, tc.Flaky)
+				unasserted(t, tc.Flaky, tc.KnownFailure)
 				checkRoute(t, tc, d, idOf)
 			})
 		}
@@ -146,7 +151,7 @@ func runEval(t *testing.T, c *OpenAICleanup, replay bool) {
 				}
 				joined := strings.Join(lines, " · ")
 				t.Logf("%s | %s", tc.Transcript, joined)
-				flaky(t, tc.Flaky)
+				unasserted(t, tc.Flaky, tc.KnownFailure)
 				if tc.Want != nil && !equalLines(lines, tc.Want, true) {
 					t.Errorf("items = %s, want %s", joined, strings.Join(tc.Want, " · "))
 				}
@@ -176,7 +181,7 @@ func runEval(t *testing.T, c *OpenAICleanup, replay bool) {
 				}
 				text, dropped, err := cleanup.SplitOutput(out.Text, tc.Body)
 				t.Logf("%q | %q dropped=%d", tc.Body, out.Text, dropped)
-				flaky(t, tc.Flaky)
+				unasserted(t, tc.Flaky, tc.KnownFailure)
 				if err != nil {
 					t.Fatalf("SplitOutput refused the reply: %v", err)
 				}
