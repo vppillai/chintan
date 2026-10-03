@@ -441,3 +441,20 @@ You reported a capture stuck at "Filing your recording" with no way out, which f
 **Open, unowned:** phone clock skew makes every "how long" comparison drift; the fix is an offset from the response Date header (PR13-17).
 
 Nothing here needs a decision from you.
+
+## 3 Oct, morning — round 14: the open backlog, no decisions needed
+
+Three streams took the open, unowned rows. Each PR was reviewed against the code; the reviews sent back a script that would have deleted a paid recording run, a keyboard regression hidden behind an edited test, four fixtures mislabelled as flaky, and an overstated safety claim. All fixed before merge.
+
+**Launch and the recorder (#242).** Measured on a throttled connection at 360 px: the `/capture` shortcut reaches a live microphone 640 ms sooner on a cold start (about 3.1 s to 2.5 s), because the capture screen no longer waits for a second round trip; Home is unchanged and warm launches stay under 300 ms. The Details/Share drawer and the zip download are now loaded on demand. Recording survives the screen locking: on Android it keeps going, on iOS the system pauses or ends the track and the app keeps every buffered second, says what happened, and offers Send or Discard. Two recorder bugs found on the way are fixed with tests.
+
+**One question in that PR, yours.** The bundle check used to measure the main chunk alone against 540 kB. Folding the router and capture screen into it, which is what saves the round trip, makes that chunk 605 kB while what a launch actually downloads fell from 620 to 614 kB. The check now measures the launch total against measured plus 10 kB, applied as the recommended default at 625 with the ratchet. Say a different rule or number if you want one; it is one constant.
+
+**Checklist editor and the clock (#243).** Backspace at the start of an item merges it into the one above, Enter mid-word splits, a multi-line paste becomes items, Alt+↑/↓ moves an item from the keyboard. Every "how long" the filing rows compute now uses the server's clock through the response Date header, so a phone minutes off no longer calls a fresh capture stuck or withholds Retry. The unit suite runs in half the time (12.5 s to 7.5 s) on the vm-threads pool after two realm bugs were fixed. Thirty-nine stale exports went when the knip exemption came off.
+
+**Replay and safety (#241).** The routing, items and tasks evals can now run in CI from recorded model replies with no key, asserting the outcome after the deterministic rules, not the reply text. Cases that failed identically every run are marked `known_failure` with a reason; only split runs are `flaky`. A new `docs/design/prompt-safety.md` states what the deterministic layer prevents and what it does not; six injection shapes are replayed through the rules. One finding worth your eye: the two title-match rescue rules read the model's title, so a dictated "new note" the model titles with an existing note's name files into that note at full confidence; holding those rules to words the transcript contains is queued behind the live eval (PR14-15d). A merge-order bug that flattened one shape of fresh sub-item is fixed.
+
+**For you**
+1. `aws login` on orb, then one command records the replay set so CI starts replaying: `CHINTAN_INSTANCE=dev bash scripts/dev/record-replay.sh` in a worktree mirror, commit the recordings folder. The session expires within hours, so run it right after logging in.
+2. The bundle rule above.
+3. The phone check for the screen-lock behaviour; the exact steps are in capture-ux.md under "What happens when the screen locks".
