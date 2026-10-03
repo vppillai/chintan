@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { announce } from '@/components/StatusRegion.tsx';
 
 import { useApi } from '../ApiProvider.tsx';
+import { serverNow } from '../clock.ts';
 import { ApiError } from '../problem.ts';
 import type { ChintanApi } from '../endpoints.ts';
 import { STUCK_AFTER_MS, isTerminalStatus } from '../schema.ts';
@@ -75,7 +76,7 @@ const CAPTURE_POLL_QUIET_MS = 2 * 60 * 1000;
  */
 export function capturePollInterval(
   items: readonly CaptureWire[],
-  now: number = Date.now(),
+  now: number = serverNow(),
 ): number | false {
   const moving = items.filter((capture) => !isTerminalStatus(capture.status));
   if (moving.length === 0) return false;
@@ -112,7 +113,7 @@ function within(iso: string | null | undefined, windowMs: number, now: number): 
  * dismissed nothing showed receipts from weeks ago. `no_content` alone
  * expires quickly: there is nothing to open and nothing to do.
  */
-export function isFilingRelevant(capture: CaptureWire, now: number = Date.now()): boolean {
+export function isFilingRelevant(capture: CaptureWire, now: number = serverNow()): boolean {
   switch (capture.status) {
     case 'failed':
     case 'spend_capped':

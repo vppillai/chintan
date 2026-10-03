@@ -9,6 +9,7 @@
 
 import { config } from '@/config/env.ts';
 
+import { observeServerDate } from './clock.ts';
 import {
   ApiError,
   cancelledError,
@@ -236,13 +237,17 @@ export class ApiClient {
     options.signal?.addEventListener('abort', onCallerAbort, { once: true });
 
     try {
-      return await this.fetchImpl(buildUrl(this.baseUrl, path, options.query), {
+      const response = await this.fetchImpl(buildUrl(this.baseUrl, path, options.query), {
         method,
         headers,
         ...(body === undefined ? {} : { body }),
         signal: controller.signal,
         credentials: 'omit',
       });
+      // Every answer, error or not, dates itself: the one read that keeps
+      // the filing rules on the server's clock (`serverNow`).
+      observeServerDate(response);
+      return response;
     } catch (cause) {
       if (options.signal?.aborted) throw cancelledError();
       if (controller.signal.aborted) throw timeoutError(timeoutMs);

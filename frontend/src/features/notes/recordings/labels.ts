@@ -5,6 +5,7 @@
  * a label anywhere else.
  */
 
+import { serverNow } from '@/api/clock.ts';
 import { ApiError } from '@/api/problem.ts';
 import type { CaptureStatus, CaptureWire, NoteWire } from '@/api/schema.ts';
 import { describeAgoShort, isStuck } from '@/features/capture/filing/model.ts';
@@ -125,7 +126,7 @@ export function describeOutcome(
  * names how long it has sat, so the row reads as a problem rather than as
  * patience.
  */
-export function filedLabel(capture: CaptureWire, now: number = Date.now()): string {
+export function filedLabel(capture: CaptureWire, now: number = serverNow()): string {
   switch (capture.status) {
     case 'appended':
       return '';

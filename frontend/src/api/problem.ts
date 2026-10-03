@@ -7,6 +7,7 @@
  * reports "it failed" can be traced without guessing.
  */
 
+import { serverNow } from './clock.ts';
 import type { ProblemWire } from './schema.ts';
 
 export const CORRELATION_HEADER = 'X-Correlation-Id';
@@ -232,7 +233,7 @@ export function retryAfterMs(response: Response): number | null {
   const seconds = Number(header);
   if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
   const date = Date.parse(header);
-  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null;
+  return Number.isFinite(date) ? Math.max(0, date - serverNow()) : null;
 }
 
 export function networkError(cause: unknown): ApiError {

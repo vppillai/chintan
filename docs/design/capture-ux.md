@@ -344,6 +344,14 @@ long enough for the walk home, short enough that a second device does not
 meet receipts from weeks ago; `no_content` for `RECENTLY_SETTLED_MS` (ten
 minutes), since there is nothing to open and nothing to do.
 
+Every "now" these rules compare a server timestamp with — the age, `isStuck`,
+`retryAccepted`, `capturePollInterval`, `filedLabel` on the Recordings tab,
+the minute tick itself — is `serverNow()` (`api/clock.ts`): the device clock
+corrected by the offset the API client reads off each response's `Date`
+header, so a phone twelve minutes fast does not call a capture it just made
+stuck, and one ten minutes slow does not hold Retry back past `retry_after`
+("API conventions", "Pending captures say when to retry").
+
 A moving row shows its age once that is a minute: "Filing your recording"
 with "· 4 min" beside it (`describe` in `filing/model.ts`, `describeAgoShort` of
 `last_progress_at ?? created_at` — the poll's clock — on the row's minute
