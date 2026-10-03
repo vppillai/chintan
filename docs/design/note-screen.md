@@ -381,7 +381,15 @@ newest *finished* recording open on arrival, one row open at a time — a
 closed row has no `<audio>`, which is what makes "one plays at a time" hold
 without a registry. A recording still uploading or filing is the first row
 and wears the library's upload bar or stage strip (`recordings/labels.ts`
-names the stages and the sources: "From Watch", `heardAs`). A row that
+names the stages and the sources: "From Watch", `heardAs`). One the pipeline
+has stopped moving without saying so — `isStuck`, the tray's rule
+(`capture-ux.md`) — takes the failed row's shape instead: the strip goes, its
+line says "Still not done after 12 min" (`filedLabel`, on the row's minute
+tick), and it has Retry — first in its menu and under the open row, offered
+when the server will accept it (`retry_after`, else the client's bound) with
+the 409's own sentence under the row for a tap before that — and Delete,
+which the server allows from the same bound. Transcribe again stays off
+until it settles: its transcript may well exist, and Retry resumes from it. A row that
 arrived as text has no player. An open row holds the player (`usePlayer.ts`)
 with the waveform drawn from `peaks.json` as a real slider
 (`WaveformScrubber.tsx`, `role="slider"`, arrow keys seek) and the transcript
@@ -389,8 +397,8 @@ with the waveform drawn from `peaks.json` as a real slider
 text that became the note and never seeks, because cleanup reorders clauses
 and a proportional alignment would land on a plausible wrong place.
 
-The row's More menu: Move to…, Delete recording, Download audio (not for a
-text row), Copy this transcript and Copy this cleaned text while the row is
+The row's More menu: Retry first on a failed or stuck row, then Move to…,
+Delete recording, Download audio (not for a text row), Copy this transcript and Copy this cleaned text while the row is
 open and has them, Transcribe again (below) on a settled row with audio, and
 Select. A long press (`useLongPress`) or Select enters a selection mode: the
 drawer hides (`NoteDetailScreen`, `selectingRecordings`) and a `SelectionBar`

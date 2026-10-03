@@ -1,9 +1,18 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { StatusRegion, announce } from '@/components/StatusRegion.tsx';
 import { saveCaptureRecord } from '@/features/capture/buffer.ts';
 import { STUCK_CREATED_AT, capture, json, mount } from '@/test/filing.tsx';
+
+const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+const conflict = (detail: string) =>
+  json({ type: 'about:blank', title: 'Conflict', status: 409, detail }, 409);
+
+afterEach(() => {
+  announce('');
+});
 
 /** This device's capture store names `serverCaptureId`: it made the recording. */
 async function recordHere(serverCaptureId: string): Promise<void> {
@@ -82,11 +91,81 @@ describe('a capture that never left "uploaded" is not a permanent dead end', () 
     await recordHere('srv-stuck');
     mount([capture({ id: 'srv-stuck', status: 'uploaded', created_at: STUCK_CREATED_AT })]);
 
-    expect(
-      await screen.findByText(/still not done.*something may have gone wrong/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('Still not done. Retry, or dismiss it.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+  });
+
+  it('says how long it has sat and draws no stage strip, since no stage is in progress', async () => {
+    // Prod: a capture sat at "Filing your recording" for ten minutes over a
+    // strip lit at Saving, then flipped to "something might have gone wrong"
+    // with the strip still lit and nothing to tap.
+    mount([capture({ status: 'appending', created_at: ago(40), last_progress_at: ago(12) })]);
+
+    // Twelve minutes into an append the server would still refuse a retry:
+    // the sentence names only the way out that is on the row.
+    expect(await screen.findByText('Still not done. You can dismiss it.')).toBeInTheDocument();
+    expect(screen.getByText('· 12 min')).toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Filing progress' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+  });
+
+  it('shows the age of a row that is moving once it is a minute old, outside the live region', async () => {
+    mount([capture({ status: 'transcribing', created_at: ago(4) })]);
+    const live = await screen.findByRole('status');
+    expect(live).toHaveTextContent('Filing your recording');
+    const age = screen.getByText('· 4 min');
+    expect(age).toHaveAttribute('aria-hidden', 'true');
+    expect(live).not.toContainElement(age);
+    expect(screen.getByRole('list', { name: 'Filing progress' })).toBeInTheDocument();
+  });
+
+  it('is not re-announced because a minute passed: the live sentence stands while the age moves', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mount([capture({ status: 'transcribing', created_at: ago(4) })]);
+      const live = await screen.findByRole('status');
+      const before = live.textContent;
+      expect(screen.getByText('· 4 min')).toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(60_000);
+      });
+
+      expect(screen.getByText('· 5 min')).toBeInTheDocument();
+      expect(live.textContent).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('offers Retry when the server says it will take one, whatever the client\'s own bound says', async () => {
+    const user = userEvent.setup();
+    const { calls } = mount([
+      capture({ id: 'told', status: 'appending', created_at: ago(12), retry_after: ago(1) }),
+      capture({ id: 'held', status: 'transcribing', created_at: ago(30), retry_after: new Date(Date.now() + 60_000).toISOString() }),
+    ]);
+
+    await screen.findAllByText(/still not done/i);
+    const rows = document.querySelectorAll<HTMLElement>('.filing-row');
+    expect(within(rows[0]!).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(within(rows[1]!).queryByRole('button', { name: 'Retry' })).toBeNull();
+
+    await user.click(within(rows[0]!).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => {
+      expect(calls.some((call) => call.method === 'POST' && call.url.endsWith('/v1/captures/told/retry'))).toBe(true);
+    });
+  });
+
+  it('answers an early tap with the server\'s own sentence', async () => {
+    const user = userEvent.setup();
+    mount([capture({ status: 'transcribing', created_at: ago(12), retry_after: ago(1) })], {
+      retry: conflict('That recording is still being worked on.'),
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('That recording is still being worked on.');
   });
 
   it('still calls POST /v1/captures/{id}/retry from the stuck state', async () => {
@@ -126,50 +205,90 @@ describe('a capture that never left "uploaded" is not a permanent dead end', () 
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
 
-  it('offers Retry only once the server will accept it: fifteen minutes, twenty while appending', async () => {
-    /*
-     * The row said "still not done" and offered Retry at ten minutes; the
-     * server refuses a retry of an in-flight capture until no worker can
-     * still be on it — fifteen minutes since it last wrote the row, or the
-     * twenty-minute append lease — so every tap in between was answered
-     * "still in flight". The copy stays at ten; the button waits.
-     */
-    const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
-    mount([
-      capture({ id: 'twelve', status: 'transcribing', created_at: ago(12) }),
-      capture({ id: 'sixteen', status: 'transcribing', created_at: ago(16) }),
-      capture({ id: 'appending-sixteen', status: 'appending', created_at: ago(16) }),
-      capture({ id: 'appending-twenty-one', status: 'appending', created_at: ago(21) }),
-      // The server measures from the row's last write, not its creation. No
-      // backend sends `last_progress_at` yet, so `sixteen` above is offered
-      // Retry whether or not it moved; when the field is carried, a capture
-      // that made progress twelve minutes ago is not, however old its row.
-      capture({
-        id: 'progressed',
-        status: 'transcribing',
-        created_at: ago(16),
-        last_progress_at: ago(12),
-      }),
-      capture({
-        id: 'stalled',
-        status: 'transcribing',
-        created_at: ago(30),
-        last_progress_at: ago(16),
-      }),
-    ]);
+  it('never offers Retry on a row the server has not dated, however long it has sat', async () => {
+    // The row used to keep its own copy of the server's thresholds and the
+    // two disagreed for five minutes of every stall. Now `retry_after` is
+    // the one source; a pending row without it — none the server sends —
+    // gets the dismiss-only sentence for good rather than a guess.
+    mount([capture({ status: 'transcribing', created_at: ago(30), retry_after: null })]);
 
-    expect(await screen.findAllByText(/still not done/i)).toHaveLength(6);
-    const rows = document.querySelectorAll<HTMLElement>('.filing-row');
-    const retryIn = (row: HTMLElement | undefined) =>
-      row ? within(row).queryByRole('button', { name: 'Retry' }) !== null : null;
-    expect(retryIn(rows[0])).toBe(false);
-    expect(retryIn(rows[1])).toBe(true);
-    expect(retryIn(rows[2])).toBe(false);
-    expect(retryIn(rows[3])).toBe(true);
-    expect(retryIn(rows[4])).toBe(false);
-    expect(retryIn(rows[5])).toBe(true);
-    // Dismiss is still the way off the screen for every one of them.
-    expect(screen.getAllByRole('button', { name: 'Dismiss' })).toHaveLength(6);
+    expect(await screen.findByText('Still not done. You can dismiss it.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+  });
+});
+
+describe('the × on a stuck row is not cosmetic', () => {
+  // Dismiss only hid the row on this device: the server kept the capture,
+  // every other device kept drawing it, and the poll asked after it once a
+  // minute for ever. Once the server will let it go, the × deletes it.
+  it('deletes the capture once the server will let it go, and the row leaves', async () => {
+    const user = userEvent.setup();
+    const { calls } = mount([capture({ id: 'gone', status: 'transcribing', created_at: ago(16) })]);
+
+    await user.click(await screen.findByRole('button', { name: 'Dismiss' }));
+
+    await waitFor(() => {
+      expect(calls.some((call) => call.method === 'DELETE' && call.url.endsWith('/v1/captures/gone'))).toBe(true);
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: 'Filing' })).toBeNull();
+    });
+  });
+
+  it('follows retry_after for the delete too', async () => {
+    const user = userEvent.setup();
+    const { calls } = mount([capture({ id: 'told', status: 'appending', created_at: ago(12), retry_after: ago(1) })]);
+    await user.click(await screen.findByRole('button', { name: 'Dismiss' }));
+    await waitFor(() => {
+      expect(calls.some((call) => call.method === 'DELETE' && call.url.endsWith('/v1/captures/told'))).toBe(true);
+    });
+  });
+
+  it('only hides the row before the server would allow the delete, and sends nothing', async () => {
+    const user = userEvent.setup();
+    const { calls } = mount([capture({ id: 'early', status: 'transcribing', created_at: ago(12) })]);
+
+    await user.click(await screen.findByRole('button', { name: 'Dismiss' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: 'Filing' })).toBeNull();
+    });
+    expect(calls.some((call) => call.method === 'DELETE')).toBe(false);
+  });
+
+  it('hides the row and says why when the delete never reached the server', async () => {
+    const user = userEvent.setup();
+    render(<StatusRegion />);
+    mount([capture({ id: 'offline', status: 'transcribing', created_at: ago(16) })], {
+      remove: new TypeError('Failed to fetch'),
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'Dismiss' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: 'Filing' })).toBeNull();
+    });
+    // The client's own sentence for a request that never left the device —
+    // never the Retry button's "The retry did not go through".
+    expect(screen.getByRole('status')).toHaveTextContent('No connection, so that did not reach the server.');
+  });
+
+  it('hides the row and says the server\'s sentence when the delete is refused', async () => {
+    const user = userEvent.setup();
+    render(<StatusRegion />);
+    mount([capture({ id: 'kept', status: 'uploaded', created_at: ago(16) })], {
+      remove: conflict('The upload may still land; try again in a few minutes.'),
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'Dismiss' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: 'Filing' })).toBeNull();
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'The upload may still land; try again in a few minutes.',
+    );
   });
 });
 

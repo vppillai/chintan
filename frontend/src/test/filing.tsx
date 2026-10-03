@@ -2,7 +2,7 @@ import { render } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useParams } from 'react-router';
 import { vi } from 'vitest';
 
-import type { CaptureWire } from '@/api/schema.ts';
+import { isTerminalStatus, type CaptureWire } from '@/api/schema.ts';
 import { FilingRow } from '@/features/capture/FilingRow.tsx';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
@@ -14,17 +14,28 @@ import { TestProviders, testApiContext } from '@/test/providers.tsx';
  * connected would fail here rather than pass against a bare component.
  */
 
+/** The worker's timeout: when the server first lets a pending capture be retried or deleted. */
+const RETRY_AFTER_MS = 15 * 60_000;
+
+/**
+ * A capture as the server sends it. Recent by default, so a plain
+ * in-progress fixture never trips the stuck rule; tests for that set an old
+ * `created_at` or `last_progress_at`. `retry_after` is derived the server's
+ * way (`service.CaptureRetryAfter`: the last progress, else the creation,
+ * plus the worker's timeout) unless the test says otherwise — `null` is a
+ * row the server did not date.
+ */
 export function capture(overrides: Partial<CaptureWire> = {}): CaptureWire {
-  return {
+  const row: CaptureWire = {
     id: 'srv-1',
     status: 'transcribing',
-    // Recent by default so a plain in-progress fixture never trips the
-    // stuck-capture timeout below. Tests for that behaviour set an old
-    // `created_at` explicitly.
     created_at: new Date().toISOString(),
     version: 1,
     ...overrides,
   };
+  if ('retry_after' in overrides || isTerminalStatus(row.status)) return row;
+  const since = Date.parse(row.last_progress_at ?? row.created_at);
+  return { ...row, retry_after: new Date(since + RETRY_AFTER_MS).toISOString() };
 }
 
 export const STUCK_CREATED_AT = '2026-08-07T10:00:00.000Z';
@@ -44,14 +55,19 @@ function NoteScreenProbe() {
 
 /**
  * Serves the capture list, and records every request for assertions. `retry`
- * is what `POST /v1/captures/{id}/retry` answers, when a test needs it to
- * refuse. `items` is served by reference, so a test can add to it and ask
- * again. With `noteRoute` the row sits on `/` and `/notes/:id` is a probe
+ * is what `POST /v1/captures/{id}/retry` answers, and `remove` what
+ * `DELETE /v1/captures/{id}` answers, when a test needs one to refuse; a
+ * DELETE that is not refused drops the row from `items`. `items` is served
+ * by reference, so a test can add to it and ask again. With `noteRoute` the row sits on `/` and `/notes/:id` is a probe
  * naming the note, since a `MemoryRouter` with nothing else has nowhere to go.
  */
 export function mount(
   items: CaptureWire[],
-  { retry, noteRoute = false }: { retry?: Response; noteRoute?: boolean } = {},
+  {
+    retry,
+    remove,
+    noteRoute = false,
+  }: { retry?: Response; remove?: Response | Error; noteRoute?: boolean } = {},
 ) {
   const calls: { url: string; method: string }[] = [];
 
@@ -60,6 +76,13 @@ export function mount(
     const method = init?.method ?? 'GET';
     calls.push({ url, method });
 
+    if (method === 'DELETE' && /\/v1\/captures\/[^/]+$/.test(url)) {
+      if (remove instanceof Error) throw remove;
+      if (remove) return remove;
+      const id = url.slice(url.lastIndexOf('/') + 1);
+      items.splice(0, items.length, ...items.filter((item) => item.id !== id));
+      return new Response(null, { status: 204 });
+    }
     if (url.includes('/v1/captures/') && url.endsWith('/retry')) {
       return retry ?? json(capture({ status: 'transcribing' }));
     }

@@ -1,8 +1,10 @@
-import { useTranscribeAnyway } from '@/api/queries/captures.ts';
+import { useDeleteStuckCapture, useTranscribeAnyway } from '@/api/queries/captures.ts';
 import { isTerminalStatus, type CaptureWire } from '@/api/schema.ts';
 import { Icon, type IconName } from '@/components/Icon.tsx';
+import { announce } from '@/components/StatusRegion.tsx';
 import { SwipeRow } from '@/components/SwipeRow.tsx';
 import { formatDurationShort } from '@/features/notes/groups.ts';
+import { useMinuteNow } from '@/hooks/useMinuteNow.ts';
 
 import { TargetPrompt } from './TargetPrompt.tsx';
 import { useRecordedHere } from './useLocalUpload.ts';
@@ -13,6 +15,7 @@ import {
   isStuck,
   noticeKind,
   retryAccepted,
+  retryMessage,
   stageIndex,
   type NoticeKind,
   type ReceiptGroup,
@@ -62,6 +65,8 @@ export type FilingItemProps =
  */
 export function FilingItem(props: FilingItemProps) {
   const recordedHere = useRecordedHere('receipt' in props ? null : props.capture.id);
+  // A moving row's age ticks; a stopped or filed row's words do not change with time.
+  const now = useMinuteNow(!('receipt' in props) && !isTerminalStatus(props.capture.status));
   /*
    * Both branches sit in a SwipeRow, so the root is the same element whether
    * the row is moving or a receipt and the live region below survives the
@@ -84,7 +89,7 @@ export function FilingItem(props: FilingItemProps) {
   }
   return (
     <SwipeRow className="filing-swipe" label="Filing actions" actions={[]}>
-      {captureBody({ ...props, recordedHere })}
+      {captureBody({ ...props, recordedHere, now })}
     </SwipeRow>
   );
 }
@@ -149,6 +154,44 @@ function DismissButton({ onDismiss }: { onDismiss: () => void }) {
     <button type="button" className="filing-row__dismiss" aria-label="Dismiss" onClick={onDismiss}>
       <Icon name="close" size={18} />
     </button>
+  );
+}
+
+/**
+ * The × on a stuck row. Once the server will let the capture go
+ * (`retryAccepted`: the same bound as Retry, `service.CaptureStuck`) it is
+ * deleted — dismissing only hid it on this device while the server kept it,
+ * every other device kept drawing it and the poll kept asking after it once
+ * a minute for ever. A refusal (an upload whose object may yet land) hides
+ * the row here, as before, and says the server's sentence through the live
+ * region, since the row it would sit under is going. Before the bound the ×
+ * hides the row as it always did. `onDismiss` runs on success as well: it is
+ * the parent's focus hand-off, and the id it remembers never comes back.
+ */
+function StuckDismissButton({
+  capture,
+  onDismiss,
+}: {
+  capture: CaptureWire;
+  onDismiss: () => void;
+}) {
+  const remove = useDeleteStuckCapture();
+  return (
+    <DismissButton
+      onDismiss={() => {
+        if (!retryAccepted(capture)) {
+          onDismiss();
+          return;
+        }
+        remove.mutate(capture, {
+          onSuccess: onDismiss,
+          onError: (error) => {
+            announce(retryMessage(error, 'Could not delete the recording. Try again.'));
+            onDismiss();
+          },
+        });
+      }}
+    />
   );
 }
 
@@ -223,15 +266,16 @@ function captureBody({
   retryError,
   onDismiss,
   recordedHere,
-}: Extract<FilingItemProps, { capture: CaptureWire }> & { recordedHere: boolean }) {
+  now,
+}: Extract<FilingItemProps, { capture: CaptureWire }> & { recordedHere: boolean; now: number }) {
   const failed = capture.status === 'failed' || capture.status === 'spend_capped';
-  const stuck = isStuck(capture);
+  const stuck = isStuck(capture, now);
   // A stuck capture gets the same way out a failed one does: retrying is safe
   // (the backend resumes from whichever artifact already exists) and dismissing
   // stops the row sitting at the top of the library forever. Retry itself
   // waits until the server will take it — see `retryAccepted`.
   const actionable = failed || stuck;
-  const retryable = failed || retryAccepted(capture);
+  const retryable = failed || retryAccepted(capture, now);
   // "Nothing heard" is the recorder's or the provider's judgement; the
   // person's outranks it. The same /retranscribe as the Recordings tab's
   // Transcribe again, with the server lifting its gates for the run.
@@ -250,13 +294,15 @@ function captureBody({
    * The stage strip is for a capture that is still moving. It used to render
    * for every status the explicit branches did not name, which meant
    * `needs_target` and `no_content` showed every stage *complete* while the
-   * capture had in fact stopped and was waiting for the user.
+   * capture had in fact stopped and was waiting for the user — and for a
+   * stuck one, which drew a segment "in progress" under "still not done".
    */
-  const running = !isTerminalStatus(capture.status);
+  const running = !isTerminalStatus(capture.status) && !stuck;
   // What was said, on the rows that need the person: "which note?" and a
   // failure are answered from memory of the recording, and its length alone
   // did not bring back a ring capture from hours ago (R7-7b).
   const excerpt = (needsTarget || actionable) && capture.excerpt ? capture.excerpt : null;
+  const { sentence, age } = describe(capture, recordedHere, now);
 
   return (
     <article className="filing-row" data-status={capture.status} data-kind={noticeKind(capture)}>
@@ -264,11 +310,22 @@ function captureBody({
       <div className="filing-row__body">
         <div className="filing-row__head">
           <p className="filing-row__title" role="status" aria-live="polite">
-            {describe(capture, stuck, recordedHere)}
-            {running && stage && !stuck && !waiting && (
+            {sentence}
+            {running && stage && !waiting && (
               <span className="visually-hidden">{` — ${stage.label}`}</span>
             )}
           </p>
+          {/*
+            The age sits beside the live sentence, not in it, like a receipt's
+            "· 2 min": it changes every minute, and inside the region a stuck
+            row would be read out again each minute for ever. Hidden from the
+            reader, who has the sentence; a sighted glance has the number.
+          */}
+          {age && (
+            <span className="filing-row__duration numeric" aria-hidden="true">
+              · {age}
+            </span>
+          )}
           {duration && <span className="filing-row__duration numeric">{duration}</span>}
         </div>
 
@@ -325,7 +382,11 @@ function captureBody({
         in no note yet, with nowhere else to find it — answering is its way
         off the screen.
       */}
-      {(actionable || capture.status === 'no_content') && <DismissButton onDismiss={onDismiss} />}
+      {stuck ? (
+        <StuckDismissButton capture={capture} onDismiss={onDismiss} />
+      ) : (
+        (actionable || capture.status === 'no_content') && <DismissButton onDismiss={onDismiss} />
+      )}
     </article>
   );
 }

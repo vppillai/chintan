@@ -9,8 +9,10 @@ import { Icon } from '@/components/Icon.tsx';
 import { OverflowMenu, type OverflowMenuItem } from '@/components/OverflowMenu.tsx';
 import { SwipeRow } from '@/components/SwipeRow.tsx';
 import { FilingStages, TargetPrompt } from '@/features/capture/FilingRow.tsx';
+import { isStuck, retryAccepted, retryMessage } from '@/features/capture/filing/model.ts';
 import { AUTO_LANGUAGE } from '@/features/settings/languages.ts';
 import { useLongPress, type LongPress } from '@/hooks/useLongPress.ts';
+import { useMinuteNow } from '@/hooks/useMinuteNow.ts';
 
 import { TranscriptPanel, type TranscriptView } from '../TranscriptPanel.tsx';
 import { WaveformScrubber } from '../WaveformScrubber.tsx';
@@ -91,7 +93,14 @@ export function RecordingRow({
    * round trip, and a note with six recordings should cost the request for the
    * one being read, not six times four.
    */
-  const running = !isTerminalStatus(capture.status);
+  const moving = !isTerminalStatus(capture.status);
+  const now = useMinuteNow(moving);
+  // Stopped moving without saying so (`isStuck`, the tray's rule): the row
+  // drops the strip and takes the failed row's controls, and its title says
+  // how long it has sat. On the wire it is still non-terminal, so the
+  // artifacts stay unasked for — the pipeline may yet write them.
+  const stuck = isStuck(capture, now);
+  const running = moving && !stuck;
   const artifacts = useQuery({
     // Keyed on the capture's write version as well as its id (`queryKeys`):
     // the landed row must fetch afresh where a five-minute-fresh entry would
@@ -107,7 +116,7 @@ export function RecordingRow({
       }),
     // Not while the pipeline is still writing them: the audio's presigned URL
     // would 404 and the row would say the recording "is no longer stored".
-    enabled: expanded && !running,
+    enabled: expanded && !moving,
     staleTime: 5 * 60_000,
     retry: false,
   });
@@ -140,7 +149,7 @@ export function RecordingRow({
   const cleanedText = artifacts.data?.cleanedText ?? '';
   // Not while the pipeline runs: what is in hand is the transcript being
   // replaced, and the chip's tap would post a second run into a 409.
-  const heard = running
+  const heard = moving
     ? null
     : heardAs(artifacts.data?.detectedLanguage ?? null, effectiveLanguage);
   // A capture recorded before segments and peaks were stored has neither and
@@ -164,8 +173,12 @@ export function RecordingRow({
   // Nothing to play: the artifacts answered and there is no audio behind them.
   const noAudio = expanded && artifacts.isSuccess && !audioUrl;
   const failed = capture.status === 'failed' || capture.status === 'spend_capped';
+  // Retry, when the server will take it: at once for a failed row, and for a
+  // stuck one from `retry_after` (else the client's copy of the rule). An
+  // early tap is answered by the 409's own sentence under the row.
+  const retryable = failed || retryAccepted(capture, now);
 
-  const filed = filedLabel(capture);
+  const filed = filedLabel(capture, now);
   const summary = (
     <>
       <span className="recording__when">{when}</span>{' '}
@@ -190,6 +203,7 @@ export function RecordingRow({
       className="recording"
       data-expanded={expanded || undefined}
       data-status={capture.status}
+      data-stuck={stuck || undefined}
       data-selected={selected || undefined}
     >
       {selecting ? (
@@ -290,6 +304,11 @@ export function RecordingRow({
           <OverflowMenu
             label={`More for recording from ${when}`}
             items={[
+              // First on a row that stopped short: it is the one thing to do
+              // with it. Transcribe again (below) stays off until it settles.
+              ...(retryable
+                ? [{ label: 'Retry', onSelect: () => retry.mutate(capture.id) } satisfies OverflowMenuItem]
+                : []),
               { label: 'Move to…', onSelect: onMove },
               { label: 'Delete recording', onSelect: onDelete, destructive: true },
               ...(textOnly ? [] : [{ label: 'Download audio', onSelect: onDownload } satisfies OverflowMenuItem]),
@@ -316,7 +335,7 @@ export function RecordingRow({
               // Only a settled recording: the server refuses one in flight,
               // and the row is already following that run. Never words sent
               // as words: there is no audio to run again.
-              ...(running || textOnly
+              ...(moving || textOnly
                 ? []
                 : [{ label: retranscribeText, onSelect: onRetranscribe } satisfies OverflowMenuItem]),
               { label: 'Select', onSelect: onStartSelecting },
@@ -334,6 +353,14 @@ export function RecordingRow({
         <div className="recording__progress">
           <FilingStages capture={capture} />
         </div>
+      )}
+
+      {/* Why a Retry did nothing, in the server's words: under the row's line,
+          since the menu's Retry is tapped on a closed row too. */}
+      {retry.isError && (
+        <p className="recording__error recording__error--row" role="alert">
+          {retryMessage(retry.error)}
+        </p>
       )}
 
       {expanded && (
@@ -365,7 +392,7 @@ export function RecordingRow({
             read from. Retry resumes from whichever artifact already exists,
             so it is safe on a stalled capture as well as a failed one.
           */}
-          {failed && (
+          {retryable && (
             <div className="recording__actions">
               <button
                 type="button"

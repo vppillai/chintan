@@ -481,6 +481,31 @@ export function useMoveCaptures() {
   });
 }
 
+/**
+ * Deletes a capture the pipeline has left behind, from a stuck row's ×
+ * (`FilingItem`). The pending list drops it at once rather than on the next
+ * poll — a minute away for a stuck row — so `capturePollInterval` stops
+ * counting it the moment it is gone; the note it was aimed at, when it named
+ * one, loses the row and is read again for its body.
+ */
+export function useDeleteStuckCapture(): UseMutationResult<void, Error, CaptureWire> {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (capture: CaptureWire) => api.deleteCapture(capture.id),
+    onSuccess: (_result, capture) => {
+      queryClient.setQueryData<{ items: CaptureWire[] }>(queryKeys.pendingCaptures(), (current) =>
+        current ? { items: current.items.filter((item) => item.id !== capture.id) } : current,
+      );
+      if (capture.note_id) {
+        dropCapturesFromNote(queryClient, capture.note_id, [capture.id]);
+        refreshAppendedNote(queryClient, capture.note_id);
+      }
+      void queryClient.invalidateQueries({ queryKey: ['captures'] });
+    },
+  });
+}
+
 export function useRetryCapture(): UseMutationResult<CaptureWire, Error, string> {
   const api: ChintanApi = useApi();
   const queryClient = useQueryClient();

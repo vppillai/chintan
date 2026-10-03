@@ -276,6 +276,81 @@ describe('transcribing a recording again', () => {
   });
 });
 
+
+/**
+ * A recording the pipeline stopped moving without saying so: still
+ * non-terminal on the wire, so the row drew the strip for ever and Delete
+ * came back 409. It takes the failed row's shape instead — the title says
+ * how long, Retry when the server will take it, no strip, no Transcribe
+ * again (its transcript may well exist; Retry resumes from it).
+ */
+describe('a recording that has sat stuck', () => {
+  const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const stuck: CaptureWire = {
+    ...CAPTURE,
+    status: 'appending',
+    created_at: ago(40),
+    last_progress_at: ago(12),
+    retry_after: ago(1),
+  };
+
+  it('says how long, drops the strip, and offers Retry in the menu and under the row', async () => {
+    const user = userEvent.setup();
+    bucketStub();
+    const api = apiStub({ ...NOTE, captures: [stuck] });
+    mount(api.fetchImpl);
+
+    expect(await screen.findByText('Still not done after 12 min')).toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Filing progress' })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /more for recording from/i }));
+    const menu = screen.getByRole('menu');
+    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Retry',
+      'Move to…',
+      'Delete recording',
+      'Download audio',
+      'Select',
+    ]);
+    await user.keyboard('{Escape}');
+
+    // Open, the row has the same Retry the tray's row has.
+    await user.click(screen.getByText('Still not done after 12 min').closest('button')!);
+    await user.click(await screen.findByRole('button', { name: 'Retry' }));
+    await waitFor(() => {
+      expect(api.calls.some((call) => call.method === 'POST' && call.path === '/v1/captures/cap-1/retry')).toBe(true);
+    });
+    expect(screen.queryByText(/being filed/i)).toBeNull();
+  });
+
+  it('waits for the server\'s retry_after before offering Retry', async () => {
+    const user = userEvent.setup();
+    bucketStub();
+    const soon = new Date(Date.now() + 60_000).toISOString();
+    mount(apiStub({ ...NOTE, captures: [{ ...stuck, retry_after: soon }] }).fetchImpl);
+    expect(await screen.findByText('Still not done after 12 min')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /more for recording from/i }));
+    expect(screen.queryByRole('menuitem', { name: 'Retry' })).toBeNull();
+    await user.keyboard('{Escape}');
+  });
+
+  it('says why under the row when the server refuses the retry', async () => {
+    const user = userEvent.setup();
+    bucketStub();
+    mount(
+      apiStub({ ...NOTE, captures: [stuck] }, {
+        retry: () =>
+          json({ type: 'about:blank', title: 'Conflict', status: 409, detail: 'That recording is still being worked on.' }, 409),
+      }).fetchImpl,
+    );
+    await screen.findByText('Still not done after 12 min');
+    await user.click(screen.getByRole('button', { name: /more for recording from/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Retry' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('That recording is still being worked on.');
+  });
+
+});
+
 describe('a row swiped aside', () => {
   const touch = { pointerId: 1, pointerType: 'touch', button: 0 };
 

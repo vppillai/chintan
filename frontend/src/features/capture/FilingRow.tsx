@@ -7,6 +7,7 @@ import { queryKeys, refreshAppendedNote, useRetryCapture, usePendingCaptures } f
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { formatDurationShort } from '@/features/notes/groups.ts';
+import { useMinuteNow } from '@/hooks/useMinuteNow.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
@@ -170,18 +171,9 @@ export function FilingRow() {
     setExpanded(false);
   };
 
-  // The receipts say how long ago the last recording landed. A minute is the
-  // grain `describeAgo` speaks in, and the tick runs only while there is a
-  // receipt to read it.
-  const [now, setNow] = useState(Date.now);
-  const hasGroups = groups.length > 0;
-  useEffect(() => {
-    if (!hasGroups) return;
-    const timer = setInterval(() => setNow(Date.now()), 60_000);
-    return () => {
-      clearInterval(timer);
-    };
-  }, [hasGroups]);
+  // The receipts say how long ago the last recording landed; the tick runs
+  // only while there is a receipt to read it. A moving row keeps its own.
+  const now = useMinuteNow(groups.length > 0);
 
   // The tiers decide, not the raw list: an appended capture the server did
   // not name a note for is in no tier, and alone it must not leave an empty

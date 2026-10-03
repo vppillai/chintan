@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test';
 
 import { HOLD_ARM_MS, LOCK_DY_PX } from '../src/features/capture/holdTiming.ts';
 
-import { expect, noteAction, seedChecklist, startSignedOut, test, type ApiState } from './fixtures.ts';
+import { expect, noteAction, seedChecklist, seedStuckCapture, startSignedOut, test, type ApiState } from './fixtures.ts';
 
 /**
  * Accessibility, in both themes.
@@ -526,6 +526,34 @@ const SURFACES: readonly Surface[] = [
       await page.getByRole('button', { name: /more for recording from/i }).click();
       await page.getByRole('menuitem', { name: 'Select' }).click();
       await expect(page.getByRole('toolbar', { name: 'Recording actions' })).toBeVisible();
+    },
+  },
+  {
+    name: 'a stuck recording on the note’s banner',
+    open: async (page, api) => {
+      seedStuckCapture(api);
+      await page.goto('/notes/roof-repair');
+      await expect(
+        page.getByRole('region', { name: 'Filing a recording' }).getByRole('button', { name: 'Retry' }),
+      ).toBeVisible();
+    },
+  },
+  {
+    name: 'a stuck recording on the Recordings tab',
+    open: async (page, api) => {
+      seedStuckCapture(api);
+      await page.goto('/notes/roof-repair?tab=recordings');
+      await expect(page.getByText('Still not done after 16 min')).toBeVisible();
+    },
+  },
+  {
+    name: 'a stuck recording in Home’s tray',
+    open: async (page, api) => {
+      seedStuckCapture(api);
+      await page.goto('/');
+      await expect(
+        page.getByRole('region', { name: 'Filing' }).getByRole('button', { name: 'Retry' }),
+      ).toBeVisible();
     },
   },
   {
