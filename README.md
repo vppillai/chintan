@@ -99,7 +99,7 @@ The YAML owns an instance's identity and description — `display_name`, `short_
 | `short_name` | `display_name` | ≤ 12 characters: the manifest's `short_name` and the iOS home-screen title, what a phone shows under the installed icon; the default must then fit. Same character rule. |
 | `description` | required | One sentence for the manifest description, the meta description and the lede on About; the shipped configs use the tagline. Same character rule. |
 | `daily_spend_cap_micros` | `5000000` ($5/day) | Instance-wide daily provider spend ceiling in **microdollars** (`1000000` = $1); what it does and what `0` means is the `DailySpendCapMicros` parameter description in `infrastructure/template.yaml`. |
-| `enable_alarms` | `true` | Create this stack's CloudWatch alarms: thirteen, or twelve with a zero spend cap, each with its threshold and what to do in [`docs/ops/alarms.md`](docs/ops/alarms.md). `dev-staging.yaml` sets `false` — its failures are caught by the deploy's smoke test, and CloudWatch's free allowance is ten alarms per account, beyond which each is $0.10 an alarm-month. |
+| `enable_alarms` | `true` | Create this stack's CloudWatch alarms: fifteen, or fourteen with a zero spend cap, each with its threshold and what to do in [`docs/ops/alarms.md`](docs/ops/alarms.md). `dev-staging.yaml` sets `false` — its failures are caught by the deploy's smoke test, and CloudWatch's free allowance is ten alarms per account, beyond which each is $0.10 an alarm-month. |
 | `alarm_email` | none | Subscribed to the alarm topic and the budget. Because this repository is public, production reads it from the **`ALARM_EMAIL` repository secret** instead (`gh secret set ALARM_EMAIL`); a value in the file wins if present, which is what a private fork wants. |
 | `monthly_budget_usd` | `10` | AWS Budgets limit. |
 | `log_retention_days` | `14` | CloudWatch retention. |
@@ -220,7 +220,7 @@ The accepted audio content types are the list in `docs/design/inbox.md` → "The
 
 **Note history.** The bucket is versioned, and every append, save, move and merge rewrites the note's `note.md` in place, so the superseded versions are a note's undo. How long superseded versions, audio and exports are kept is `docs/design/retention.md`. List a note's versions with `aws s3api list-object-versions --bucket <ContentBucketName> --prefix tenants/<sub>/notes/<note>/note.md`, fetch one with `aws s3api get-object --bucket … --key … --version-id <id> old.md`, and paste what you need back through the app; a raw `put-object` would skip the index and search text. `chintanctl erase` and a permanent delete remove the current objects only, so their earlier versions also linger for the note-version window.
 
-**Alarms.** Thirteen per stack when `enable_alarms` is true — twelve with a zero spend cap — e-mailed to `ALARM_EMAIL`; every one, its threshold, what it means and what to do is [`docs/ops/alarms.md`](docs/ops/alarms.md), and [`docs/ops/metrics.md`](docs/ops/metrics.md) lists the metrics that are not alarmed and who reads them. The one that needs a hand to clear is the dead-letter queue: read the record, act, then purge, because the alarm sits on the queue's depth and sends no second e-mail while a message is there; the commands are the `capture-dlq` row of `alarms.md`.
+**Alarms.** Fifteen per stack when `enable_alarms` is true — fourteen with a zero spend cap — e-mailed to `ALARM_EMAIL`; every one, its threshold, what it means and what to do is [`docs/ops/alarms.md`](docs/ops/alarms.md), and [`docs/ops/metrics.md`](docs/ops/metrics.md) lists the metrics that are not alarmed and who reads them. The one that needs a hand to clear is the dead-letter queue: read the record, act, then purge, because the alarm sits on the queue's depth and sends no second e-mail while a message is there; the commands are the `capture-dlq` row of `alarms.md`.
 
 **`chintanctl`**, the operator CLI (`cd backend && go build -o chintanctl ./cmd/chintanctl`). Dry run is the default for everything destructive; `--json` puts results on stdout and diagnostics on stderr; no note content ever reaches a log line.
 
@@ -258,7 +258,7 @@ The accepted audio content types are the list in `docs/design/inbox.md` → "The
 
 | Line | Cost | Where the number comes from |
 |---|---|---|
-| CloudWatch alarms beyond the account's ten free | $0.10 an alarm-month; one prod stack declares thirteen (`docs/ops/alarms.md`), so three are billed on an account with nothing else | CloudWatch pricing; the comment above `InboxKeyRefusedAlarm` in `infrastructure/template.yaml` |
+| CloudWatch alarms beyond the account's ten free | $0.10 an alarm-month; one prod stack declares fifteen (`docs/ops/alarms.md`), so five are billed on an account with nothing else | CloudWatch pricing; the comment above `InboxKeyRefusedAlarm` in `infrastructure/template.yaml` |
 | CloudTrail digest files | about $0.13 a month in S3 PUTs for the hourly digests of `chintan-trail` across every region | the header of `scripts/bootstrap-agent.sh` |
 | Route 53 hosted zone, if `dns_zone_id` is set | $0.50 a month; the templates never create one (Configure → Custom domain) | Route 53 pricing |
 | Cognito | nothing at the `ESSENTIALS` tier the pool runs on (10,000 free monthly active users); `PLUS` has no free users | the `CognitoTier` parameter in `infrastructure/template.yaml` |

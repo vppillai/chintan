@@ -13,7 +13,7 @@ description: Speak a thought. It files itself.
 # infrastructure/template.yaml.
 daily_spend_cap_micros: 5000000
 
-# Alarms default on: thirteen per stack, each with its threshold and what to do
+# Alarms default on: fifteen per stack, each with its threshold and what to do
 # in docs/ops/alarms.md. The address they e-mail comes from the ALARM_EMAIL
 # repository secret, not from this public file. The first user is created with
 # scripts/invite-user.sh.

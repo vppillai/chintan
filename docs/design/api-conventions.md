@@ -115,6 +115,19 @@ and one from another tenant or query is 400 `the cursor is not one this
 API issued` (`TestListNotesClampsLimit`,
 `TestListNotesRejectsAnotherTenantsCursor`).
 
+## Pending captures say when to retry
+
+A capture still in the pipeline carries `retry_after` (RFC 3339), the
+instant `POST /v1/captures/{id}/retry` will first be allowed:
+`service.CaptureRetryAfter`, which is `service.CaptureStuck`'s rule stated
+as a time — the last write plus `CaptureStuckAfter`, or, for an
+`appending` capture under its claim, the end of the claim's lease,
+whichever is later. The client waits for the server's instant instead of
+keeping its own copy of the two durations; a retry before it is 409
+`ErrCaptureInFlight` either way. It is null on a finished capture
+(`TestCaptureRetryAfterIsTheInstantCaptureStuckFirstHolds`, the
+`captureInFlight` fixture).
+
 ## Rate limits
 
 The gateway stage throttles the whole API at 50 requests a second with a
