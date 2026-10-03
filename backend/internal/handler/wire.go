@@ -253,7 +253,12 @@ type Capture struct {
 	// (CaptureIndex.LastProgressAt) — and null on rows from before it was
 	// stamped. The filing row gates Retry on it, as RetryCapture itself does.
 	LastProgressAt *string `json:"last_progress_at"`
-	DurationMS     *int64  `json:"duration_ms"`
+	// RetryAfter is when the server will first allow Retry on a pending
+	// capture — service.CaptureRetryAfter, the stuck rule as an instant —
+	// so the client waits for the server's number instead of keeping its
+	// own copy of it. Null on a finished capture.
+	RetryAfter *string `json:"retry_after"`
+	DurationMS *int64  `json:"duration_ms"`
 	// Language is what the current transcript was asked for — LanguageAuto
 	// or the ISO-639-1 code sent to the provider, a person's own choice at
 	// /retranscribe outranking the note's — and LanguageDetected is the name
@@ -363,6 +368,9 @@ func captureOf(c model.CaptureIndex) Capture {
 	if c.LastProgressAt != "" {
 		v := c.LastProgressAt
 		out.LastProgressAt = &v
+	}
+	if v, ok := service.CaptureRetryAfter(c); ok {
+		out.RetryAfter = &v
 	}
 	if c.Language != "" {
 		v := c.Language

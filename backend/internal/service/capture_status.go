@@ -90,3 +90,31 @@ func CaptureIsPending(s model.CaptureStatus) bool {
 		return false
 	}
 }
+
+// CaptureRetryAfter is the instant CaptureStuck will first hold for a pending
+// capture, as the wire's `retry_after`: the later of the last write plus
+// CaptureStuckAfter and, for an `appending` capture under a claim, the
+// claim plus repository.AppendClaimLease. It is computed from the row alone
+// so the client does not have to know either number. ok is false for a
+// terminal capture, which has no retry to wait for, and for a row whose
+// times do not parse, which CaptureStuck already treats as stuck.
+func CaptureRetryAfter(c model.CaptureIndex) (string, bool) {
+	if !CaptureIsPending(c.Status) {
+		return "", false
+	}
+	last := c.LastProgressAt
+	if last == "" {
+		last = c.CreatedAt
+	}
+	at, err := model.ParseTime(last)
+	if err != nil {
+		return "", false
+	}
+	after := at.Add(CaptureStuckAfter)
+	if c.Status == model.StatusAppending && c.AppendClaimedAt > 0 {
+		if lease := time.Unix(c.AppendClaimedAt, 0).Add(repository.AppendClaimLease); lease.After(after) {
+			after = lease
+		}
+	}
+	return model.FormatTime(after), true
+}

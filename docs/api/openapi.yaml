@@ -2163,6 +2163,17 @@ components:
             before the field existed, which a client reads as `created_at`.
             The filing row gates Retry on it: a capture untouched for longer
             than the worker's 900 s timeout has no live worker.
+        retry_after:
+          type: string
+          format: date-time
+          nullable: true
+          description: >
+            When the server will first allow `POST /v1/captures/{captureId}/retry`
+            on a capture still in the pipeline: the server's stuck rule as an
+            instant — the last write plus the worker's timeout, or, for an
+            `appending` capture under its claim, the end of the claim's lease,
+            whichever is later. A client waits for it rather than keeping its
+            own copy of those numbers. Null on a finished capture.
         duration_ms: { type: integer, nullable: true }
         gate:
           type: string
