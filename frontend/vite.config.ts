@@ -152,6 +152,7 @@ export default defineConfig(({ mode }) => {
       include: ['src/**/*.test.{ts,tsx}'],
       exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
       restoreMocks: true,
+      // Only these five timers are faked (vitest's default list is wider).
       // A test's fake clock stops the page's timers, never the browser's
       // IndexedDB; fake-indexeddb runs its queue on `setImmediate`, so that
       // one stays real, or a cache write left in flight under fake timers

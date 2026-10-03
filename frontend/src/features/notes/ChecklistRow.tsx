@@ -95,6 +95,8 @@ export function ChecklistRow({
 
   const onFieldKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     const { selectionStart, selectionEnd } = event.currentTarget;
+    // An IME's Enter and Backspace act on the composition, not the list.
+    if (event.nativeEvent.isComposing) return;
     if (event.key === 'Tab') {
       // Keep's keys: Tab nests, Shift+Tab un-nests. When neither can change
       // anything the key keeps its meaning and focus moves on.
@@ -170,6 +172,18 @@ export function ChecklistRow({
           onText(event.target.value);
         }}
         onKeyDown={onFieldKeyDown}
+        onFocus={(event) => {
+          // The editor's own policy for a focus the person did not place
+          // (`focusAfterWrite`): a textarea reached by Tab or by script
+          // starts with the caret before the first word, where Enter would
+          // split the item and Backspace join it; the caret goes to the end
+          // instead. A click places its own caret after the focus event, so
+          // it is unaffected.
+          const field = event.currentTarget;
+          if (field.value && field.selectionStart === 0 && field.selectionEnd === 0) {
+            field.setSelectionRange(field.value.length, field.value.length);
+          }
+        }}
         onPaste={(event) => {
           const field = event.currentTarget;
           const text = event.clipboardData.getData('text/plain');

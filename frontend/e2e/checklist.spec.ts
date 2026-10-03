@@ -69,12 +69,8 @@ test('the Items tab ticks, adds, edits and deletes items through the note’s ow
   await expect(page.getByText('2 of 3 done')).toBeVisible();
   await expect.poll(() => api.notes['shopping']?.body).toBe('- [x] Milk\n- [x] Eggs\n- [ ] Bread and butter');
 
-  // Enter at the end of an item starts the next one; the add row appends.
-  // (A field focused by script starts with the caret at 0, where Enter
-  // would split instead; End puts it after the words, as a tap does.)
-  await items.getByRole('textbox', { name: 'Item 1' }).focus();
-  await page.keyboard.press('End');
-  await page.keyboard.press('Enter');
+  // Enter under an item starts the next one; the add row appends.
+  await items.getByRole('textbox', { name: 'Item 1' }).press('Enter');
   await expect(items.getByRole('textbox', { name: 'Item 2' })).toBeFocused();
   await page.keyboard.type('Jam');
   await items.getByRole('textbox', { name: 'Add an item' }).fill('Tea');
@@ -104,10 +100,8 @@ test('ticking an item with no words removes the line instead of filing it under 
   const items = page.getByRole('list', { name: 'Items' });
   await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
 
-  // Enter at the end of Milk starts an empty Item 2; its box, ticked, deletes it.
-  await items.getByRole('textbox', { name: 'Item 1' }).focus();
-  await page.keyboard.press('End');
-  await page.keyboard.press('Enter');
+  // Enter under Milk starts an empty Item 2; its box, ticked, deletes it.
+  await items.getByRole('textbox', { name: 'Item 1' }).press('Enter');
   await expect.poll(() => values(items)).toEqual(['Milk', '', 'Bread and butter', '']);
   await expect(page.getByText('1 of 4 done')).toBeVisible();
   await items.getByRole('checkbox', { name: 'Item 2' }).click();
@@ -738,4 +732,25 @@ test('the field’s own keys: Enter splits, Backspace at the start joins, a mult
   await expect
     .poll(() => api.notes['shopping']?.body)
     .toBe('- [ ] Milk, skimmed\n- [x] Jam\n- [x] Eggs\n- [ ] Bread and butter\n- [ ] Tea');
+});
+
+test('a row reached by Tab has its caret at the end, so Enter starts a new item below rather than splitting', async ({
+  page,
+  api,
+}) => {
+  seedShopping(api);
+  await page.goto('/notes/shopping');
+  const items = page.getByRole('list', { name: 'Items' });
+  await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
+
+  // Tab into Milk's field from its box: a focus the person did not place.
+  await items.getByRole('checkbox', { name: 'Milk' }).focus();
+  await page.keyboard.press('Tab');
+  const milk = items.getByRole('textbox', { name: 'Item 1' });
+  await expect(milk).toBeFocused();
+  expect(await milk.evaluate((el) => (el as HTMLTextAreaElement).selectionStart)).toBe(4);
+
+  await page.keyboard.press('Enter');
+  await expect.poll(() => values(items)).toEqual(['Milk', '', 'Bread and butter', '']);
+  await expect(items.getByRole('textbox', { name: 'Item 2' })).toBeFocused();
 });
