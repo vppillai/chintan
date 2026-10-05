@@ -58,7 +58,9 @@ in a second mirror (`mk-sync.sh <wt-dir> <suffix>b`) meanwhile.
 it builds `backend/cmd/local` — the API, the worker and a stand-in bucket in
 one process on loopback over the test doubles — and starts the frontend dev
 server pointed at it. It needs Go and Bun on the machine it runs on, so on
-the owner's layout that is the VM, not the Mac.
+the owner's layout that is the VM, not the Mac: run it there and open it in
+the Mac's browser through `ssh -L 5173:localhost:5173 -L 8787:127.0.0.1:8787 orb`
+(both ports, since the app fetches the backend directly).
 
 ## The gate
 

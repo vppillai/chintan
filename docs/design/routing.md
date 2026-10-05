@@ -350,7 +350,7 @@ completions, in test binaries only:
   fixture's transcript or the candidate list is a new key, so a stale
   recording is a miss, never a silent pass.
 - `LLM_REPLAY=<dir>` serves completions from those files and calls nothing;
-  a miss fails with `errNoRecording`, whose text is the re-record command.
+  a miss fails with `ErrNoRecording`, whose text is the re-record command.
 - Both variables are read only when `testing.Testing()` is true
   (`recordReplayAllowed`): a worker with either set still calls the model
   (`TestANonTestBuildIgnoresRecordAndReplay`). The one non-test reader of

@@ -40,21 +40,26 @@ on commas and "and", Ask cites every packed note. With
 `CHINTAN_LOCAL_RECORDINGS=backend/internal/provider/testdata/eval/recordings`
 a prompt the replay set recorded is answered with the model's recorded reply
 (`provider.NewReplayLLM`, `routing.md` "Replay") and a miss falls back to the
-fakes — which means a fixture transcript sent as `?text=` into an empty
-tenant shows the real routing reply, and anything else still files.
+fakes. A fixture transcript sent as `?text=` replays the recorded cleanup and
+items replies; the routing reply replays only when the tenant's notes carry
+the fixture's titles and aliases, because the route prompt embeds the
+candidate list and the recording key covers it, so in an empty tenant the
+fake router files it.
 
 Auth is one static bearer for one tenant (`local`): the verifier accepts
 `CHINTAN_LOCAL_TOKEN` in constant time and nothing else, and the three
 hosted-UI routes the app uses (`/oauth2/authorize`, `/oauth2/token`,
 `/logout`) are served on the same port so the app's own sign-in
 (`auth.md`) runs unchanged with `VITE_COGNITO_DOMAIN` pointed at it: the
-code is the constant `local`, the token set carries the accepted bearer, and
-a sign-out returns to the app. Passkeys have no stand-in; dismiss the nudge.
+code is the constant `local`, the token endpoint ignores `grant_type`, the
+code and the PKCE verifier (the challenge is the client's alone) and answers
+the accepted bearer, and a sign-out returns to the app. A request whose
+`Host` is not the process's own address answers 421, against DNS rebinding. Passkeys have no stand-in; dismiss the nudge.
 
 ## Never deployable
 
 - `cmd/local` refuses to start unless `CHINTAN_LOCAL=1` **and** the listen
-  address is loopback (`127.0.0.0/8`, `::1`, `localhost`): a static token on a
+  address is a literal loopback IP (`127.0.0.0/8`, `::1`): a static token on a
   reachable interface would be an open instance
   (`TestLocalRefusesWithoutTheFlagOrOffLoopback`).
 - `scripts/build-lambda.sh` packages `cmd/api` and `cmd/worker` only, and

@@ -96,14 +96,12 @@ func configFromEnv() (config, error) {
 	return c, nil
 }
 
-// requireLoopback accepts 127.0.0.0/8, ::1 and "localhost" only.
+// requireLoopback accepts a literal loopback address (127.0.0.0/8, ::1) only;
+// a name would be whatever the resolver says it is.
 func requireLoopback(addr string) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return fmt.Errorf("CHINTAN_LOCAL_ADDR %q: %w", addr, err)
-	}
-	if host == "localhost" {
-		return nil
 	}
 	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
 		return nil
@@ -357,17 +355,37 @@ func build(c config, base string) (http.Handler, error) {
 		back.RawQuery = q.Encode()
 		http.Redirect(w, r, back.String(), http.StatusFound)
 	})
-	mux.HandleFunc("POST /oauth2/token", func(w http.ResponseWriter, _ *http.Request) {
+	// The exchange is a cross-origin fetch from the app, so it needs the CORS
+	// headers the two navigations above do not. grant_type, code and the PKCE
+	// verifier are ignored: the token set is the same whatever was sent.
+	mux.Handle("POST /oauth2/token", cors(c.origin, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id_token": c.token, "access_token": c.token, "refresh_token": c.token,
 			"expires_in": 86400, "token_type": "Bearer",
 		})
-	})
+	})))
 	mux.HandleFunc("GET /logout", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, r.URL.Query().Get("logout_uri"), http.StatusFound)
 	})
-	return mux, nil
+	return hostAllowlist(base, mux), nil
+}
+
+// hostAllowlist answers a request whose Host is not this process's own
+// address, by IP or as localhost, with 421: a page on another site that
+// resolves a name to 127.0.0.1 (DNS rebinding) must not reach the API with
+// the browser's cookies-free but same-network access.
+func hostAllowlist(base string, next http.Handler) http.Handler {
+	own, _ := url.Parse(base)
+	_, port, _ := net.SplitHostPort(own.Host)
+	allowed := map[string]bool{own.Host: true, "localhost:" + port: true}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !allowed[r.Host] {
+			http.Error(w, "unknown host", http.StatusMisdirectedRequest)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // bucket serves the presigned-equivalent PUT and GET on /objects/<key>. A PUT
