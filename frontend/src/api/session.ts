@@ -153,12 +153,20 @@ export class Session {
 }
 
 /**
+ * How long one refresh may take. The HTTP client awaits a due refresh before
+ * it arms its own timer, so without this bound a token endpoint that never
+ * answers — a phone woken by a notification whose radio is not up yet — holds
+ * the app's first request open for good, with nothing to time it out.
+ */
+export const REFRESH_TIMEOUT_MS = 15_000;
+
+/**
  * The real refresher: Cognito's hosted-UI token endpoint, `refresh_token` grant.
  *
  * The response omits `refresh_token`; `tokenSetFromWire` carries the previous
  * one forward. Dropping it logs the user out one window later.
  */
-class CognitoRefresher implements TokenRefresher {
+export class CognitoRefresher implements TokenRefresher {
   constructor(
     private readonly domain: string = config.cognitoDomain,
     private readonly clientId: string = config.clientId,
@@ -176,15 +184,24 @@ class CognitoRefresher implements TokenRefresher {
       refresh_token: tokens.refreshToken,
     });
 
+    // A refresh that times out is a network failure, not a refusal: the
+    // session stays, and the next request asks again.
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, REFRESH_TIMEOUT_MS);
     let response: Response;
     try {
       response = await this.fetchImpl(`${this.domain}/oauth2/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body,
+        signal: controller.signal,
       });
     } catch (cause) {
       throw networkError(cause);
+    } finally {
+      clearTimeout(timer);
     }
 
     if (!response.ok) {
