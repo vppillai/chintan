@@ -24,6 +24,13 @@ import (
 // Stage 1 — transcribe
 // ---------------------------------------------------------------------------
 
+// transcribe is the first stage: the recording to its transcript at RawKey,
+// in the destination's language when the capture has one, else the tenant's
+// default.
+func (r *captureRun) transcribe(ctx context.Context) error {
+	return r.p.transcribe(ctx, r.tenantID, r.capture)
+}
+
 func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *model.CaptureIndex) error {
 	if err := p.setStatus(ctx, capture, service.StatusTranscribing); err != nil {
 		return err

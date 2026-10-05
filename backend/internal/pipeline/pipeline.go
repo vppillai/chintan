@@ -486,17 +486,60 @@ func (p *Pipeline) RejectOversizedCapture(ctx context.Context, ref CaptureRef) e
 	return nil
 }
 
-func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.CaptureIndex, error) {
-	tenantID := capture.UserID
+// captureRun is one capture's passage through the stages: the row the
+// stages write, its destination once a stage has read it, and what one
+// stage hands the next in memory.
+type captureRun struct {
+	p        *Pipeline
+	tenantID string
+	capture  *model.CaptureIndex
+	// note is the destination row, read by the destination stage for the
+	// stages after it.
+	note model.NoteIndex
+	// previousItems is what the clean stage found a checklist recording had
+	// appended before, for the append to replace by their words.
+	previousItems []string
+}
 
-	if capture.RawKey == "" {
-		if err := p.transcribe(ctx, tenantID, capture); err != nil {
-			return *capture, err
-		}
+// stage is one step of a capture's run. skip is the stage's resume rule: the
+// artefact it makes is already on the row, so a retry passes over it. run
+// does the work and records it — the artefact in S3, the status on the row —
+// through setStatus, persist, markFailed and handleProviderError, as every
+// stage does; a stage that leaves the capture terminal ends the run.
+type stage struct {
+	name string
+	skip func(*model.CaptureIndex) bool
+	run  func(*captureRun, context.Context) error
+}
+
+// stages is a capture's run, top to bottom. The three resume rules are
+// RawKey, NoteID and CleanKey: a transcript is not made twice, a destination
+// is not chosen twice, a cleanup is not billed twice. The clean stage keeps
+// its own rule inside cleanForNote, because a checklist recording resumed at
+// the append still reads the items its earlier append left, and
+// regenerateCapture shares that rule. The destination stage has no artefact
+// and runs whenever there is a note to read.
+var stages = []stage{
+	{name: "transcribe", skip: func(c *model.CaptureIndex) bool { return c.RawKey != "" }, run: (*captureRun).transcribe},
+}
+
+func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.CaptureIndex, error) {
+	r := &captureRun{p: p, tenantID: capture.UserID, capture: capture}
+	for _, s := range stages {
 		if service.CaptureIsTerminal(capture.Status) {
 			return *capture, nil
 		}
+		if s.skip != nil && s.skip(capture) {
+			continue
+		}
+		if err := s.run(r, ctx); err != nil {
+			return *capture, err
+		}
 	}
+	if service.CaptureIsTerminal(capture.Status) {
+		return *capture, nil
+	}
+	tenantID := capture.UserID
 
 	if capture.NoteID == "" {
 		if capture.Status == model.StatusNeedsTarget {
