@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"items\":[{\"text\":\"Milk\"},{\"text\":\"Call the plumber\"},{\"text\":\"Pay the electricity bill\",\"done\":true},{\"text\":\"Chickpeas\"}]}",
+  "usage": {
+    "InputTokens": 1115,
+    "OutputTokens": 32
+  }
+}

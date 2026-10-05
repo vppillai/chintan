@@ -1,8 +1,0 @@
-{
-  "model": "MiniMax-M3",
-  "reply": "{\"action\":\"new\",\"title\":\"ദന്തഡോക്ടർ\",\"kind\":\"note\",\"confidence\":0.7,\"instruction_spans\":[{\"start_word\":0,\"end_word\":3}]}",
-  "usage": {
-    "InputTokens": 1847,
-    "OutputTokens": 51
-  }
-}

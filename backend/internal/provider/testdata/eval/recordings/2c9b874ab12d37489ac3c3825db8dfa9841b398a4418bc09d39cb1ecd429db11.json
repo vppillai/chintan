@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "मुझे माँ को कॉल करना है शाम को।",
+  "usage": {
+    "InputTokens": 473,
+    "OutputTokens": 19
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"action\":\"new\",\"title\":\"Portugal trip over budget\",\"kind\":\"note\",\"confidence\":0.5,\"instruction_spans\":[]}",
+  "usage": {
+    "InputTokens": 1822,
+    "OutputTokens": 27
+  }
+}

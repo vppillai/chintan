@@ -1,8 +1,0 @@
-{
-  "model": "MiniMax-M3",
-  "reply": "{\"items\":[{\"text\":\"Two loaves of bread\"},{\"text\":\"പാൽ\"}]}",
-  "usage": {
-    "InputTokens": 1093,
-    "OutputTokens": 21
-  }
-}

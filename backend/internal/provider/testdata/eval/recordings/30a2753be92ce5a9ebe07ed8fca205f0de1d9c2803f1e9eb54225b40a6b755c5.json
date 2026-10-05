@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"action\":\"new\",\"title\":\"Book a cleaning\",\"kind\":\"note\",\"confidence\":1,\"instruction_spans\":[]}",
+  "usage": {
+    "InputTokens": 1793,
+    "OutputTokens": 24
+  }
+}

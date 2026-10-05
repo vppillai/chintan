@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"items\":[{\"text\":\"ഒരു കിലോ അരി\"}]}",
+  "usage": {
+    "InputTokens": 1004,
+    "OutputTokens": 29
+  }
+}

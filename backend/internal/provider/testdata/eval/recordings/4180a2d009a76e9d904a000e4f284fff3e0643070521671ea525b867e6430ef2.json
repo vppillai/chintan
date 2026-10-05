@@ -1,8 +1,8 @@
 {
   "model": "MiniMax-M3",
-  "reply": "{\"answer\": \"This is not in their notes.\", \"sources\": [], \"grounded\": false}",
+  "reply": "{\"answer\": \"Why don't scientists trust atoms? Because they make up everything!\", \"sources\": [], \"grounded\": false}",
   "usage": {
     "InputTokens": 652,
-    "OutputTokens": 21
+    "OutputTokens": 26
   }
 }

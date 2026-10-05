@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "ഇന്ന് വൈകുന്നേരം പാൽ വാങ്ങണം. പിന്നെ പ്ലംബറെ വിളിക്കണം.",
+  "usage": {
+    "InputTokens": 549,
+    "OutputTokens": 95
+  }
+}

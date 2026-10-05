@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "Call John at 555 0199 about the 14th.",
+  "usage": {
+    "InputTokens": 468,
+    "OutputTokens": 15
+  }
+}
