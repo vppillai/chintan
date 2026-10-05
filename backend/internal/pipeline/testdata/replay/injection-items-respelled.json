@@ -1,0 +1,9 @@
+{
+  "_comment": "Hand-written, not eval data: an items reply in which the model respelled both one-word items of the recording \"buy tomatos and corriander\"; neither shares a word with the transcript, so cleanup.DropUnspoken drops both and the worker appends the recording as one item. It documents the cost of the one-shared-word rule, not an outcome wanted.",
+  "model": "MiniMax-M3",
+  "reply": "{\"items\":[{\"text\":\"Tomatoes\"},{\"text\":\"Coriander\"}]}",
+  "usage": {
+    "InputTokens": 380,
+    "OutputTokens": 20
+  }
+}

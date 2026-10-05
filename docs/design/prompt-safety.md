@@ -83,7 +83,8 @@ after the reply (below) is what holds whatever the model made of it.
   `ChecklistItemsDiscarded{Reason=invented}`), a dropped parent's children
   lifted; a reply of nothing but such items is settled like one that was no
   list, the recording as one item. One shared word, not a sub-sequence, so a
-  group name and a garbling fix survive.
+  spoken group name survives and so does a garbling fix inside an item that
+  has a second spoken word; a one-word respelling does not (below).
 - **A cleanup reply is held to the words it cleaned.** The per-capture
   cleanup and the structured and polished views store the model's text only
   when it shares at least `routing.MinCleanedWordShare` (0.5) of its words
@@ -91,8 +92,11 @@ after the reply (below) is what holds whatever the model made of it.
   translation, an answer, a replacement — the transcript stands as the
   cleaned paragraph, or the view is refused as nothing usable, counted as
   `CleanupRefused{Reason=words}`. A sub-sequence check would refuse the
-  garbling fixes the faithful rewrite exists for; the eval's passing cleanup
-  cases share 0.9 to 1.0.
+  garbling fixes the faithful rewrite exists for. Measured: every passing
+  cleanup reply of the recording shares 1.00 (24 of 24), a translation 0.0;
+  the margin between the two is unmeasured, since the eval has no garbled
+  dictation (below). Translation was never allowed — `LanguageRule` forbids
+  it — so the bound is the check behind a rule, not a new rule.
 - **An append never deletes.** Every write of a recording's text goes under
   its own marker through the compare-and-set loop (`append-vs-autosave.md`),
   the merge adds and reopens lines and takes none the recording does not own
@@ -142,5 +146,18 @@ items 18), measured through the same steps the worker runs.
   prompt") passes the one-word check and is appended to the person's own
   list, where they delete it; a sub-sequence check would refuse the garbling
   fixes and group names the prompt is asked for.
+- **A one-word item the model respelled is lost.** "Tomatoes" for
+  "tomatos", "Eggs" for "egg", "2" for "two", a transliteration, an
+  emoji-only item, a group heading the model coined ("Produce", its children
+  lifted): none shares a word with the recording, so the one-word check
+  drops it, and a reply of nothing but such items is the recording as one
+  item in its raw spelling (`injection-items-respelled.json`). A garbling
+  fix survives only inside an item with a second spoken word.
+- **A heavily respelled dictation is kept raw.** A Malayalam dictation whose
+  every word Whisper respelled by a suffix shares 0.20 of its words with the
+  model's cleanup and is refused for the raw transcript; the eval has no
+  garbled case, so where between 1.00 and 0.5 a faithful rewrite of a real
+  garble lands is unmeasured. Transcribe again and the cleaned views are
+  the person's way past it.
 - **Leaking the prompt** is not prevented and is not a secret: the prompts are
   in this repository.

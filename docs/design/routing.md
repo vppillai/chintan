@@ -172,7 +172,7 @@ recording (§Replay).
 
 | Rule | Bound | Constant | What it protects |
 |---|---|---|---|
-| 1 exact title, alias or tag (`pipeline.titleNames`, `wordsSpoken`) | every word of the name spoken | — | a spoken name that is a listed note's is that note, not a duplicate; a name the model borrowed files nothing |
+| 1 exact title, alias or tag (`pipeline.titleNames`, `wordsSpoken`) | every word of the name spoken | — | a spoken name that is a listed note's is that note, not a duplicate; a name the model borrowed for a recording that never said it files nothing and starts a second note of that title, which Move or a merge settles |
 | 2 `prefix_title` / `prefix_transcript` (`pipeline.existingNoteNamed`) | 2 words, or 8 letters; `prefix_title` also every word spoken | `MinNameWords`, `MinNameRunes` | short words that open unrelated sentences never file anything |
 | 3 `spoken_name` on the model's unsure append (`pipeline.spokenAsName`, `NamedAfterCue`) | 2 words, or 8 letters | `MinNameWords`, `MinNameRunes` | a topic mention is not a filing request |
 | 4 append or ask (`pipeline.outcomeOf`) | 0.75 | `AppendConfidence` | an unsure append asks instead of writing into the wrong note |

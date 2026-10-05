@@ -164,11 +164,14 @@ const (
 	// by pipeline.clean for a recording and pipeline.CleanNote for the
 	// structured and polished views). Under it the reply is not a cleanup
 	// of the text — translated, answered, replaced — and the raw text stands.
-	// The live eval's passing cleanup cases share 0.9 to 1.0 of their words
-	// (docs/history/prompt-evals.md, the per-case tables); a faithful
-	// rewrite of a dictation with several STT garbles sits well above a
-	// half, a translation at nothing, and a structured view's headings are
-	// a few words beside the body's.
+	// Measured (docs/history/prompt-evals.md, the per-case tables): every
+	// passing cleanup reply of the recording shares 1.00 of its words, 24
+	// of 24, and a translation shares nothing; the eval has no garbled
+	// dictation, so the margin between 1.00 and a half is not measured, and
+	// a Malayalam dictation whose every word Whisper respelled by a suffix
+	// measured 0.20 — refused, the raw transcript kept — which is the cost
+	// the bound accepts (prompt-safety.md, "What it does not prevent"). A
+	// structured view's headings are a few words beside the body's.
 	MinCleanedWordShare = 0.5
 )
 

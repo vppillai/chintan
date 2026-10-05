@@ -55,7 +55,7 @@ Runs for a capture with no destination (`Pipeline.route`,
 target note as the only candidate, for a capture recorded into a note whose
 transcript contains an instruction cue.
 
-**Sent.** The system prompt (about 1,250 tokens at four characters a token):
+**Sent.** The system prompt (about 1,300 tokens at four characters a token):
 the two kinds of words spoken to the app (filing, naming), the reply shape,
 then four sections and eight worked examples. *Destination*: append only when
 a listed note was clearly asked for by its title or one of its other names;
@@ -106,7 +106,7 @@ without a call and a verbatim note bypasses cleanup (`routing.md`, "The
 short-dictation tidy"); a checklist never reaches it. One mode, faithful:
 fix STT garbling, punctuation and obvious grammar, keep the speaker's
 wording, phrasing and vocabulary. **Sent:** the one-line brief and the mode
-line, the three shared rules and the return line (about 190 tokens); the
+line, its three sentences, the three shared rules and the return line (about 300 tokens); the
 user prompt names the language when the capture's own or Whisper's detected
 language is a known code (`cleanupLanguage`) and fences the routed
 transcript. Three sentences of its own beside the mode line: drop fillers
@@ -122,7 +122,12 @@ cleaned text, stored as the capture's clean text. **Guards:** the words share
 translation, an answer, a replacement — is refused and the transcript is
 stored as the paragraph, counted as `CleanupRefused{Reason=words}`; a
 sub-sequence check would refuse the garbling fixes the faithful rewrite is
-for, and the eval's passing cases share 0.9 to 1.0. An empty completion is a
+for. Measured: every passing cleanup reply of the recording shares 1.00 (24
+of 24), a translation 0.0; the eval has no garbled dictation, so the margin
+down to a half is unmeasured, and a Malayalam dictation whose every word
+Whisper respelled by a suffix measures 0.20 and is refused for the raw text
+(`prompt-safety.md`, "What it does not prevent"). Translation itself is
+forbidden by `LanguageRule`; the bound is the check behind it. An empty completion is a
 provider failure. The language line and `LanguageRule` are what stop a
 "correction" into another script. The API accepts `cleanup_mode` on
 `PUT /v1/settings` for a client that still sends it and ignores it; a stored
@@ -155,7 +160,7 @@ names is a handful of things under a group at most and a second level from
 speech is a guess. Then the reply shape and six examples. The user prompt:
 `The list is titled: <title>` (`titleLine`: one line, a typed fence marker
 defanged, "(untitled)" for none), the language line, the fenced recording.
-About 780 tokens in all. **Reply:**
+About 800 tokens in all. **Reply:**
 `{"items":[{"text":"…","children":[{"text":"…"}]},…]}`, `children` left out
 when there are none, `[]` when the recording only told the app what to do.
 **Guards** (`cleanup.ParseItems`): a JSON object with an `items` array whose
@@ -170,9 +175,14 @@ words were spoken is dropped and its children lifted, because it is the
 model's — leaked prompt text, an answer to a dictated instruction — and a
 reply of nothing but such items appends the recording as one item. One
 shared word, not a sub-sequence, because a sub-sequence rule would refuse the
-garbling fix and the group names the prompt asks for, and nothing compares
-an item to the title, because that would lose "add batteries" to a list
-titled Batteries — visible beats lost. A reply that is not a list, or an
+garbling fix and the group names the prompt asks for; the cost is that a
+garbling fix survives only when the item has a second spoken word: a
+one-word item respelled ("Tomatoes" for "tomatos", "Eggs" for "egg", "2"
+for "two", a transliteration, an emoji-only item, a group heading the model
+coined such as "Produce" with its children lifted) is lost to the raw word
+(`pipeline/testdata/replay/injection-items-respelled.json`). Nothing
+compares an item to the title, because that would lose "add batteries" to a
+list titled Batteries — visible beats lost. A reply that is not a list, or an
 empty completion, appends the recording as one item. The tree is stored as
 lines, a child two spaces in (`RenderItems`), and appended through the merge
 (`checklists.md`, "Merging into what the list has"). **Metrics:**
@@ -282,9 +292,9 @@ hint-echo check on the answer — are `routing.md`.
 ## Sizes
 
 System prompts, estimated from the source at four characters a token: routing
-about 1,250; cleanup about 190; checklist items about 780 and tasks about
-920, of which the shared `checklistItemRules` block with its two composed
-rules is about 490; structured about 190 and polished about 210; Ask about
+about 1,300; cleanup about 300; checklist items about 800 and tasks about
+940, of which the shared `checklistItemRules` block with its two composed
+rules is about 500; structured about 190 and polished about 210; Ask about
 350 (measured). The three shared rules together are about 120. Word numbering adds
 about three tokens a word to a routing user prompt (measured; `spans.go`
 estimates two); a candidate line is about

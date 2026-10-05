@@ -151,7 +151,11 @@ nothing but such items is the recording as one item. One shared word, not a
 sub-sequence: a subsequence check against the transcript would refuse the
 garbling fix and the group names the prompt asks for, and dropping an item
 equal to the title would silently lose "add batteries" to a list titled
-Batteries. An item that reuses a spoken word is visible and one tap from
+Batteries. The cost: a garbling fix survives only when the item has a second
+spoken word; a one-word respelling ("Tomatoes" for "tomatos", "Eggs" for
+"egg", "2" for "two", a transliterated word, an emoji-only item) is lost to
+the raw word, and a group heading the model coined ("Produce") is dropped
+with its children lifted. An item that reuses a spoken word is visible and one tap from
 gone; the live evaluation (`provider.TestLiveEval/items`;
 `docs/design/prompts.md`) measures the prompt behind the drop. A
 request that is not an add — "remove milk from the list" — comes back as one
