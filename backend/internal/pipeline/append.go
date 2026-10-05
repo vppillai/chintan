@@ -23,6 +23,14 @@ import (
 // Stage 4 — append
 // ---------------------------------------------------------------------------
 
+// append is the last stage: the cleaned text into the note, exactly once,
+// and the capture marked appended. A capture's own run asks for the
+// cleaned view to follow (autoClean); a regeneration does not.
+func (r *captureRun) append(ctx context.Context) error {
+	_, err := r.p.append(ctx, r.tenantID, r.capture, r.note, appendOptions{autoClean: true, previousItems: r.previousItems})
+	return err
+}
+
 // appendOptions is what differs between a capture's own run and a
 // regeneration of its note (regenerate.go).
 type appendOptions struct {

@@ -525,6 +525,8 @@ var stages = []stage{
 	{name: "destination", run: (*captureRun).destination},
 	{name: "retranscribe", skip: func(c *model.CaptureIndex) bool { return c.CleanKey != "" }, run: (*captureRun).retranscribe},
 	{name: "strip", skip: func(c *model.CaptureIndex) bool { return c.CleanKey != "" }, run: (*captureRun).strip},
+	{name: "clean", run: (*captureRun).clean},
+	{name: "append", run: (*captureRun).append},
 }
 
 func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.CaptureIndex, error) {
@@ -540,15 +542,7 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 			return *capture, err
 		}
 	}
-	if service.CaptureIsTerminal(capture.Status) {
-		return *capture, nil
-	}
-	tenantID, note := capture.UserID, r.note
-	previousItems, err := p.cleanForNote(ctx, tenantID, capture, note)
-	if err != nil || service.CaptureIsTerminal(capture.Status) {
-		return *capture, err
-	}
-	return p.append(ctx, tenantID, capture, note, appendOptions{autoClean: true, previousItems: previousItems})
+	return *capture, nil
 }
 
 // destination is the step between routing and the cleanup: the capture has

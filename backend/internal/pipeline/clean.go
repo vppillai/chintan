@@ -25,6 +25,17 @@ import (
 // Stage 3 — clean
 // ---------------------------------------------------------------------------
 
+// clean is the third stage: the cleanup for a plain note, the item
+// extraction for a checklist, or nothing when CleanKey says an earlier
+// attempt did it (cleanForNote, which keeps the rule because
+// regenerateCapture shares it). What it hands the append is the items a
+// checklist recording left the last time it was appended.
+func (r *captureRun) clean(ctx context.Context) error {
+	previous, err := r.p.cleanForNote(ctx, r.tenantID, r.capture, r.note)
+	r.previousItems = previous
+	return err
+}
+
 // clean rewrites the transcript faithfully, or — for a verbatim note —
 // records the transcript itself as the cleaned text. README, the
 // OpenAPI document and the About screen promised that a verbatim note
