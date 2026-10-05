@@ -73,19 +73,9 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 	ctx = obs.WithTenant(ctx, tenantID)
 	log := obs.Log(ctx).With(slog.String("note_id", noteID))
 
-	note, err := p.cfg.Store.GetNote(ctx, tenantID, noteID)
-	if errors.Is(err, repository.ErrNotFound) {
-		// Purged between the request and the run. Nothing to clean, nothing
-		// to record it on, and retrying cannot bring it back.
-		log.Info("clean-note: the note no longer exists; nothing to do")
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("pipeline: clean-note: get note: %w", err)
-	}
-	if !service.NoteIsActive(note) {
-		log.Info("clean-note: the note is archived; nothing to do")
-		return nil
+	note, ok, err := p.noteToClean(ctx, log, tenantID, noteID)
+	if !ok || err != nil {
+		return err
 	}
 	if !model.ValidNoteCleanMode(mode) {
 		mode = service.EffectiveCleanMode(note)
@@ -135,33 +125,7 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteTooLong, "too_long")
 	}
 
-	var cleaned provider.Cleaned
-	_, err = p.cfg.Breaker.Do(ctx, breaker.Estimate{
-		Provider: p.cfg.LLMProvider,
-		Model:    p.cfg.LLMModel,
-		Op:       meter.OpCleanNote,
-		Usage: meter.Quantities{
-			meter.UnitInputTokens: estimateTokens(body),
-			// A rewrite is about as long as what it rewrites; the provider's
-			// count reconciles it.
-			meter.UnitOutputTokens: estimateTokens(body),
-		},
-		TenantID: tenantID,
-	}, func(ctx context.Context) (breaker.Result, error) {
-		// The deadline is the call's, not the reservation's: breaker.Do
-		// releases on the outer context, which outlives this one.
-		stageCtx, cancel := context.WithTimeout(ctx, p.cfg.CleanNoteTimeout)
-		defer cancel()
-		// The note's own language, as the row asks for it; the prompt names
-		// it so a Malayalam note is not "corrected" into another script. The
-		// title is the tasks prompt's: the list's own name is not an item.
-		out, err := p.cfg.LLM.CleanNote(stageCtx, mode, body, note.Language, note.Title)
-		if err != nil {
-			return breaker.Result{}, err
-		}
-		cleaned = out
-		return breaker.Result{Usage: tokenUsage(out.Usage)}, nil
-	})
+	cleaned, err := p.cleanNoteCall(ctx, tenantID, note, mode, body)
 	if isDeadline(err) {
 		// Not a verdict: the model stalled, or the invocation is ending. No
 		// error is written to the row — the previous view and its stale flag
@@ -180,40 +144,9 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteProviderVerdict(ctx, log, err), "provider")
 	}
 
-	var text string
-	var dropped int
-	if mode == model.NoteCleanTasks {
-		text, dropped, err = cleanup.SplitOutput(cleaned.Text, body)
-	} else {
-		text, err = cleanup.NoteOutput(cleaned.Text)
-	}
-	if dropped > 0 {
-		// The count only: the dropped lines are the model's words about the note.
-		log.Warn("clean-note: dropped tasks whose words are not in the note", slog.Int("dropped", dropped))
-	}
-	if err != nil {
-		log.Warn("clean-note: the model returned nothing usable")
-		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteUnusable, "unusable")
-	}
-	if len(text) > model.MaxCleanedBodyBytes {
-		// Refused whole rather than cut: a truncated document presented as the
-		// cleaned note is worse than an honest "too long".
-		log.Warn("clean-note: the cleaned text is over the output cap",
-			slog.Int("output_bytes", len(text)),
-			slog.Int("limit_bytes", model.MaxCleanedBodyBytes))
-		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteOutputTooLong, "output_too_long")
-	}
-	// The words bound the per-capture cleanup applies (pipeline.clean,
-	// routing.MinCleanedWordShare): a structured or polished view that
-	// shares under half its words with the body is not a view of it, and
-	// is refused as nothing usable — the body stands, as it does for a
-	// Split up that lost a line. The tasks mode has SplitOutput's own
-	// checks, which are stricter.
-	if share := cleanup.WordShare(text, body); mode != model.NoteCleanTasks && share < routing.MinCleanedWordShare {
-		log.Warn("clean-note: the cleaned view shares too few words with the note; refusing it",
-			slog.Float64("share", share))
-		obs.Count(ctx, "CleanupRefused", map[string]string{"Reason": "words"})
-		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteUnusable, "unusable")
+	text, verdict, outcome := cleanNoteText(ctx, log, mode, cleaned.Text, body)
+	if outcome != "" {
+		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, verdict, outcome)
 	}
 
 	// Did the body move while the model was working?
@@ -246,6 +179,102 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 		slog.Bool("stale", stale))
 	obs.Count(ctx, "NoteCleanOutcome", map[string]string{"Outcome": "ok"})
 	return nil
+}
+
+// noteToClean reads the note a clean-note task names. ok is false, with no
+// error, for a note there is nothing to do for: purged between the request
+// and the run — nothing to clean, nothing to record it on, and retrying
+// cannot bring it back — or archived.
+func (p *Pipeline) noteToClean(ctx context.Context, log *slog.Logger, tenantID, noteID string) (model.NoteIndex, bool, error) {
+	note, err := p.cfg.Store.GetNote(ctx, tenantID, noteID)
+	if errors.Is(err, repository.ErrNotFound) {
+		log.Info("clean-note: the note no longer exists; nothing to do")
+		return model.NoteIndex{}, false, nil
+	}
+	if err != nil {
+		return model.NoteIndex{}, false, fmt.Errorf("pipeline: clean-note: get note: %w", err)
+	}
+	if !service.NoteIsActive(note) {
+		log.Info("clean-note: the note is archived; nothing to do")
+		return model.NoteIndex{}, false, nil
+	}
+	return note, true, nil
+}
+
+// cleanNoteCall is the one model call, through the breaker under the
+// stage's deadline, priced like cleanup.
+func (p *Pipeline) cleanNoteCall(ctx context.Context, tenantID string, note model.NoteIndex, mode model.NoteCleanMode, body string) (provider.Cleaned, error) {
+	var cleaned provider.Cleaned
+	_, err := p.cfg.Breaker.Do(ctx, breaker.Estimate{
+		Provider: p.cfg.LLMProvider,
+		Model:    p.cfg.LLMModel,
+		Op:       meter.OpCleanNote,
+		Usage: meter.Quantities{
+			meter.UnitInputTokens: estimateTokens(body),
+			// A rewrite is about as long as what it rewrites; the provider's
+			// count reconciles it.
+			meter.UnitOutputTokens: estimateTokens(body),
+		},
+		TenantID: tenantID,
+	}, func(ctx context.Context) (breaker.Result, error) {
+		// The deadline is the call's, not the reservation's: breaker.Do
+		// releases on the outer context, which outlives this one.
+		stageCtx, cancel := context.WithTimeout(ctx, p.cfg.CleanNoteTimeout)
+		defer cancel()
+		// The note's own language, as the row asks for it; the prompt names
+		// it so a Malayalam note is not "corrected" into another script. The
+		// title is the tasks prompt's: the list's own name is not an item.
+		out, err := p.cfg.LLM.CleanNote(stageCtx, mode, body, note.Language, note.Title)
+		if err != nil {
+			return breaker.Result{}, err
+		}
+		cleaned = out
+		return breaker.Result{Usage: tokenUsage(out.Usage)}, nil
+	})
+	return cleaned, err
+}
+
+// cleanNoteText judges the model's reply: the view to store, or the verdict
+// sentence and the outcome to record when the reply is nothing usable, over
+// the output cap, or shares too few of the note's words. outcome is "" for a
+// view to store.
+func cleanNoteText(ctx context.Context, log *slog.Logger, mode model.NoteCleanMode, reply, body string) (text, verdict, outcome string) {
+	var err error
+	var dropped int
+	if mode == model.NoteCleanTasks {
+		text, dropped, err = cleanup.SplitOutput(reply, body)
+	} else {
+		text, err = cleanup.NoteOutput(reply)
+	}
+	if dropped > 0 {
+		// The count only: the dropped lines are the model's words about the note.
+		log.Warn("clean-note: dropped tasks whose words are not in the note", slog.Int("dropped", dropped))
+	}
+	if err != nil {
+		log.Warn("clean-note: the model returned nothing usable")
+		return "", cleanNoteUnusable, "unusable"
+	}
+	if len(text) > model.MaxCleanedBodyBytes {
+		// Refused whole rather than cut: a truncated document presented as the
+		// cleaned note is worse than an honest "too long".
+		log.Warn("clean-note: the cleaned text is over the output cap",
+			slog.Int("output_bytes", len(text)),
+			slog.Int("limit_bytes", model.MaxCleanedBodyBytes))
+		return "", cleanNoteOutputTooLong, "output_too_long"
+	}
+	// The words bound the per-capture cleanup applies (pipeline.clean,
+	// routing.MinCleanedWordShare): a structured or polished view that
+	// shares under half its words with the body is not a view of it, and
+	// is refused as nothing usable — the body stands, as it does for a
+	// Split up that lost a line. The tasks mode has SplitOutput's own
+	// checks, which are stricter.
+	if share := cleanup.WordShare(text, body); mode != model.NoteCleanTasks && share < routing.MinCleanedWordShare {
+		log.Warn("clean-note: the cleaned view shares too few words with the note; refusing it",
+			slog.Float64("share", share))
+		obs.Count(ctx, "CleanupRefused", map[string]string{"Reason": "words"})
+		return "", cleanNoteUnusable, "unusable"
+	}
+	return text, "", ""
 }
 
 // cleanNoteProviderVerdict turns a failed provider call into the sentence the
