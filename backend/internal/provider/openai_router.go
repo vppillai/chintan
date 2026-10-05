@@ -49,7 +49,7 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 		return RouteDecision{}, err
 	}
 
-	out, usage, err := c.complete(ctx, routing.SystemPrompt(), userPrompt, routeMaxTokens)
+	out, usage, err := c.complete(ctx, routing.SystemPrompt(), userPrompt, routeMaxTokens, ProviderRetryAttempts)
 	if err != nil {
 		return RouteDecision{}, err
 	}

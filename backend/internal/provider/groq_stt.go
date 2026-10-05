@@ -73,6 +73,26 @@ func (g *GroqSTT) Model() string { return g.model }
 // long the recording is. An objects.Get followed by part.Write(audio) would
 // hold the whole recording, and a long drive could not be transcribed at all.
 func (g *GroqSTT) Transcribe(ctx context.Context, in Audio) (Transcription, error) {
+	// A refused upload is sent again only when the recording can be read
+	// again: a URL is opened afresh per attempt, a Body has been consumed.
+	attempts := ProviderRetryAttempts
+	if in.URL == "" {
+		attempts = 1
+	}
+	var out Transcription
+	err := retrying(ctx, "groq", attempts, func(ctx context.Context) error {
+		var callErr error
+		out, callErr = g.transcribeOnce(ctx, in)
+		return callErr
+	})
+	if err != nil {
+		return Transcription{}, err
+	}
+	return out, nil
+}
+
+// transcribeOnce is one upload and its answer.
+func (g *GroqSTT) transcribeOnce(ctx context.Context, in Audio) (Transcription, error) {
 	source, closeSource, err := g.openSource(ctx, in)
 	if err != nil {
 		return Transcription{}, err
@@ -107,7 +127,10 @@ func (g *GroqSTT) Transcribe(ctx context.Context, in Audio) (Transcription, erro
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 		// Typed, so the pipeline can tell a revoked key from a throttle. The
 		// rendered string is unchanged.
-		return Transcription{}, &StatusError{Op: "groq transcription failed", StatusCode: resp.StatusCode}
+		return Transcription{}, &StatusError{
+			Op: "groq transcription failed", StatusCode: resp.StatusCode,
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
+		}
 	}
 
 	return decodeTranscription(io.LimitReader(resp.Body, maxTranscriptResponseBytes))

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/cleanup"
 	"github.com/vppillai/chintan/backend/internal/model"
@@ -91,7 +92,12 @@ func TestOpenAICleanupHTTPError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewOpenAICleanup: %v", err)
 	}
-	_, err = llm.Cleanup(context.Background(), "hello", "")
+	// A 502 is retried under the context's budget (retry.go); fifty
+	// milliseconds leaves no room for a wait, so the refusal comes back
+	// at once and the test does not sleep.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err = llm.Cleanup(ctx, "hello", "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
