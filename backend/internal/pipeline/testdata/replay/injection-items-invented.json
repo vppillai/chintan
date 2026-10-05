@@ -1,0 +1,9 @@
+{
+  "_comment": "Hand-written, not eval data: an items reply with one item made of the system prompt's first words beside the item that was spoken; cleanup.DropUnspoken takes the first out and keeps the second.",
+  "model": "MiniMax-M3",
+  "reply": "{\"items\":[{\"text\":\"You turn one dictated recording into items for the checklist\"},{\"text\":\"Eggs\"}]}",
+  "usage": {
+    "InputTokens": 400,
+    "OutputTokens": 30
+  }
+}

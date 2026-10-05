@@ -14,6 +14,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/routing"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
@@ -201,6 +202,18 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 			slog.Int("output_bytes", len(text)),
 			slog.Int("limit_bytes", model.MaxCleanedBodyBytes))
 		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteOutputTooLong, "output_too_long")
+	}
+	// The words bound the per-capture cleanup applies (pipeline.clean,
+	// routing.MinCleanedWordShare): a structured or polished view that
+	// shares under half its words with the body is not a view of it, and
+	// is refused as nothing usable — the body stands, as it does for a
+	// Split up that lost a line. The tasks mode has SplitOutput's own
+	// checks, which are stricter.
+	if share := cleanup.WordShare(text, body); mode != model.NoteCleanTasks && share < routing.MinCleanedWordShare {
+		log.Warn("clean-note: the cleaned view shares too few words with the note; refusing it",
+			slog.Float64("share", share))
+		obs.Count(ctx, "CleanupRefused", map[string]string{"Reason": "words"})
+		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteUnusable, "unusable")
 	}
 
 	// Did the body move while the model was working?

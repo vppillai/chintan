@@ -506,7 +506,10 @@ func TestCompleteCaptureIgnoresRoutingForExplicitTarget(t *testing.T) {
 // the model did not always honour it and started a second note with the same
 // title (live QA 2026-09-05 §5b). The rule now holds in code: a "new" decision
 // whose title names an active candidate — title or alias, whatever the case,
-// spacing and punctuation — appends to that note.
+// spacing and punctuation — appends to that note, when the name's words were
+// spoken; a title the model borrowed from the list for a recording that
+// never said it files nothing (docs/design/prompt-safety.md), which is the
+// prompt's own Destination rule that a topic mention is not a request.
 func TestANewNoteTitledLikeAnExistingNoteIsAppendedToItInstead(t *testing.T) {
 	for name, title := range map[string]string{
 		"the title, in another case and spacing": "  ROOF   Repair ",
@@ -515,8 +518,8 @@ func TestANewNoteTitledLikeAnExistingNoteIsAppendedToItInstead(t *testing.T) {
 		"a title that opens with the title":      "Roof repair checklist",
 	} {
 		t.Run(name, func(t *testing.T) {
-			f := newRoutingFixture(t, "more about the roof",
-				provider.RouteDecision{Action: provider.RouteNew, Title: title, Confidence: 1, Content: "more about the roof"}, false)
+			f := newRoutingFixture(t, "more about the roof repair",
+				provider.RouteDecision{Action: provider.RouteNew, Title: title, Confidence: 1, Content: "more about the roof repair"}, false)
 			ctx := context.Background()
 			capture, err := f.run(ctx, "c_1")
 			if err != nil {
@@ -535,8 +538,19 @@ func TestANewNoteTitledLikeAnExistingNoteIsAppendedToItInstead(t *testing.T) {
 		})
 	}
 
+	// The listed title with a word the recording never said makes a new
+	// note: the model's title is not the person's filing.
+	f := newRoutingFixture(t, "more about the roof",
+		provider.RouteDecision{Action: provider.RouteNew, Title: "Roof repair", Confidence: 1, Content: "more about the roof"}, false)
+	if _, err := f.run(context.Background(), "c_1"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if titles := f.h.creator.createdTitles(); len(titles) != 1 || titles[0] != "Roof repair" {
+		t.Errorf("created titles = %v, want a new note: \"repair\" was never spoken, so the title rule does not file it", titles)
+	}
+
 	// A title nobody has still makes a new note.
-	f := newRoutingFixture(t, "something else entirely",
+	f = newRoutingFixture(t, "something else entirely",
 		provider.RouteDecision{Action: provider.RouteNew, Title: "Roof repairs", Confidence: 1, Content: "something else entirely"}, false)
 	if _, err := f.run(context.Background(), "c_1"); err != nil {
 		t.Fatalf("run: %v", err)
