@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "The meeting with Anu is on Tuesday at 3 PM. Bring the ente pazhaya file.",
+  "usage": {
+    "InputTokens": 352,
+    "OutputTokens": 21
+  }
+}

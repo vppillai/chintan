@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"items\":[{\"text\":\"പാൽ\"},{\"text\":\"Two dozen eggs\"}]}",
+  "usage": {
+    "InputTokens": 957,
+    "OutputTokens": 19
+  }
+}

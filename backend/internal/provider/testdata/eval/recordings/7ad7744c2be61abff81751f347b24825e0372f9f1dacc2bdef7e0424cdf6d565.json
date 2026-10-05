@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"items\":[{\"text\":\"Salt and pepper\"},{\"text\":\"Fish and chips\"}]}",
+  "usage": {
+    "InputTokens": 949,
+    "OutputTokens": 17
+  }
+}

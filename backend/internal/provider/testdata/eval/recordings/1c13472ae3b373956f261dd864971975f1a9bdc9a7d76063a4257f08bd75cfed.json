@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "the gutter is leaking",
+  "usage": {
+    "InputTokens": 357,
+    "OutputTokens": 4
+  }
+}
