@@ -3,6 +3,6 @@
   "reply": "{\"items\":[{\"text\":\"A birthday card for Anu\"},{\"text\":\"Post it by Friday\"}]}",
   "usage": {
     "InputTokens": 971,
-    "OutputTokens": 21
+    "OutputTokens": 20
   }
 }

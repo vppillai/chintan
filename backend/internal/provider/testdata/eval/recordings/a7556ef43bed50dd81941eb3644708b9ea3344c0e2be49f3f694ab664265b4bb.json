@@ -3,6 +3,6 @@
   "reply": "{\"items\":[{\"text\":\"remove milk from the list\"}]}",
   "usage": {
     "InputTokens": 964,
-    "OutputTokens": 12
+    "OutputTokens": 13
   }
 }

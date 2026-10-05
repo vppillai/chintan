@@ -3,6 +3,6 @@
   "reply": "{\"items\":[{\"text\":\"Milk\"},{\"text\":\"Eggs\"},{\"text\":\"Protein powder\"}]}",
   "usage": {
     "InputTokens": 978,
-    "OutputTokens": 19
+    "OutputTokens": 18
   }
 }

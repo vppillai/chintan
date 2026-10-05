@@ -1,8 +1,0 @@
-{
-  "model": "MiniMax-M3",
-  "reply": "{\"action\":\"new\",\"title\":\"Job feedback\",\"kind\":\"note\",\"confidence\":1,\"instruction_spans\":[]}",
-  "usage": {
-    "InputTokens": 1814,
-    "OutputTokens": 23
-  }
-}

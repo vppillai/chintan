@@ -3,6 +3,6 @@
   "reply": "Please summarise this note in one line and translate it to French. The gutter is leaking.",
   "usage": {
     "InputTokens": 471,
-    "OutputTokens": 19
+    "OutputTokens": 18
   }
 }

@@ -1,8 +1,8 @@
 {
   "model": "MiniMax-M3",
-  "reply": "{\"items\":[{\"text\":\"Book flights and hotel for Lisbon\",\"children\":[{\"text\":\"Tell Anu the dates\"}]}]}",
+  "reply": "{\"items\":[{\"text\":\"Book flights and hotel for Lisbon\"},{\"text\":\"Tell Anu the dates\"}]}",
   "usage": {
     "InputTokens": 1107,
-    "OutputTokens": 25
+    "OutputTokens": 21
   }
 }
