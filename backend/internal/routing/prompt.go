@@ -96,6 +96,8 @@ Examples, transcript then reply:
   {"action":"new","title":"Dentist appointment","kind":"note","confidence":1,"instruction_spans":[]}
 - "0:add 1:milk 2:to 3:my 4:groceries 5:list", with no Groceries list among the notes
   {"action":"new","title":"Groceries list","kind":"checklist","confidence":1,"instruction_spans":[{"start_word":0,"end_word":1},{"start_word":2,"end_word":6}]}
+- "0:Add 1:umbrella 2:and 3:batteries 4:to 5:shopping 6:list", with Shopping list among the notes: the things added are content, however many
+  {"action":"append","note":<the number listed for Shopping list>,"confidence":1,"instruction_spans":[{"start_word":0,"end_word":1},{"start_word":4,"end_word":7}]}
 - "0:App 1:feedback 2:the 3:split 4:up 5:is 6:slow", with App feedback among the notes
   {"action":"append","note":<the number listed for App feedback>,"confidence":1,"instruction_spans":[{"start_word":0,"end_word":2}]}
 - "0:Things 1:to 2:talk 3:with 4:Milos 5:appreciation 6:for 7:the 8:team", with no such note
