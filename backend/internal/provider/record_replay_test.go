@@ -54,8 +54,8 @@ func TestRecordThenReplayServesTheSameReplyAndAMissSaysReRecord(t *testing.T) {
 		t.Errorf("server called %d times, want 1 (the replay must not call out)", calls)
 	}
 
-	if _, err := rep.Cleanup(ctx, "a transcript nobody recorded", ""); !errors.Is(err, errNoRecording) {
-		t.Errorf("miss = %v, want errNoRecording", err)
+	if _, err := rep.Cleanup(ctx, "a transcript nobody recorded", ""); !errors.Is(err, ErrNoRecording) {
+		t.Errorf("miss = %v, want ErrNoRecording", err)
 	}
 }
 
