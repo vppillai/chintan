@@ -48,9 +48,12 @@ describe('the slider', () => {
   });
 
   it('says plainly when there is nothing to play here', async () => {
-    // No object URLs in this environment: the waveform and the clock still
-    // show, and the play control is disabled rather than broken.
-    mount(8_000);
+    // A recording that buffered no bytes: the waveform and the clock still
+    // show, and the play control is disabled rather than broken. (This used
+    // to lean on jsdom lacking object URLs; vitest's jsdom environment now
+    // supplies a working `URL.createObjectURL`, so the premise is made
+    // explicit with an empty clip instead.)
+    mount(8_000, async () => new Blob());
     expect(await screen.findByText(/playback is not available here/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /play recording/i })).toBeDisabled();
   });
