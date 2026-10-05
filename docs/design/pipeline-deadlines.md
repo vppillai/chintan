@@ -42,7 +42,8 @@ written to the row, the capture stays in the stage's status
 (`transcribing`, `cleaning`), the invocation returns an error, and Lambda's
 asynchronous retry (two more attempts, then the dead-letter queue) runs the
 pipeline again. The pipeline resumes at the first stage whose artefact is
-missing — `run` checks `RawKey`, `NoteID`, `CleanKey` — so a cleanup stall
+missing — the `stages` table's resume rules, `RawKey`, `NoteID` and
+`CleanKey` (worker.md, "How a capture moves") — so a cleanup stall
 does not transcribe (and bill) the recording again. The whole-note clean
 follows the same rule: no `cleaned_error` is written, the previous view and
 its stale flag stand, and the idempotent task runs whole on the retry.

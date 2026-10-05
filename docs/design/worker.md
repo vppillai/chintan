@@ -92,16 +92,47 @@ with `nil` has passed it, and the task itself reads and writes nothing.
 (`parseInvocation`; an S3 key is matched against `audioKeyPattern`, the
 mirror of `keys.CaptureAudio`), refuses an object over
 `service.MaxCaptureBytes` before anything that costs money
-(`RejectOversizedCapture`), and runs each capture through the stages
-`transcribing` → `routing` or the chosen target → `cleaning` →
-`appending` → `appended`. Every stage persists its artefact and its status
-(`setStatus`, `CaptureStageEntered`), so a retry resumes at the first
-stage whose object is missing rather than transcribing again
-(`cleanForNote` is where a resumed run picks up once `raw.txt` exists).
-The terminal statuses are `appended`, `no_content`, `failed`,
-`spend_capped` and `needs_target` (`model.IsTerminalStatus`); the stage
-deadlines inside the 900 s are pipeline-deadlines.md's; routing.md owns
-the routing stage.
+(`RejectOversizedCapture`), and hands each capture to `Pipeline.Run`.
+
+### How a capture moves
+
+`run` (`pipeline/pipeline.go`) walks the `stages` table top to bottom. A
+stage is a name, a resume rule and the work (`stage`): `skip` reads the row
+and says the artefact this stage makes is already there, `run` does the
+work on a `captureRun` — the row, its destination once read, and what one
+stage hands the next in memory. Before each stage the loop reads the
+status: a terminal capture runs no further stage. Each stage writes its
+own artefact and status (`setStatus`, `CaptureStageEntered`, `persist`,
+`markFailed`, `handleProviderError`), so the loop holds no bookkeeping of
+its own.
+
+| Stage | Skipped when | What it does | Code |
+|---|---|---|---|
+| transcribe | `RawKey` is set | The recording to its transcript at `raw.txt` and its segments, in the destination's language when the capture has one, else the tenant's default; the quiet, hint-echo and no-speech gates end a capture here as `no_content` (routing.md) | `transcribe.go` |
+| route | `NoteID` is set | The router's choice of note, or a new one, becomes `NoteID`, with the words addressed to the app cut from the transcript at `routed.txt`; an unsure reply parks the capture at `needs_target` (routing.md) | `route.go` |
+| destination | never | Reads the note the stages after it write into; a note purged meanwhile parks the capture at `needs_target`, one in the trash fails it with the archived verdict | `pipeline.go` |
+| retranscribe | `CleanKey` is set | The transcribe stage once more when the note asks for another language than the transcript was made in (`wantsNoteLanguage`): the destination was not known when the recording was transcribed | `transcribe.go` |
+| strip | `CleanKey` is set | Routing's share of a capture recorded into a plain note, which never routed: the same span-extraction call with the destination as the one candidate (`stripInstructions`), only when the transcript carries an instruction cue; a checklist is never stripped | `route.go` |
+| clean | see `cleanForNote` | The cleanup for a plain note, the item extraction for a checklist, or nothing when `CleanKey` says an earlier attempt did it; a checklist recording resumed here still reads the items its earlier append left, which is why the rule lives in `cleanForNote` (shared with `regenerateCapture`) | `clean.go` |
+| append | never | The cleaned text into the note exactly once, under the claim and the marker (below), and the capture marked `appended` | `append.go` |
+
+The statuses a capture passes through are the stages' own:
+`transcribing` → `routing` → `cleaning` → `appending` → `appended`, with
+`transcribed` and `cleaned` written when the next stage's own status write
+does not follow at once (`deferPersist`). A retry therefore resumes at the
+first stage whose artefact is missing and transcribes, routes or cleans
+nothing twice; `TestResumeMatrix` (`pipeline/resume_matrix_test.go`) holds
+which stages run, and which provider calls are made, for every set of
+artefacts a row can carry. The terminal statuses are `appended`,
+`no_content`, `failed`, `spend_capped` and `needs_target`
+(`model.IsTerminalStatus`); the stage deadlines inside the 900 s are
+pipeline-deadlines.md's; routing.md owns the routing stage.
+
+Two paths are not the stage loop. A regeneration (regenerate.md) runs
+`cleanForNote` and `append` for a recording whose transcript is kept
+(`regenerateCapture`): no transcription, no routing, no strip. The
+reaper's second run of a stuck capture (below) is `Pipeline.Run` itself,
+the same loop resuming from the row's artefacts.
 
 ## Retries, exactly-once and the dead-letter queue
 

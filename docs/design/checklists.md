@@ -113,7 +113,7 @@ list") or dictates things to tick off one by one; `note` otherwise and in
 doubt (`routing.SystemPrompt`, "Kind") — and `Pipeline.route` writes it, with
 the language, in the note's one create (`NotesService.CreateNoteOnce`, under
 an id derived from the capture's, so a retry after a crash finds that note
-rather than making another), so `run()` takes the `extractItems` branch for
+rather than making another), so the clean stage takes the `extractItems` branch for
 that same recording and "add milk to the shopping list" with no Shopping list
 yet ends as a checklist whose body is `- [ ] Milk`. The parse is strict
 (`RouteDecision.Checklist`): `checklist` in any case makes one, anything else
