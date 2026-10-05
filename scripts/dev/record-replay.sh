@@ -2,8 +2,10 @@
 # record-replay.sh — records the live prompt evaluation's replies for the CI
 # replay (docs/design/routing.md, "Replay"). The instance's key is read from
 # SSM into the environment of the `go test` runs and never printed; every
-# prompt is asked CHINTAN_RUNS times, and per prompt the reply a majority of
-# runs gave (else the first run's) is written under
+# prompt is asked CHINTAN_RUNS times (a case the provider answered with a 5xx
+# is asked again, up to three times, because an overloaded provider is not a
+# reply and would leave the case without a vote), and per prompt the reply a
+# majority of runs gave (else the first run's) is written under
 # backend/internal/provider/testdata/eval/recordings/, the directory emptied
 # first so a recording of a prompt that no longer exists is not left behind.
 # The runs' logs go to testdata/eval/record-logs/ (fixture text and replies,
@@ -28,9 +30,20 @@ LLM_API_KEY=$(aws ssm get-parameter --region us-west-2 --name "/chintan/${CHINTA
 export LLM_API_KEY LIVE_LLM=1
 mkdir -p "$LOGS"
 for n in $(seq 1 "$RUNS"); do
-    LLM_RECORD="$TMP/$n" go test ./internal/provider -run 'TestLiveEval$' -count=1 -v >"$LOGS/run$n.log" 2>&1 || true
-    passed=$(grep -cE '^ *--- PASS: TestLiveEval/[a-z]+/[0-9]+' "$LOGS/run$n.log" || true)
-    failed=$(grep -E '^ *--- FAIL: TestLiveEval/[a-z]+/[0-9]+' "$LOGS/run$n.log" | awk '{print $3}' | tr '\n' ' ' || true)
+    log=$LOGS/run$n.log
+    LLM_RECORD="$TMP/$n" go test ./internal/provider -run 'TestLiveEval$' -count=1 -v >"$log" 2>&1 || true
+    # A case whose latest attempt in this run ended in a provider 5xx (the
+    # provider answers 529 in bursts) is asked again on its own; its retry is
+    # appended to the same log, and a case's last outcome is the one counted.
+    for _ in 1 2 3; do
+        errored=$(awk '/^=== RUN   TestLiveEval\/[a-z]+\/[0-9]+$/ { c = $3; e[c] = 0 } /llm request failed: status 5[0-9][0-9]/ { e[c] = 1 } END { for (c in e) if (e[c]) print c }' "$log" | sort)
+        [ -n "$errored" ] || break
+        for c in $errored; do
+            LLM_RECORD="$TMP/$n" go test ./internal/provider -run "^${c//\//\$/^}\$" -count=1 -v >>"$log" 2>&1 || true
+        done
+    done
+    passed=$(awk '/^ *--- (PASS|FAIL): TestLiveEval\/[a-z]+\/[0-9]+ / { r[$3] = $2 } END { n = 0; for (c in r) if (r[c] == "PASS:") n++; print n }' "$log")
+    failed=$(awk '/^ *--- (PASS|FAIL): TestLiveEval\/[a-z]+\/[0-9]+ / { r[$3] = $2 } END { for (c in r) if (r[c] == "FAIL:") print c }' "$log" | sort | tr '\n' ' ')
     echo "run $n: $passed passed; failed: ${failed:-none}"
 done
 unset LLM_API_KEY
