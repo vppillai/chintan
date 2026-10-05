@@ -62,7 +62,7 @@ func regenerate(t *testing.T, h *harness, noteID string) int {
 // counted; the title is untouched; the cleaned view, since the note has one,
 // is regenerated once at the end.
 func TestRegenerateRecleansEachParagraphInPlaceWithoutTranscribing(t *testing.T) {
-	llmFake := &fake.LLM{Response: "Cleaned with the new prompt.", NoteResponse: "# Roof\n\nThe new view."}
+	llmFake := &fake.LLM{Response: "Past the twelve words that a tidy would take, cleaned with the new prompt.", NoteResponse: "# Roof\n\nThe new view."}
 	h := newHarness(t, harnessOpts{llm: llmFake})
 	ctx := context.Background()
 	note, err := h.store.PutNote(ctx, "user1", model.NoteIndex{
@@ -92,7 +92,7 @@ func TestRegenerateRecleansEachParagraphInPlaceWithoutTranscribing(t *testing.T)
 	}
 
 	got, _ := h.objects.Get(ctx, note.S3MarkdownKey)
-	want := "My own words about the ridge.\n\n" + service.CaptureMarker("c_1") + "\nCleaned with the new prompt.\n\n" + service.CaptureMarker("c_2") + "\nCleaned with the new prompt.\n" + service.CaptureMarker("c_3")
+	want := "My own words about the ridge.\n\n" + service.CaptureMarker("c_1") + "\nPast the twelve words that a tidy would take, cleaned with the new prompt.\n\n" + service.CaptureMarker("c_2") + "\nPast the twelve words that a tidy would take, cleaned with the new prompt.\n" + service.CaptureMarker("c_3")
 	if string(got) != want {
 		t.Fatalf("body after regeneration:\n%s\nwant:\n%s", got, want)
 	}
@@ -210,7 +210,7 @@ func TestRegenerateWithdrawsTheItemsOfARecordingThatNowAddsNothing(t *testing.T)
 // nothing twice; and a task with no ids chooses and resets the recordings
 // itself, which is how chintanctl sends it.
 func TestRegenerateTaskSkipsWhatIsDoneAndChoosesForItselfWhenGivenNoIds(t *testing.T) {
-	llmFake := &fake.LLM{Response: "Again."}
+	llmFake := &fake.LLM{Response: "Again, past the twelve words that a tidy would take."}
 	h := newHarness(t, harnessOpts{llm: llmFake})
 	ctx := context.Background()
 	note, err := h.store.PutNote(ctx, "user1", model.NoteIndex{
@@ -236,7 +236,7 @@ func TestRegenerateTaskSkipsWhatIsDoneAndChoosesForItselfWhenGivenNoIds(t *testi
 		t.Fatalf("Handle: %v", err)
 	}
 	got, _ := h.objects.Get(ctx, note.S3MarkdownKey)
-	if want := service.CaptureMarker("c_1") + "\nOne.\n\n" + service.CaptureMarker("c_2") + "\nAgain."; string(got) != want {
+	if want := service.CaptureMarker("c_1") + "\nOne.\n\n" + service.CaptureMarker("c_2") + "\nAgain, past the twelve words that a tidy would take."; string(got) != want {
 		t.Fatalf("body after the task:\n%s\nwant:\n%s", got, want)
 	}
 	if n := llmFake.Calls(); n != 1 {
@@ -249,7 +249,7 @@ func TestRegenerateTaskSkipsWhatIsDoneAndChoosesForItselfWhenGivenNoIds(t *testi
 		t.Fatalf("Handle (no ids): %v", err)
 	}
 	got, _ = h.objects.Get(ctx, note.S3MarkdownKey)
-	if want := service.CaptureMarker("c_1") + "\nAgain.\n\n" + service.CaptureMarker("c_2") + "\nAgain."; string(got) != want {
+	if want := service.CaptureMarker("c_1") + "\nAgain, past the twelve words that a tidy would take.\n\n" + service.CaptureMarker("c_2") + "\nAgain, past the twelve words that a tidy would take."; string(got) != want {
 		t.Fatalf("body after the operator's task:\n%s\nwant:\n%s", got, want)
 	}
 	if n := llmFake.Calls(); n != 3 {
@@ -410,7 +410,7 @@ func TestAChecklistAppendResumedAfterAFailureReplacesTheOldItemsExactlyOnce(t *t
 func TestRegenerateTaskRetryFinishesTheRecordingsLeftMidWay(t *testing.T) {
 	const noteKey = "tenants/user1/notes/note1/note.md"
 	objects := &failOnceOnPutIfMatch{Objects: memory.NewObjects(), key: noteKey}
-	llmFake := &fake.LLM{Response: "Again."}
+	llmFake := &fake.LLM{Response: "Again, past the twelve words that a tidy would take."}
 	h := newHarness(t, harnessOpts{objects: objects, llm: llmFake})
 	ctx := context.Background()
 	note, err := h.store.PutNote(ctx, "user1", model.NoteIndex{
@@ -450,7 +450,7 @@ func TestRegenerateTaskRetryFinishesTheRecordingsLeftMidWay(t *testing.T) {
 		t.Fatalf("retry: %v", err)
 	}
 	got, _ := h.objects.Get(ctx, noteKey)
-	want := service.CaptureMarker("c_1") + "\nAgain.\n\n" + service.CaptureMarker("c_2") + "\nAgain.\n\n" + service.CaptureMarker("c_3") + "\nThree, again."
+	want := service.CaptureMarker("c_1") + "\nAgain, past the twelve words that a tidy would take.\n\n" + service.CaptureMarker("c_2") + "\nAgain, past the twelve words that a tidy would take.\n\n" + service.CaptureMarker("c_3") + "\nThree, again."
 	if string(got) != want {
 		t.Fatalf("body after the retry:\n%s\nwant:\n%s", got, want)
 	}

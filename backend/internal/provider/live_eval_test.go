@@ -20,6 +20,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/cleanup"
 	"github.com/vppillai/chintan/backend/internal/llm"
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/routing"
 )
 
 // TestLiveEval runs every prompt against the real model over the cases in
@@ -123,16 +124,23 @@ func runEval(t *testing.T, c *OpenAICleanup, replay bool) {
 				if err != nil {
 					t.Fatalf("%s | ERROR %v", tc.Raw, err)
 				}
-				t.Logf("%s | %s", tc.Raw, out.Text)
+				// The words bound as the worker applies it (pipeline.clean): a
+				// reply under routing.MinCleanedWordShare is refused and the raw
+				// text stands, and the case is judged on what is stored.
+				text, share := out.Text, cleanup.WordShare(out.Text, tc.Raw)
+				if share < routing.MinCleanedWordShare {
+					text = tc.Raw
+				}
+				t.Logf("%s | %s | share=%.2f refused=%v", tc.Raw, out.Text, share, text != out.Text)
 				unasserted(t, tc.Flaky, tc.KnownFailure)
-				checkText(t, "cleaned text", out.Text, tc.Contains, tc.Excludes)
-				if tc.Subsequence && !llm.VerifySubsequence(out.Text, tc.Raw) {
+				checkText(t, "cleaned text", text, tc.Contains, tc.Excludes)
+				if tc.Subsequence && !llm.VerifySubsequence(text, tc.Raw) {
 					t.Errorf("cleaned text is not the transcript with words deleted")
 				}
-				if tc.MaxWordsRatio > 0 && float64(len(strings.Fields(out.Text))) > tc.MaxWordsRatio*float64(len(strings.Fields(tc.Raw))) {
-					t.Errorf("cleaned text has %d words for %d spoken, over %.1fx", len(strings.Fields(out.Text)), len(strings.Fields(tc.Raw)), tc.MaxWordsRatio)
+				if tc.MaxWordsRatio > 0 && float64(len(strings.Fields(text))) > tc.MaxWordsRatio*float64(len(strings.Fields(tc.Raw))) {
+					t.Errorf("cleaned text has %d words for %d spoken, over %.1fx", len(strings.Fields(text)), len(strings.Fields(tc.Raw)), tc.MaxWordsRatio)
 				}
-				checkScript(t, "cleaned text", out.Text, tc.Script)
+				checkScript(t, "cleaned text", text, tc.Script)
 			})
 		}
 	})
@@ -144,21 +152,24 @@ func runEval(t *testing.T, c *OpenAICleanup, replay bool) {
 				if err != nil {
 					t.Fatalf("%s | ERROR %v", tc.Transcript, err)
 				}
-				// The tree as lines, two spaces before a child; the case's
-				// want is written the same way. Casing is the model's.
+				// Through the worker's own drop of an item with no spoken word
+				// (pipeline.extractItems), then the tree as lines, two spaces
+				// before a child; the case's want is written the same way.
+				// Casing is the model's.
+				items, dropped := cleanup.DropUnspoken(out.Items, tc.Transcript)
 				var lines []string
-				if rendered := cleanup.RenderItems(out.Items); rendered != "" {
+				if rendered := cleanup.RenderItems(items); rendered != "" {
 					lines = strings.Split(rendered, "\n")
 				}
 				joined := strings.Join(lines, " · ")
-				t.Logf("%s | %s", tc.Transcript, joined)
+				t.Logf("%s | %s | dropped=%d", tc.Transcript, joined, dropped)
 				unasserted(t, tc.Flaky, tc.KnownFailure)
 				if tc.Want != nil && !equalLines(lines, tc.Want, true) {
 					t.Errorf("items = %s, want %s", joined, strings.Join(tc.Want, " · "))
 				}
 				checkCount(t, "items", len(lines), tc.Count, tc.CountIn)
-				if tc.TopLevel != nil && len(out.Items) != *tc.TopLevel {
-					t.Errorf("%d top-level items, want %d: %s", len(out.Items), *tc.TopLevel, joined)
+				if tc.TopLevel != nil && len(items) != *tc.TopLevel {
+					t.Errorf("%d top-level items, want %d: %s", len(items), *tc.TopLevel, joined)
 				}
 				if len(tc.ContainsAny) > 0 && !containsAny(joined, tc.ContainsAny) {
 					t.Errorf("no item contains any of %q", tc.ContainsAny)

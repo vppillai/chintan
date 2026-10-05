@@ -7,12 +7,13 @@ import (
 
 // The bounds of the deterministic routing rules, in one place.
 //
-// Fourteen rules rescue or refuse what the router answers (routing.md
+// Fifteen rules rescue or refuse what the router answers (routing.md
 // §The bounds; the table is TestRoutingBoundsAreRegistered). Every number one
 // of them reads lives here, with why it is that number and the rule that
-// reads it — the two rules whose numbers belong to the transcription and the
-// cleanup (13: the silence scores; 14: the hint and short-dictation bounds)
-// included, read from here by provider and pipeline. Until 2026-10-01 these
+// reads it — the three rules whose numbers belong to the transcription and
+// the cleanup (13: the silence scores; 14: the hint and short-dictation
+// bounds; 15: the cleaned words share) included, read from here by provider
+// and pipeline. Until 2026-10-01 these
 // sat in three packages and disagreed with each other — a "name" was five
 // words to one rule, eight to another, two words or eight letters to a third
 // — and two prompt experiments left bounds behind whose comments cited
@@ -157,6 +158,21 @@ const (
 	// median case off the model. The owner accepted the cost: a misheard word
 	// in a dictation this short is kept as Whisper heard it.
 	ShortDictationWords = 12
+
+	// MinCleanedWordShare is the least share of a cleanup reply's words that
+	// must be words of the text it cleaned (rule 15; cleanup.WordShare, read
+	// by pipeline.clean for a recording and pipeline.CleanNote for the
+	// structured and polished views). Under it the reply is not a cleanup
+	// of the text — translated, answered, replaced — and the raw text stands.
+	// Measured (docs/history/prompt-evals.md, the per-case tables): every
+	// passing cleanup reply of the recording shares 1.00 of its words, 24
+	// of 24, and a translation shares nothing; the eval has no garbled
+	// dictation, so the margin between 1.00 and a half is not measured, and
+	// a Malayalam dictation whose every word Whisper respelled by a suffix
+	// measured 0.20 — refused, the raw transcript kept — which is the cost
+	// the bound accepts (prompt-safety.md, "What it does not prevent"). A
+	// structured view's headings are a few words beside the body's.
+	MinCleanedWordShare = 0.5
 )
 
 // SanitizeTitle bounds a title to one line of at most MaxTitleRunes: control

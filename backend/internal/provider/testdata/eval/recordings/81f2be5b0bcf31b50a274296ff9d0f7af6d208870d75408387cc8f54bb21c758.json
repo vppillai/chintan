@@ -1,8 +1,8 @@
 {
   "model": "MiniMax-M3",
-  "reply": "{\"answer\": \"The gutter on the north side started leaking on 12 September, according to the note \\\"Roof repair\\\".\", \"sources\": [\"note_0000000000000001_0000000000000001\"], \"grounded\": true}",
+  "reply": "{\"answer\": \"The gutter on the north side started leaking on 12 September, according to the **Roof repair** note.\", \"sources\": [\"note_0000000000000001_0000000000000001\"], \"grounded\": true}",
   "usage": {
     "InputTokens": 651,
-    "OutputTokens": 54
+    "OutputTokens": 53
   }
 }

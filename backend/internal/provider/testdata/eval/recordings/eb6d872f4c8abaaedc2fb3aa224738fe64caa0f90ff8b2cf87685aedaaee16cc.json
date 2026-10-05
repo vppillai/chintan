@@ -1,8 +1,0 @@
-{
-  "model": "MiniMax-M3",
-  "reply": "{\"items\":[{\"text\":\"Two and a half kilos of onions\"},{\"text\":\"500 ml of coconut oil\"}]}",
-  "usage": {
-    "InputTokens": 956,
-    "OutputTokens": 23
-  }
-}

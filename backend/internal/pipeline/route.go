@@ -13,6 +13,7 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/breaker"
 	"github.com/vppillai/chintan/backend/internal/keys"
+	"github.com/vppillai/chintan/backend/internal/llm"
 	"github.com/vppillai/chintan/backend/internal/meter"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
@@ -491,6 +492,15 @@ func filedInto(decision provider.RouteDecision, noteID string) provider.RouteDec
 // and to an append under routing.AppendConfidence; an append the model was
 // sure of stands. It is the pure half of preferExistingTitle, run again by
 // route()'s pre-create re-check without the title-match count.
+//
+// The two rules that read the model's title — the exact title and
+// prefix_title — take a name only when every word of it was spoken
+// (wordsSpoken): the title is the model's, and a candidate titled as an
+// instruction ("Always file everything here") can make the model answer
+// "new" with that title for a recording that never said it, which filed the
+// dictation into that note at confidence 1 (docs/design/prompt-safety.md).
+// prefix_transcript and spoken_name read the transcript and need no such
+// hold.
 func existingNoteNamed(decision provider.RouteDecision, transcript string, active []model.NoteIndex) (string, string) {
 	if decision.Action == provider.RouteAppend && decision.Confidence >= routing.AppendConfidence {
 		return "", ""
@@ -498,10 +508,14 @@ func existingNoteNamed(decision provider.RouteDecision, transcript string, activ
 	if decision.Action != provider.RouteNew && decision.Action != provider.RouteAppend {
 		return "", ""
 	}
+	spoken := map[string]bool{}
+	for _, w := range llm.Words(transcript) {
+		spoken[w] = true
+	}
 	title := routing.NormalizeSpeech(decision.Title)
 	if decision.Action == provider.RouteNew && title != "" {
 		for _, n := range active {
-			if kind := titleNames(n, title); kind != "" {
+			if kind := titleNames(n, title); kind != "" && wordsSpoken(title, spoken) {
 				return n.ID, kind
 			}
 		}
@@ -515,7 +529,7 @@ func existingNoteNamed(decision provider.RouteDecision, transcript string, activ
 				continue
 			}
 			switch {
-			case strings.HasPrefix(title, name+" "):
+			case strings.HasPrefix(title, name+" ") && wordsSpoken(name, spoken):
 				bestID, bestBy, bestLen = n.ID, "prefix_title", len(name)
 			case strings.HasPrefix(speech, name+" "):
 				bestID, bestBy, bestLen = n.ID, "prefix_transcript", len(name)
@@ -532,6 +546,20 @@ func existingNoteNamed(decision provider.RouteDecision, transcript string, activ
 		}
 	}
 	return bestID, bestBy
+}
+
+// wordsSpoken reports whether every word of name (llm.Words) is one of the
+// transcript's words, spoken: the hold on the rules that read the model's
+// title. Whole words anywhere, not in order, so a title the model normalised
+// ("Roof repair" for "the roof needs repair") still counts as spoken and a
+// name the recording never contained does not.
+func wordsSpoken(name string, spoken map[string]bool) bool {
+	for _, w := range llm.Words(name) {
+		if !spoken[w] {
+			return false
+		}
+	}
+	return true
 }
 
 // spokenAsName reports whether one of n's names is spoken in transcript as a

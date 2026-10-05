@@ -452,7 +452,7 @@ func TestInvokerSendsACleanNoteTaskTheWorkerAccepts(t *testing.T) {
 // stored mode — the live evidence was a polished view stored after structured
 // had been asked for last.
 func TestCleanNoteTaskLeavesTheNoteToALaterRequestInAnotherMode(t *testing.T) {
-	llmFake := &fake.LLM{NoteResponse: "# Roof"}
+	llmFake := &fake.LLM{NoteResponse: "# Roof\n\nthe gutter leaks again"}
 	h := newHarness(t, harnessOpts{llm: llmFake})
 	seedNoteWithBody(t, h, "n1", dictated, func(n *model.NoteIndex) {
 		n.CleanedBody, n.CleanedMode, n.CleanedAt = "# Old", model.NoteCleanStructured, model.Now()
@@ -479,7 +479,7 @@ func TestCleanNoteTaskLeavesTheNoteToALaterRequestInAnotherMode(t *testing.T) {
 // the newer run will store. A run that does write clears its stamp, so the
 // next request invokes again.
 func TestCleanNoteTaskYieldsToARequestThatLandedDuringTheCallAndClearsItsOwnStamp(t *testing.T) {
-	llmFake := &fake.LLM{NoteResponse: "# From the older body"}
+	llmFake := &fake.LLM{NoteResponse: "# From the older body\n\nthe gutter leaks again"}
 	h := newHarness(t, harnessOpts{llm: llmFake})
 	first := model.FormatTime(h.clock.Now())
 	seedNoteWithBody(t, h, "n1", dictated, func(n *model.NoteIndex) {
@@ -507,12 +507,12 @@ func TestCleanNoteTaskYieldsToARequestThatLandedDuringTheCallAndClearsItsOwnStam
 
 	// The later run, invoked for that stamp, writes and clears it.
 	llmFake.OnCall = nil
-	llmFake.NoteResponse = "# From the current body"
+	llmFake.NoteResponse = "# From the current body\n\nthe gutter leaks again"
 	if err := NewWorker(h.pipeline).Handle(ctx, cleanNoteTask("user1", "n1", model.NoteCleanStructured)); err != nil {
 		t.Fatalf("Handle (later run): %v", err)
 	}
 	n = getNote(t, h, "n1")
-	if n.CleanedBody != "# From the current body" {
+	if n.CleanedBody != "# From the current body\n\nthe gutter leaks again" {
 		t.Errorf("cleaned body = %q, want the later run's view", n.CleanedBody)
 	}
 	if n.CleanedRequestedAt != "" || n.CleanedRequestedMode != "" {
@@ -527,7 +527,7 @@ func TestCleanNoteTaskYieldsToARequestThatLandedDuringTheCallAndClearsItsOwnStam
 // structured over the polished view asked for last. Judged from its own
 // invocation's stamp, it sees the row no longer carries t0 and leaves.
 func TestAnOlderCleanRunDeliveredAfterTheNewerOneWritesNothing(t *testing.T) {
-	llmFake := &fake.LLM{NoteResponse: "# Polished"}
+	llmFake := &fake.LLM{NoteResponse: "# Polished\n\nthe gutter leaks again"}
 	h := newHarness(t, harnessOpts{llm: llmFake})
 	seedNoteWithBody(t, h, "n1", dictated, nil)
 	ctx := context.Background()
@@ -552,7 +552,7 @@ func TestAnOlderCleanRunDeliveredAfterTheNewerOneWritesNothing(t *testing.T) {
 		t.Fatalf("Handle(polished): %v", err)
 	}
 	// Then the older structured run.
-	llmFake.NoteResponse = "# Structured"
+	llmFake.NoteResponse = "# Structured\n\nthe gutter leaks again"
 	if err := NewWorker(h.pipeline).Handle(ctx, cleanNoteTaskFor("user1", "n1", model.NoteCleanStructured, structured.CleanedRequestedAt)); err != nil {
 		t.Fatalf("Handle(structured): %v", err)
 	}
@@ -561,7 +561,7 @@ func TestAnOlderCleanRunDeliveredAfterTheNewerOneWritesNothing(t *testing.T) {
 		t.Fatalf("the model was called %d times, want 1: the superseded run must not bill a view nobody asked for", got)
 	}
 	n := getNote(t, h, "n1")
-	if n.CleanedMode != model.NoteCleanPolished || n.CleanedBody != "# Polished" {
+	if n.CleanedMode != model.NoteCleanPolished || n.CleanedBody != "# Polished\n\nthe gutter leaks again" {
 		t.Fatalf("stored view is %s %q; the older run overwrote the mode asked for last", n.CleanedMode, n.CleanedBody)
 	}
 	if n.CleanedRequestedAt != "" {
@@ -574,7 +574,7 @@ func TestAnOlderCleanRunDeliveredAfterTheNewerOneWritesNothing(t *testing.T) {
 // task a second time — the same view, billed twice. Its own stamp is gone from
 // the row, so it is superseded by its own completion.
 func TestARedeliveredCleanRunThatAlreadyWroteDoesNotCallTheModelAgain(t *testing.T) {
-	llmFake := &fake.LLM{NoteResponse: "# Roof"}
+	llmFake := &fake.LLM{NoteResponse: "# Roof\n\nthe gutter leaks again"}
 	h := newHarness(t, harnessOpts{llm: llmFake})
 	seedNoteWithBody(t, h, "n1", dictated, nil)
 	ctx := context.Background()
@@ -592,7 +592,7 @@ func TestARedeliveredCleanRunThatAlreadyWroteDoesNotCallTheModelAgain(t *testing
 	if got := len(llmFake.NoteCalls()); got != 1 {
 		t.Fatalf("the model was called %d times for one request delivered twice, want 1", got)
 	}
-	if n := getNote(t, h, "n1"); n.CleanedBody != "# Roof" {
+	if n := getNote(t, h, "n1"); n.CleanedBody != "# Roof\n\nthe gutter leaks again" {
 		t.Fatalf("cleaned body = %q", n.CleanedBody)
 	}
 

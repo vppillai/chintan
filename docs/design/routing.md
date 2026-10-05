@@ -112,13 +112,20 @@ the model was sure of stands. In order:
 - **Rule 1, exact name.** A `new` title that is a candidate's title, alias
   or tag in `routing.NormalizeSpeech` form (lowercased, punctuation dropped,
   so "Roof repair." names "Roof repair") files into it (`titleNames`;
-  `matched_by` title|alias|tag).
+  `matched_by` title|alias|tag) — when every word of the name was spoken
+  (`wordsSpoken`: whole words of the transcript, in any order). The title is
+  the model's, and a candidate named as an instruction can make the model
+  answer "new" with that name for a recording that never said it
+  (`prompt-safety.md`); a title borrowed from the list for a topic mention
+  ("Roof repair" for "more about the roof") starts a note, which is the
+  prompt's own Destination rule.
 - **Rule 2, a name opening the recording.** The model's title or the
   transcript itself opens with a listed name as whole words
   (`prefix_title`|`prefix_transcript`), the longest name winning; the name
   must be `routing.MinNameWords` (2) words or `routing.MinNameRunes` (8)
   letters (`prefixRuleName`), because "roof", "list" and "test" open too
-  many sentences that are not about them. The derived content is kept as the
+  many sentences that are not about them, and `prefix_title` holds the name
+  to the spoken words as rule 1 does. The derived content is kept as the
   model left it: a name left in the body is one word to delete, dictation
   stripped by a guess is gone.
 - **Rule 3, the model's own unsure suggestion spoken as a name**
@@ -165,8 +172,8 @@ recording (§Replay).
 
 | Rule | Bound | Constant | What it protects |
 |---|---|---|---|
-| 1 exact title, alias or tag (`pipeline.titleNames`) | — | — | a spoken name that is a listed note's is that note, not a duplicate |
-| 2 `prefix_title` / `prefix_transcript` (`pipeline.existingNoteNamed`) | 2 words, or 8 letters | `MinNameWords`, `MinNameRunes` | short words that open unrelated sentences never file anything |
+| 1 exact title, alias or tag (`pipeline.titleNames`, `wordsSpoken`) | every word of the name spoken | — | a spoken name that is a listed note's is that note, not a duplicate; a name the model borrowed for a recording that never said it files nothing and starts a second note of that title, which Move or a merge settles |
+| 2 `prefix_title` / `prefix_transcript` (`pipeline.existingNoteNamed`) | 2 words, or 8 letters; `prefix_title` also every word spoken | `MinNameWords`, `MinNameRunes` | short words that open unrelated sentences never file anything |
 | 3 `spoken_name` on the model's unsure append (`pipeline.spokenAsName`, `NamedAfterCue`) | 2 words, or 8 letters | `MinNameWords`, `MinNameRunes` | a topic mention is not a filing request |
 | 4 append or ask (`pipeline.outcomeOf`) | 0.75 | `AppendConfidence` | an unsure append asks instead of writing into the wrong note |
 | 5 span growth over the title or a trailing "note" (`ExtendSpans`) | k < the title's word count | — | the instruction's last words do not open the body |
@@ -179,6 +186,7 @@ recording (§Replay).
 | 12 fallback title (`pipeline.fallbackNoteTitle`) | 6 words, 40 characters | `FallbackTitleWords`, `FallbackTitleRunes` | a row that reads as the thought it holds and fits a list line |
 | 13 nothing heard (`pipeline.transcribe`, `provider.Transcription.NoSpeech`) | 0.04 peak; −1.0 | `QuietPeakRMS`, `LogprobThreshold` | silence and room noise are not filed |
 | 14 hint echo and the short-dictation tidy (`pipeline.spellingHints`, `transcriptOutcome`, `isShortDictation`) | 1,500 ms; 50 notes; 12 words | `MinHintAudioMS`, `MaxHintNotes`, `ShortDictationWords` | note titles do not become dictation; a short dictation does not wait on a model |
+| 15 the cleaned words share (`cleanup.WordShare`; `pipeline.clean`, `pipeline.CleanNote`) | 0.5 of the reply's words | `MinCleanedWordShare` | a translated, answered or replaced cleanup never becomes the paragraph or the view (`prompts.md` §Cleanup) |
 
 `MaxTitleRunes` (200) is the one bound that is not a rule's: every title,
 dictated, typed or stored, is cut at it (`SanitizeTitle`,

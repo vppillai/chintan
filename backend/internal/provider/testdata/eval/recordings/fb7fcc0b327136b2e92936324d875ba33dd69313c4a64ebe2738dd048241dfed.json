@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"action\":\"new\",\"title\":\"Dentist appointment\",\"kind\":\"note\",\"confidence\":1,\"instruction_spans\":[]}",
+  "usage": {
+    "InputTokens": 1823,
+    "OutputTokens": 25
+  }
+}

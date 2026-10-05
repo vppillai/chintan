@@ -19,12 +19,12 @@ func TestAShortDictationSkipsTheCleanupModel(t *testing.T) {
 		{"eleven words", "call  the roofer about the gutter over the back door tomorrow",
 			"Call the roofer about the gutter over the back door tomorrow.", 0},
 		{"twelve words", "call the roofer about the gutter over the back door tomorrow morning",
-			"MODEL", 1},
+			"MODEL: call the roofer about the gutter over the back door tomorrow morning", 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			h := newHarness(t, harnessOpts{llm: &fake.LLM{Response: "MODEL"}})
+			h := newHarness(t, harnessOpts{llm: &fake.LLM{Response: "MODEL: call the roofer about the gutter over the back door tomorrow morning"}})
 			seedNote(t, h.store, h.objects, "note1")
 			if err := h.objects.Put(ctx, "tenants/user1/captures/c_t/raw.txt", []byte(tc.transcript), "text/plain"); err != nil {
 				t.Fatal(err)

@@ -1,8 +1,0 @@
-{
-  "model": "MiniMax-M3",
-  "reply": "{\"action\":\"new\",\"title\":\"Portugal trip budget thoughts\",\"kind\":\"note\",\"confidence\":0.5,\"instruction_spans\":[]}",
-  "usage": {
-    "InputTokens": 1805,
-    "OutputTokens": 28
-  }
-}

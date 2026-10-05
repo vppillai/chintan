@@ -126,6 +126,18 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 	if err != nil {
 		return p.handleProviderError(ctx, capture, "cleanup", err)
 	}
+	// The words bound (routing.MinCleanedWordShare): a reply that shares
+	// under half its words with the transcript is a translation, an answer
+	// or a replacement, not a cleanup — the cleanup prompt is one of the
+	// places a dictated "translate this" reaches a model — and the transcript
+	// stands as the cleaned paragraph. The share only, never the words.
+	if share := cleanup.WordShare(cleaned.Text, source); share < routing.MinCleanedWordShare {
+		obs.Log(ctx).Warn("cleanup reply shares too few words with the transcript; keeping the transcript",
+			slog.String("capture_id", capture.ID),
+			slog.Float64("share", share))
+		obs.Count(ctx, "CleanupRefused", map[string]string{"Reason": "words"})
+		cleaned.Text = source
+	}
 
 	cleanKey, err := keys.CaptureClean(tenantID, capture.ID)
 	if err != nil {
@@ -322,13 +334,29 @@ func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *m
 	if err != nil {
 		return previous, p.handleProviderError(ctx, capture, "cleanup", err)
 	}
-	items := result.Items
+	// An item with no spoken word is the model's, not the person's — leaked
+	// prompt text, an answer to a dictated instruction — and is dropped
+	// (cleanup.DropUnspoken); a reply that was nothing but such items is
+	// settled as an unusable one, the recording as one item, so the
+	// dictation is kept whatever the model wrote.
+	items, invented := cleanup.DropUnspoken(result.Items, transcript)
+	if invented > 0 {
+		obs.Log(ctx).Warn("checklist item extraction returned items with no spoken word; dropped",
+			slog.String("capture_id", capture.ID),
+			slog.Int("dropped", invented))
+		for range invented {
+			obs.CountWithRollup(ctx, "ChecklistItemsDiscarded", map[string]string{"Reason": "invented"})
+		}
+		if len(items) == 0 && unusable == nil {
+			unusable = errItemsAllInvented
+		}
+	}
 	switch {
 	case unusable != nil:
 		obs.Log(ctx).Warn("checklist item extraction returned no list; appending the recording as one item",
 			slog.String("capture_id", capture.ID),
 			slog.String("error", unusable.Error()))
-		obs.Count(ctx, "ChecklistItemsDiscarded", map[string]string{"Reason": "unusable"})
+		obs.CountWithRollup(ctx, "ChecklistItemsDiscarded", map[string]string{"Reason": "unusable"})
 		items = []cleanup.Item{{Text: strings.Join(strings.Fields(transcript), " ")}}
 	case len(items) == 0:
 		// The speaker only told the app what to do.
@@ -349,6 +377,11 @@ func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *m
 	capture.Error = ""
 	return previous, p.persist(ctx, capture)
 }
+
+// errItemsAllInvented is the verdict on an items reply whose every item was
+// dropped for having no spoken word: usable as a list, useless as this
+// recording's, and settled like a reply that was no list at all.
+var errItemsAllInvented = errors.New("pipeline: every item the model returned had no spoken word")
 
 // previousItems reads the copy extractItems kept of a checklist recording's
 // earlier items, for an append resumed after the extraction has already

@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"items\":[{\"text\":\"Priyanka\",\"children\":[{\"text\":\"Doggy daycare with indoor rubberized flooring\"},{\"text\":\"Seated pool for dogs\"}]}]}",
+  "usage": {
+    "InputTokens": 1124,
+    "OutputTokens": 33
+  }
+}

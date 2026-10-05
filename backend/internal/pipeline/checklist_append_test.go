@@ -107,7 +107,7 @@ func TestARecordingRoutedIntoAChecklistBecomesItsItemsFromTheRawTranscript(t *te
 // rendering collapses whitespace per item and drops blank lines.
 func TestASecondRecordingIntoAChecklistIsTheNextParagraph(t *testing.T) {
 	h := newHarness(t, harnessOpts{
-		stt: &fake.STT{Response: "milk and  eggs"},
+		stt: &fake.STT{Response: "milk and  eggs and two loaves of bread"},
 		llm: &fake.LLM{ItemsResponse: []cleanup.Item{{Text: " Milk "}, {Text: ""}, {Text: "Two\tloaves  of bread"}}},
 	})
 	seedChecklistCapture(t, h, "list1", nil)

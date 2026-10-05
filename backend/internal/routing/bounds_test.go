@@ -20,7 +20,7 @@ type routingRule struct {
 	where  string
 }
 
-// The fourteen rules in force. A rule with no numeric bound says so. The literal is
+// The fifteen rules in force. A rule with no numeric bound says so. The literal is
 // repeated here on purpose: changing a bound is two edits, the number and
 // its row, which is the review this test exists to force.
 var routingRules = []routingRule{
@@ -38,6 +38,7 @@ var routingRules = []routingRule{
 	{12, "fallback title (pipeline.fallbackNoteTitle)", map[string]string{"FallbackTitleWords": "6", "FallbackTitleRunes": "40"}, ""},
 	{13, "nothing heard: the recorder's peak before the call, then the letter test, the silence phrases and the logprob (pipeline.transcribe, provider.Transcription.NoSpeech)", map[string]string{"QuietPeakRMS": "0.04", "LogprobThreshold": "-1.0"}, ""},
 	{14, "hint echo and the short-dictation tidy (pipeline.spellingHints, pipeline.transcriptOutcome, pipeline.isShortDictation)", map[string]string{"MinHintAudioMS": "1500", "MaxHintNotes": "50", "ShortDictationWords": "12"}, ""},
+	{15, "the cleaned words share (cleanup.WordShare; pipeline.clean, pipeline.CleanNote)", map[string]string{"MinCleanedWordShare": "0.5"}, ""},
 }
 
 // titleBound is the one bound that is not a rule's: every title, dictated,
@@ -125,7 +126,7 @@ func numericLiteral(e ast.Expr) (string, bool) {
 	return "", false
 }
 
-// ruleFiles are where the fourteen rules are written; a new rule lands in
+// ruleFiles are where the routing rules are written; a new rule lands in
 // one of them. budgetConstants are the numbers those files may still
 // declare: estimates and caps for the model call, not bounds a rule
 // decides by.

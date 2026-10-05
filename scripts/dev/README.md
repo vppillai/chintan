@@ -47,7 +47,10 @@ three `go test` runs and never prints it, keeps per prompt the reply a
 majority of runs gave, and writes `backend/internal/provider/testdata/eval/recordings/`
 and the runs' logs beside it. Copy both back, commit, and CI replays them
 with no key. `CHINTAN_INSTANCE` (default `dev`) and `CHINTAN_RUNS` (default
-3) are its knobs.
+3) are its knobs. Leave the mirror alone while it runs: a sync replaces the
+log files on disk under the running `go test`, so the script's pass counts
+and re-asks read the old logs and the run's own output is lost. Do code work
+in a second mirror (`mk-sync.sh <wt-dir> <suffix>b`) meanwhile.
 
 ## The gate
 

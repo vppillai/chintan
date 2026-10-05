@@ -1,8 +1,0 @@
-{
-  "model": "MiniMax-M3",
-  "reply": "{\"items\":[]}",
-  "usage": {
-    "InputTokens": 946,
-    "OutputTokens": 4
-  }
-}
