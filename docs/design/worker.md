@@ -116,7 +116,18 @@ kept fourteen days (`MessageRetentionPeriod: 1209600`) under
 recovered is `docs/ops/alarms.md`'s. A provider failing is not an
 infrastructure fault: the
 capture ends `failed` with a Retry button and never reaches the queue
-(`handleProviderError`).
+(`handleProviderError`), after the provider client has sent the call again
+inside the stage's deadline (pipeline-deadlines.md, "Retries inside a
+deadline"). What such a failure costs: nothing twice. A 529 burst that
+outlasts the client's retries at the cleanup stage leaves the transcript at
+`RawKey`; the Retry moves the row back to the stage after its last artefact
+(`service.resumeStatusFor`) and the run skips transcription, so the
+recording is transcribed and billed once, and the refused cleanup attempts
+report no usage and release what they reserved — the day's spend equals a
+run the burst never touched
+(`TestA529BurstAtCleanupDoesNotRedoTheTranscription`). Lambda's
+asynchronous retries are not involved: they answer a returned error, and a
+provider verdict returns nil.
 
 Two deliveries of one capture can overlap — Lambda is at-least-once, and
 the API's Retry is allowed once a row has gone `CaptureStuckAfter`

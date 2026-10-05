@@ -78,7 +78,7 @@ func (c *OpenAICleanup) Cleanup(ctx context.Context, raw, language string) (Clea
 	if err != nil {
 		return Cleaned{}, err
 	}
-	text, usage, err := c.complete(ctx, cleanup.SystemPrompt(), userPrompt, 0)
+	text, usage, err := c.complete(ctx, cleanup.SystemPrompt(), userPrompt, 0, ProviderRetryAttempts)
 	if err != nil {
 		return Cleaned{}, err
 	}
@@ -103,7 +103,7 @@ func (c *OpenAICleanup) CleanNote(ctx context.Context, mode model.NoteCleanMode,
 	if err != nil {
 		return Cleaned{}, err
 	}
-	text, usage, err := c.complete(ctx, systemPrompt, userPrompt, maxTokens)
+	text, usage, err := c.complete(ctx, systemPrompt, userPrompt, maxTokens, ProviderRetryAttempts)
 	if err != nil {
 		return Cleaned{}, err
 	}
@@ -121,7 +121,7 @@ func (c *OpenAICleanup) Items(ctx context.Context, transcript, listTitle, langua
 	if err != nil {
 		return ChecklistItems{}, err
 	}
-	out, usage, err := c.complete(ctx, systemPrompt, userPrompt, cleanup.ItemsMaxTokens(transcript))
+	out, usage, err := c.complete(ctx, systemPrompt, userPrompt, cleanup.ItemsMaxTokens(transcript), ProviderRetryAttempts)
 	if errors.Is(err, errEmptyContent) {
 		return ChecklistItems{}, fmt.Errorf("%w: %v", cleanup.ErrNotAnItemList, err)
 	}
@@ -148,7 +148,7 @@ func (c *OpenAICleanup) Ask(ctx context.Context, q ask.Prompt) (Answer, error) {
 	if err != nil {
 		return Answer{}, err
 	}
-	out, usage, err := c.complete(ctx, systemPrompt, userPrompt, ask.MaxOutputTokens)
+	out, usage, err := c.complete(ctx, systemPrompt, userPrompt, ask.MaxOutputTokens, ProviderRetryAttemptsAsk)
 	if err != nil {
 		return Answer{}, err
 	}
@@ -159,18 +159,23 @@ func (c *OpenAICleanup) Ask(ctx context.Context, q ask.Prompt) (Answer, error) {
 	return Answer{Text: parsed.Text, Sources: parsed.Sources, Grounded: parsed.Grounded, Usage: usage}, nil
 }
 
-// complete runs a single chat completion and returns the assistant message text
+// complete runs one chat completion and returns the assistant message text
 // together with what it consumed. A positive maxTokens caps the completion;
 // zero leaves the provider's default, which cleanup needs because its output is
-// as long as the recording.
-func (c *OpenAICleanup) complete(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, TokenUsage, error) {
+// as long as the recording. attempts is how many times the HTTP call is sent
+// before a refusal is final (retrying; bounds.go says which calls get which).
+func (c *OpenAICleanup) complete(ctx context.Context, systemPrompt, userPrompt string, maxTokens, attempts int) (string, TokenUsage, error) {
 	var content string
 	var usage TokenUsage
 	var err error
 	if c.replayDir != "" {
 		content, usage, err = readRecording(c.replayDir, RecordingKey(c.model, systemPrompt, userPrompt))
 	} else {
-		content, usage, err = c.call(ctx, systemPrompt, userPrompt, maxTokens)
+		err = retrying(ctx, "openai", attempts, func(ctx context.Context) error {
+			var callErr error
+			content, usage, callErr = c.call(ctx, systemPrompt, userPrompt, maxTokens)
+			return callErr
+		})
 		if err == nil && c.recordDir != "" {
 			err = writeRecording(c.recordDir, RecordingKey(c.model, systemPrompt, userPrompt), recording{Model: c.model, Reply: content, Usage: usage})
 		}
@@ -230,7 +235,10 @@ func (c *OpenAICleanup) call(ctx context.Context, systemPrompt, userPrompt strin
 		// Do not include response body — may contain transcript content.
 		// Typed, so the pipeline can tell a revoked key from a throttle. The
 		// rendered string is unchanged.
-		return "", TokenUsage{}, &StatusError{Op: "llm request failed", StatusCode: resp.StatusCode}
+		return "", TokenUsage{}, &StatusError{
+			Op: "llm request failed", StatusCode: resp.StatusCode,
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
+		}
 	}
 
 	var parsed struct {

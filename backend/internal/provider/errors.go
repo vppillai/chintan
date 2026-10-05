@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // StatusError is a provider's HTTP rejection.
@@ -27,6 +28,9 @@ type StatusError struct {
 	Op string
 	// StatusCode is the HTTP status the provider answered with.
 	StatusCode int
+	// RetryAfter is the provider's Retry-After when it sent one, zero
+	// otherwise; the retry inside the client (retrying) waits that long.
+	RetryAfter time.Duration
 }
 
 func (e *StatusError) Error() string {
