@@ -123,7 +123,9 @@ token and rejected without one (`TestAuthIgnoresUserIDHeader`,
 `TestAuthRejectsUserIDHeaderAlone`), and a nil verifier fails closed
 (`TestAuthFailsClosedWithNilVerifier`). `BearerToken` reads the
 `Authorization` header with a case-insensitive scheme and is shared with the
-inbox.
+inbox. The local development path (`local-dev.md`) wires its own
+`auth.Verifier` in `cmd/local`: one static token for one tenant, compared in
+constant time, in a binary that refuses to start off loopback.
 
 `CognitoVerifier.Verify` (`verifier.go`) parses with `RS256` pinned, the
 issuer `https://cognito-idp.<region>.amazonaws.com/<pool>`

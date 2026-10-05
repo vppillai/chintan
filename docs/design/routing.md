@@ -353,7 +353,10 @@ completions, in test binaries only:
   a miss fails with `errNoRecording`, whose text is the re-record command.
 - Both variables are read only when `testing.Testing()` is true
   (`recordReplayAllowed`): a worker with either set still calls the model
-  (`TestANonTestBuildIgnoresRecordAndReplay`).
+  (`TestANonTestBuildIgnoresRecordAndReplay`). The one non-test reader of
+  the recordings is `provider.NewReplayLLM`, a client with a closed port for
+  a base URL that can only replay, which the local development path
+  (`local-dev.md`) answers from before falling back to the fakes.
 
 `pipeline.TestRoutingEvalReplay` (`pipeline/route_eval_test.go`) replays
 every route case of `provider/testdata/eval/fixtures.json` through `Route`

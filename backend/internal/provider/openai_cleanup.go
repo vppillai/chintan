@@ -271,6 +271,20 @@ func (c *OpenAICleanup) call(ctx context.Context, systemPrompt, userPrompt strin
 // test can show a normal build ignores both.
 var recordReplayAllowed = testing.Testing
 
+// NewReplayLLM is a client that answers only from the recordings in dir and
+// never calls out: its base URL is a closed loopback port, so a miss is
+// ErrNoRecording and nothing else. It is the local development path's model
+// (cmd/local, docs/design/local-dev.md); the Lambda binaries do not call it,
+// and the LLM_REPLAY variable stays test-only (recordReplayAllowed).
+func NewReplayLLM(dir, model string) (*OpenAICleanup, error) {
+	c, err := NewOpenAICleanup("replay", "http://127.0.0.1:1", model, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.recordDir, c.replayDir = "", dir
+	return c, nil
+}
+
 // recording is one recorded completion on disk, <dir>/<RecordingKey>.json.
 type recording struct {
 	Model string     `json:"model"`
@@ -305,14 +319,15 @@ func writeRecording(dir, key string, r recording) error {
 	return nil
 }
 
-// errNoRecording is a replay miss: the prompt this call sent was never
-// recorded, which after a prompt change is the expected state.
-var errNoRecording = errors.New("provider: no recording for this prompt; the prompt, model or fixture changed since it was recorded — re-record on the VM with scripts/dev/record-replay.sh and commit the directory (docs/design/routing.md, \"Replay\")")
+// ErrNoRecording is a replay miss: the prompt this call sent was never
+// recorded, which after a prompt change is the expected state. Exported for
+// cmd/local, which answers a miss from the fakes instead.
+var ErrNoRecording = errors.New("provider: no recording for this prompt; the prompt, model or fixture changed since it was recorded — re-record on the VM with scripts/dev/record-replay.sh and commit the directory (docs/design/routing.md, \"Replay\")")
 
 func readRecording(dir, key string) (string, TokenUsage, error) {
 	b, err := os.ReadFile(filepath.Join(dir, key+".json"))
 	if errors.Is(err, os.ErrNotExist) {
-		return "", TokenUsage{}, fmt.Errorf("%w (%s in %s)", errNoRecording, key, dir)
+		return "", TokenUsage{}, fmt.Errorf("%w (%s in %s)", ErrNoRecording, key, dir)
 	}
 	if err != nil {
 		return "", TokenUsage{}, fmt.Errorf("provider: read recording: %w", err)

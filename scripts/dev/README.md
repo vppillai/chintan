@@ -52,6 +52,14 @@ log files on disk under the running `go test`, so the script's pass counts
 and re-asks read the old logs and the run's own output is lost. Do code work
 in a second mirror (`mk-sync.sh <wt-dir> <suffix>b`) meanwhile.
 
+## The local run
+
+`local.sh` is the development path without AWS (`docs/design/local-dev.md`):
+it builds `backend/cmd/local` — the API, the worker and a stand-in bucket in
+one process on loopback over the test doubles — and starts the frontend dev
+server pointed at it. It needs Go and Bun on the machine it runs on, so on
+the owner's layout that is the VM, not the Mac.
+
 ## The gate
 
 `protect-main.sh` is the merge rule (README → Operate → Release flow) as code:
