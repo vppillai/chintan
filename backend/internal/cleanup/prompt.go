@@ -7,6 +7,7 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/llm"
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/routing"
 )
 
 // Per-capture cleanup has one mode since 2026-09-27: faithful. Polished
@@ -91,7 +92,7 @@ and vocabulary where it already reads well.
 const noteTasksSystemPrompt = `You tidy a checklist into the list it was meant to be. The text between the marker lines is the list as it stands: one item per line, "- [ ] " open, "- [x] " done, a sub-item indented two spaces under its parent, two more for each level, at most four levels.
 
 ` + checklistItemRules + `
-- Every line's meaning is kept: nothing dropped, nothing added. A line that is already one thing stays word for word. A line that holds several things becomes one item each; a line that is a sentence spoken to the app ("Add milk to the shopping list") becomes the things it named.
+- Every line's meaning is kept: nothing dropped, nothing added. A line that is already one thing stays word for word. A line that holds several things, or several tasks ("buy bread and call the plumber" is Bread and Call the plumber), becomes one item each; a line that is a sentence spoken to the app ("Add milk to the shopping list") becomes the things it named.
 - Keep the groups the list has, and put an item under an existing group when its own words say it belongs there ("chicken from Costco" under Costco). Two lines that name the same thing are one item.
 - Keep every item at the level it has, up to four levels; put an item under an existing group or sub-group when its own words say so; never add a level the list does not have.
 - Done stays done: a line marked "- [x]" is an item with "done": true, its words kept; an open line is never marked done. Two lines naming the same thing merge into an open item if either was open.
@@ -228,24 +229,78 @@ func dropInvented(items []Item, body string) (kept []Item, dropped int) {
 
 // DropUnspoken is the per-recording extraction's check: an item none of
 // whose words were spoken (no word of it is one of the transcript's,
-// llm.Words) is the model's, not the person's — leaked prompt text, an
-// answer to a dictated "ignore your instructions" — and is dropped and
-// counted, a dropped parent's children lifted to its level. One shared word
-// is enough, not a sub-sequence: a group name ("Walmart", "Party") is a
-// spoken word, and a garbling fix keeps the words it did not touch.
+// llm.Words, or a spoken word respelled) is the model's, not the person's —
+// leaked prompt text, an answer to a dictated "ignore your instructions" —
+// and is dropped and counted, a dropped parent's children lifted to its
+// level. One shared word is enough, not a sub-sequence: a group name
+// ("Walmart", "Party") is a spoken word, and a garbling fix keeps the words
+// it did not touch. A one-word item the fix touched ("Tomatoes" for
+// "tomatos") shares nothing, so a word within routing.RespellMaxEdits of a
+// spoken word counts as spoken too (respelled, rule 16 of routing/bounds.go).
 func DropUnspoken(items []Item, transcript string) (kept []Item, dropped int) {
-	spoken := map[string]bool{}
-	for _, w := range llm.Words(transcript) {
-		spoken[w] = true
+	spoken := llm.Words(transcript)
+	exact := map[string]bool{}
+	for _, w := range spoken {
+		exact[w] = true
 	}
 	return dropWhere(items, func(text string) bool {
 		for _, w := range llm.Words(text) {
-			if spoken[w] {
+			if exact[w] || respelled(w, spoken) {
 				return true
 			}
 		}
 		return false
 	})
+}
+
+// respelled reports whether word, of routing.RespellMinRunes runes or more,
+// is within routing.RespellMaxEdits edits of a spoken word: a garble fixed
+// ("tomatoes" for "tomatos"), a plural ("eggs" for "egg"). A shorter word
+// is never a respelling, since two edits reach too many words from three
+// letters. The lengths prune the pairs the distance cannot reach.
+func respelled(word string, spoken []string) bool {
+	w := []rune(word)
+	if len(w) < routing.RespellMinRunes {
+		return false
+	}
+	for _, s := range spoken {
+		r := []rune(s)
+		if d := len(w) - len(r); d > routing.RespellMaxEdits || -d > routing.RespellMaxEdits {
+			continue
+		}
+		if editDistance(w, r) <= routing.RespellMaxEdits {
+			return true
+		}
+	}
+	return false
+}
+
+// editDistance is the Damerau-Levenshtein distance in its optimal string
+// alignment form: an insertion, a deletion, a substitution or a swap of two
+// adjacent runes is one edit, so "corriander" is one from "coriander" and
+// "tomaotes" one from "tomatoes".
+func editDistance(a, b []rune) int {
+	d := make([][]int, len(a)+1)
+	for i := range d {
+		d[i] = make([]int, len(b)+1)
+		d[i][0] = i
+	}
+	for j := range d[0] {
+		d[0][j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			d[i][j] = min(d[i-1][j]+1, d[i][j-1]+1, d[i-1][j-1]+cost)
+			if i > 1 && j > 1 && a[i-1] == b[j-2] && a[i-2] == b[j-1] {
+				d[i][j] = min(d[i][j], d[i-2][j-2]+1)
+			}
+		}
+	}
+	return d[len(a)][len(b)]
 }
 
 // dropWhere keeps the items keep accepts, at every depth, and lifts a dropped

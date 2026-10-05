@@ -7,12 +7,12 @@ import (
 
 // The bounds of the deterministic routing rules, in one place.
 //
-// Fifteen rules rescue or refuse what the router answers (routing.md
+// Sixteen rules rescue or refuse what the router answers (routing.md
 // §The bounds; the table is TestRoutingBoundsAreRegistered). Every number one
 // of them reads lives here, with why it is that number and the rule that
 // reads it — the three rules whose numbers belong to the transcription and
 // the cleanup (13: the silence scores; 14: the hint and short-dictation
-// bounds; 15: the cleaned words share) included, read from here by provider
+// bounds; 15: the cleaned words share; 16: the respelled-item rescue) included, read from here by provider
 // and pipeline. Until 2026-10-01 these
 // sat in three packages and disagreed with each other — a "name" was five
 // words to one rule, eight to another, two words or eight letters to a third
@@ -173,6 +173,26 @@ const (
 	// the bound accepts (prompt-safety.md, "What it does not prevent"). A
 	// structured view's headings are a few words beside the body's.
 	MinCleanedWordShare = 0.5
+
+	// RespellMaxEdits and RespellMinRunes keep a checklist item the model
+	// respelled from being dropped as invented (rule 16; cleanup.DropUnspoken,
+	// read by pipeline.extractItems). An item none of whose words were spoken
+	// is the model's — leaked prompt text, an answer to a dictated
+	// instruction — unless one of its words is a spoken word respelled: within
+	// two edits of it (Damerau-Levenshtein, an adjacent transposition one
+	// edit) when the item's word has four runes or more. Two edits cover the
+	// garbles the items prompt is asked to fix ("tomatos" to "tomatoes",
+	// "corriander" to "coriander") and a plural or inflection ("egg" to
+	// "eggs"); four runes keeps a three-letter word from reaching half the
+	// dictionary ("you" to "your" is the invented-item replay fixture's own
+	// pair). What still drops: a digit for a number word ("2" for "two"), an
+	// emoji-only item, a transliteration or translation into another script,
+	// since none is within two edits of what was said; a same-script cognate
+	// two edits away ("tomate" for "tomato") is kept, a stray on the person's
+	// own list, visible and one tap from gone (prompt-safety.md, "What it
+	// does not prevent").
+	RespellMaxEdits = 2
+	RespellMinRunes = 4
 )
 
 // SanitizeTitle bounds a title to one line of at most MaxTitleRunes: control
