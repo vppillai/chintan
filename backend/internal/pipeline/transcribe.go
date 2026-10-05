@@ -31,6 +31,33 @@ func (r *captureRun) transcribe(ctx context.Context) error {
 	return r.p.transcribe(ctx, r.tenantID, r.capture)
 }
 
+// retranscribe is the transcribe stage once more, for a capture whose
+// destination was not known when the recording was transcribed (it was
+// routed, or a person chose it afterwards) and asks for another language:
+// the transcript is in the tenant's default and the note's "Transcription
+// language" was never applied — a Malayalam dictation aimed by voice at an
+// ml note went to Whisper as auto and came back in Tamil script (review
+// 2026-09-21, T2). Transcribing once more in the note's language is the
+// promise that field makes; it costs one more STT call only in the mismatch
+// case. The routed text goes too, so
+// the instruction strip runs over the new transcript with the destination
+// pinned. Language is written with RawKey, so a retry that finds the second
+// transcript does not make a third; CleanKey skips the stage altogether.
+func (r *captureRun) retranscribe(ctx context.Context) error {
+	capture, note := r.capture, r.note
+	if !wantsNoteLanguage(*capture, note) {
+		return nil
+	}
+	obs.Log(ctx).Info("destination note asks for another language; transcribing again",
+		slog.String("capture_id", capture.ID),
+		slog.String("note_id", note.ID),
+		slog.String("language_sent", capture.Language),
+		slog.String("language_wanted", note.Language))
+	obs.Count(ctx, "CaptureRetranscribedForNote", nil)
+	capture.RawKey, capture.SegmentsKey, capture.RoutedKey = "", "", ""
+	return r.p.transcribe(ctx, r.tenantID, capture)
+}
+
 func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *model.CaptureIndex) error {
 	if err := p.setStatus(ctx, capture, service.StatusTranscribing); err != nil {
 		return err

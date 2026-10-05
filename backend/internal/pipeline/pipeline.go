@@ -522,6 +522,9 @@ type stage struct {
 var stages = []stage{
 	{name: "transcribe", skip: func(c *model.CaptureIndex) bool { return c.RawKey != "" }, run: (*captureRun).transcribe},
 	{name: "route", skip: func(c *model.CaptureIndex) bool { return c.NoteID != "" }, run: (*captureRun).route},
+	{name: "destination", run: (*captureRun).destination},
+	{name: "retranscribe", skip: func(c *model.CaptureIndex) bool { return c.CleanKey != "" }, run: (*captureRun).retranscribe},
+	{name: "strip", skip: func(c *model.CaptureIndex) bool { return c.CleanKey != "" }, run: (*captureRun).strip},
 }
 
 func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.CaptureIndex, error) {
@@ -540,9 +543,21 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 	if service.CaptureIsTerminal(capture.Status) {
 		return *capture, nil
 	}
-	tenantID := capture.UserID
+	tenantID, note := capture.UserID, r.note
+	previousItems, err := p.cleanForNote(ctx, tenantID, capture, note)
+	if err != nil || service.CaptureIsTerminal(capture.Status) {
+		return *capture, err
+	}
+	return p.append(ctx, tenantID, capture, note, appendOptions{autoClean: true, previousItems: previousItems})
+}
 
-	note, err := p.destination(ctx, tenantID, capture.NoteID)
+// destination is the step between routing and the cleanup: the capture has
+// a note id, and the row it names is read for the stages after this one. A
+// note purged meanwhile parks the capture at needs_target; one in the trash
+// fails it with the archived verdict.
+func (r *captureRun) destination(ctx context.Context) error {
+	p, capture := r.p, r.capture
+	note, err := p.destination(ctx, r.tenantID, capture.NoteID)
 	if errors.Is(err, repository.ErrNotFound) {
 		// The destination was purged between the recording and this run — a
 		// "delete forever" while the capture was transcribing. Retrying cannot
@@ -559,65 +574,16 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 		capture.TargetSource = ""
 		capture.Status = model.StatusNeedsTarget
 		capture.Error = ""
-		return *capture, p.persist(ctx, capture)
+		return p.persist(ctx, capture)
 	}
 	if err != nil {
-		return *capture, fmt.Errorf("pipeline: get note: %w", err)
+		return fmt.Errorf("pipeline: get note: %w", err)
 	}
 	if !service.NoteIsActive(note) {
-		return *capture, p.markFailed(ctx, capture, service.ErrNoteArchived.Error())
+		return p.markFailed(ctx, capture, service.ErrNoteArchived.Error())
 	}
-
-	if capture.CleanKey == "" && wantsNoteLanguage(*capture, note) {
-		// The destination was not known when the recording was transcribed
-		// (it was routed, or a person chose it afterwards), so the transcript
-		// is in the tenant's default and the note's "Transcription language"
-		// was never applied — a Malayalam dictation aimed by voice at an ml
-		// note went to Whisper as auto and came back in Tamil script (review
-		// 2026-09-21, T2). Transcribing once more in the note's language is
-		// the promise that field makes; it costs one more STT call only in
-		// the mismatch case. The routed text goes too, so the instruction
-		// strip below runs over the new transcript with the destination
-		// pinned. Language is written with RawKey, so a retry that finds the
-		// second transcript does not make a third.
-		obs.Log(ctx).Info("destination note asks for another language; transcribing again",
-			slog.String("capture_id", capture.ID),
-			slog.String("note_id", note.ID),
-			slog.String("language_sent", capture.Language),
-			slog.String("language_wanted", note.Language))
-		obs.Count(ctx, "CaptureRetranscribedForNote", nil)
-		capture.RawKey, capture.SegmentsKey, capture.RoutedKey = "", "", ""
-		if err := p.transcribe(ctx, tenantID, capture); err != nil {
-			return *capture, err
-		}
-		if service.CaptureIsTerminal(capture.Status) {
-			return *capture, nil
-		}
-	}
-
-	if capture.CleanKey == "" && note.Kind != model.NoteKindChecklist && capture.RoutedKey == "" {
-		// Recorded into a note, so routing — and with it the removal of the
-		// words addressed to the app — was skipped. A checklist is not
-		// stripped: its items come from the raw transcript, and the
-		// extraction prompt handles the words addressed to the app itself,
-		// so neither the router's spans nor this strip is consulted — the
-		// item is not at the mercy of where a span ended ("Add umbrella to
-		// shopping list" routed as the item "list", owner feedback
-		// 2026-09-26). A verbatim checklist takes the raw transcript itself
-		// as its one item, on the routed path as on the targeted one; the
-		// routed text would carry the same span damage.
-		if err := p.stripInstructions(ctx, tenantID, capture, note); err != nil {
-			return *capture, err
-		}
-		if service.CaptureIsTerminal(capture.Status) {
-			return *capture, nil
-		}
-	}
-	previousItems, err := p.cleanForNote(ctx, tenantID, capture, note)
-	if err != nil || service.CaptureIsTerminal(capture.Status) {
-		return *capture, err
-	}
-	return p.append(ctx, tenantID, capture, note, appendOptions{autoClean: true, previousItems: previousItems})
+	r.note = note
+	return nil
 }
 
 // cleanForNote is the stage a retry resumes at once the transcript is stored:

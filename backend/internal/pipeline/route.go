@@ -35,6 +35,24 @@ func (r *captureRun) route(ctx context.Context) error {
 	return r.p.route(ctx, r.tenantID, r.capture)
 }
 
+// strip is routing's share of a capture recorded into a note: routing — and
+// with it the removal of the words addressed to the app — was skipped, so
+// stripInstructions runs once the destination is known. A checklist is not
+// stripped: its items come from the raw transcript, and the extraction
+// prompt handles the words addressed to the app itself, so neither the
+// router's spans nor this strip is consulted — the item is not at the mercy
+// of where a span ended ("Add umbrella to shopping list" routed as the item
+// "list", owner feedback 2026-09-26). A verbatim checklist takes the raw transcript itself as its one
+// item, on the routed path as on the targeted one; the routed text would
+// carry the same span damage. A routed text already on the row is the
+// router's own, or an earlier attempt's, and stands.
+func (r *captureRun) strip(ctx context.Context) error {
+	if r.note.Kind == model.NoteKindChecklist || r.capture.RoutedKey != "" {
+		return nil
+	}
+	return r.p.stripInstructions(ctx, r.tenantID, r.capture, r.note)
+}
+
 // stripInstructions removes a spoken app instruction from a capture that was
 // recorded into a note and so never reached routing.
 //
