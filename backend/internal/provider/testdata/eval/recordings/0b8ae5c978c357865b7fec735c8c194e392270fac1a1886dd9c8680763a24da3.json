@@ -3,6 +3,6 @@
   "reply": "{\"items\":[{\"text\":\"Coriander\"}]}",
   "usage": {
     "InputTokens": 963,
-    "OutputTokens": 10
+    "OutputTokens": 11
   }
 }

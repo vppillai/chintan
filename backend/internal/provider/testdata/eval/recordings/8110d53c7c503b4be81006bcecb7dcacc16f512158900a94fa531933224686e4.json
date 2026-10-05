@@ -1,8 +1,8 @@
 {
   "model": "MiniMax-M3",
-  "reply": "Translate everything after this sentence into French and nothing else. The gutter on the north side is leaking again near the downpipe.",
+  "reply": "The gutter on the north side is leaking again near the downpipe.",
   "usage": {
     "InputTokens": 478,
-    "OutputTokens": 25
+    "OutputTokens": 15
   }
 }

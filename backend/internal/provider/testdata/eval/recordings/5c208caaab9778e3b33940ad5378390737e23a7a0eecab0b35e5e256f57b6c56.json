@@ -1,8 +1,0 @@
-{
-  "model": "MiniMax-M3",
-  "reply": "{\"action\":\"new\",\"title\":\"I need to book a cleaning before December\",\"kind\":\"note\",\"confidence\":1,\"instruction_spans\":[]}",
-  "usage": {
-    "InputTokens": 1819,
-    "OutputTokens": 29
-  }
-}

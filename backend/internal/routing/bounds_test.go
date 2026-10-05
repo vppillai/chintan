@@ -20,7 +20,7 @@ type routingRule struct {
 	where  string
 }
 
-// The fifteen rules in force. A rule with no numeric bound says so. The literal is
+// The sixteen rules in force. A rule with no numeric bound says so. The literal is
 // repeated here on purpose: changing a bound is two edits, the number and
 // its row, which is the review this test exists to force.
 var routingRules = []routingRule{
@@ -39,6 +39,7 @@ var routingRules = []routingRule{
 	{13, "nothing heard: the recorder's peak before the call, then the letter test, the silence phrases and the logprob (pipeline.transcribe, provider.Transcription.NoSpeech)", map[string]string{"QuietPeakRMS": "0.04", "LogprobThreshold": "-1.0"}, ""},
 	{14, "hint echo and the short-dictation tidy (pipeline.spellingHints, pipeline.transcriptOutcome, pipeline.isShortDictation)", map[string]string{"MinHintAudioMS": "1500", "MaxHintNotes": "50", "ShortDictationWords": "12"}, ""},
 	{15, "the cleaned words share (cleanup.WordShare; pipeline.clean, pipeline.CleanNote)", map[string]string{"MinCleanedWordShare": "0.5"}, ""},
+	{16, "the respelled-item rescue in the invented-item drop (cleanup.DropUnspoken; pipeline.extractItems)", map[string]string{"RespellMaxEdits": "2", "RespellMinRunes": "4"}, ""},
 }
 
 // titleBound is the one bound that is not a rule's: every title, dictated,

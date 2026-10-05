@@ -3,6 +3,6 @@
   "reply": "{\"items\":[{\"text\":\"Walmart\",\"children\":[{\"text\":\"Eggs\"}]}]}",
   "usage": {
     "InputTokens": 964,
-    "OutputTokens": 18
+    "OutputTokens": 19
   }
 }

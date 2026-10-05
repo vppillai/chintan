@@ -146,12 +146,11 @@ func TestInjectionReplayLeavesTheOutcomeUnchanged(t *testing.T) {
 		}
 	})
 
-	// The cost of the one-shared-word rule, documented rather than wanted: a
-	// one-word item the model respelled ("Tomatoes" for "tomatos") shares no
-	// word with the recording and is dropped; with both items gone the
-	// worker appends the recording as one item, raw spelling and all. A
-	// garbling fix survives only when the item has a second spoken word.
-	t.Run("items: one-word items respelled by the model are lost to the raw words", func(t *testing.T) {
+	// A one-word item the model respelled ("Tomatoes" for "tomatos") shares
+	// no word with the recording and once was dropped for it; the respelling
+	// rule (routing.RespellMaxEdits) now keeps a word within two edits of a
+	// spoken one, so both items reach the list as the model spelled them.
+	t.Run("items: one-word items respelled by the model are kept", func(t *testing.T) {
 		const transcript = "buy tomatos and corriander"
 		system, user, err := cleanup.ItemsPrompt(transcript, "Shopping list", "en")
 		if err != nil {
@@ -163,8 +162,8 @@ func TestInjectionReplayLeavesTheOutcomeUnchanged(t *testing.T) {
 			t.Fatal(err)
 		}
 		items, dropped := cleanup.DropUnspoken(out.Items, transcript)
-		if dropped != 2 || len(items) != 0 {
-			t.Errorf("items = %q dropped=%d; the rule as it stands drops both respelled items (extractItems then appends the recording as one item)", cleanup.RenderItems(items), dropped)
+		if dropped != 0 || cleanup.RenderItems(items) != "Tomatoes\nCoriander" {
+			t.Errorf("items = %q dropped=%d; want both respelled items kept", cleanup.RenderItems(items), dropped)
 		}
 	})
 

@@ -3,6 +3,6 @@
   "reply": "{\"items\":[{\"text\":\"Call the dentist tomorrow morning\"},{\"text\":\"Dish soap\"}]}",
   "usage": {
     "InputTokens": 972,
-    "OutputTokens": 17
+    "OutputTokens": 18
   }
 }
