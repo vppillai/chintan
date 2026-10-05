@@ -129,7 +129,7 @@ whole in a new note, a park at `needs_target`, a new note with nothing
 rescued, the recording as one item, the spoken item alone, the body
 untouched, an ungrounded answer with no source. The live eval carries a case
 per layer beside the injection cases (`fixtures.json`: route 33, cleanup 8,
-items 18), measured through the same steps the worker runs.
+items 19), measured through the same steps the worker runs.
 
 ## What it does not prevent
 
@@ -157,11 +157,15 @@ items 18), measured through the same steps the worker runs.
   drops it and a reply of nothing but such items is the recording as one
   item in its raw spelling. The transliteration and the translation drop on
   purpose — `LanguageRule` forbids both, and the check compares in the
-  spoken script. The other way, a same-script cognate ("Tomate" for
-  "tomato") or any invented four-letter word two edits from a spoken one
-  ("Silk" beside "milk") passes as a respelling and lands on the person's
-  own list, visible and one tap from gone; three-letter words are never
-  respellings, because two edits reach too many words from three letters.
+  spoken script. The other way, the rule accepts any item word of four
+  runes or more within two edits of a spoken word of similar length
+  (lengths differing by at most two), spoken or not: a same-script cognate
+  ("Tomate" for "tomato"), a neighbour ("Silk" beside "milk"), and an
+  inflection of a dictated injection's own words — "Instruction" beside
+  "instructions", "Delete" beside "deleted" — passes as a respelling and
+  lands on the person's own list, visible and one tap from gone. Words of
+  three runes or fewer are never respellings, because two edits reach too
+  many words from three letters.
 - **A heavily respelled dictation is kept raw.** A Malayalam dictation whose
   every word Whisper respelled by a suffix shares 0.20 of its words with the
   model's cleanup and is refused for the raw transcript; the eval has no

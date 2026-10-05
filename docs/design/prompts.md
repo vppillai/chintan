@@ -320,7 +320,7 @@ is named. They cannot say whether the model does what the rule asks. That is
 the live evaluation, `TestLiveEval` in
 `backend/internal/provider/live_eval_test.go` over
 `backend/internal/provider/testdata/eval/fixtures.json`: one sub-test per
-prompt (`route`, 33 cases; `cleanup`, 8; `items`, 18; `tasks`, 12; `ask`, 4)
+prompt (`route`, 33 cases; `cleanup`, 8; `items`, 19; `tasks`, 12; `ask`, 4)
 and per case, each case one model call with its expectations beside it — the
 destination and content for a routing phrasing, a phrase the cleaned text
 must keep or lose, the exact items, the task lines, whether an answer is
