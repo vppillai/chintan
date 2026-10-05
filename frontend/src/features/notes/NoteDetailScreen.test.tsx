@@ -6,7 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { onlineManager } from '@tanstack/react-query';
 
-import { CAPTURE_POLL_FAST_MS, CAPTURE_POLL_INTERVAL_MS, queryKeys } from '@/api/queries.ts';
+import {
+  CAPTURE_POLL_FAST_MS,
+  CAPTURE_POLL_INTERVAL_MS,
+  CAPTURE_POLL_SLOW_MS,
+  queryKeys,
+} from '@/api/queries.ts';
 import type { CaptureWire, NoteDetailWire } from '@/api/schema.ts';
 import { settings } from '@/api/__fixtures__/responses.ts';
 import { routes } from '@/app/router.tsx';
@@ -14,7 +19,7 @@ import { INITIAL_CAPTURE } from '@/features/capture/machine.ts';
 import { useCaptureStore } from '@/features/capture/store.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
-import { LOADING_PATIENCE_MS } from './NoteDetailScreen.tsx';
+import { LOADING_PATIENCE_MS, noteRetryInterval } from './NoteDetailScreen.tsx';
 import { noteTabStorageKey } from './NoteTabs.tsx';
 
 /**
@@ -581,6 +586,61 @@ describe('an uncached note offline is not an endless Loading', () => {
     expect(screen.getByRole('heading', { name: 'Not on this device' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
     expect(screen.queryByText('Loading…')).toBeNull();
+  });
+});
+
+/**
+ * The note is there, the first request was not: a phone woken by its own
+ * notification whose radio is not up yet fails the first GET before it
+ * reaches the server. The screen must ask again on its own; it used to stand
+ * on "Not on this device" until Try again was pressed.
+ */
+describe('a note the first request never reached is asked for again', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('recovers from a first read that failed on the way out, with nothing pressed', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+    // No jitter: the client's own retries of a network failure are instant.
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const api = server([ROOF]);
+    // The client retries a network failure three times before it gives up,
+    // so the first four attempts fail as a dead link fails them.
+    let failures = 4;
+    const flaky = vi.fn<typeof fetch>(async (input, init) => {
+      if (/\/v1\/notes\/roof-repair$/.test(String(input)) && failures > 0) {
+        failures -= 1;
+        throw new TypeError('Failed to fetch');
+      }
+      return api.fetchImpl(input, init);
+    });
+    mount(flaky, '/notes/roof-repair');
+
+    expect(await screen.findByRole('heading', { name: 'Not on this device' })).toBeInTheDocument();
+    expect(api.gets).toBe(0);
+
+    // The re-ask clock is stamped a tick after the screen gives up, and the
+    // first rung of the ladder is measured from it.
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    act(() => {
+      vi.advanceTimersByTime(CAPTURE_POLL_FAST_MS + 50);
+    });
+
+    expect(
+      await screen.findByRole('textbox', { name: 'Note body' }, { timeout: 3_000 }),
+    ).toBeInTheDocument();
+    expect(api.gets).toBe(1);
+  });
+
+  it('asks on the filing ladder: brisk at first, then every few seconds, then every fifteen', () => {
+    expect(noteRetryInterval(0)).toBe(CAPTURE_POLL_FAST_MS);
+    expect(noteRetryInterval(29_000)).toBe(CAPTURE_POLL_FAST_MS);
+    expect(noteRetryInterval(31_000)).toBe(CAPTURE_POLL_INTERVAL_MS);
+    expect(noteRetryInterval(3 * 60_000)).toBe(CAPTURE_POLL_SLOW_MS);
   });
 });
 

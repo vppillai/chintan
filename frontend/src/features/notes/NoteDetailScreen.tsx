@@ -17,11 +17,16 @@ import { useLocation, useParams } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
 import {
+  CAPTURE_POLL_FAST_MS,
+  CAPTURE_POLL_FAST_WINDOW_MS,
+  CAPTURE_POLL_INTERVAL_MS,
+  CAPTURE_POLL_SLOW_MS,
   queryKeys,
   useArchiveNote,
   useDeleteNoteForever,
   useInFlightCaptures,
   useNote,
+  usePollNote,
   useSettings,
 } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
@@ -278,6 +283,34 @@ export function NoteDetailScreen() {
   const waiting = (isLoading || cached.isLoading) && !paused && online && !note;
   const patienceOver = useTimedOut(waiting, LOADING_PATIENCE_MS);
 
+  /*
+   * Three different sentences below, because they are three different
+   * situations and the screen used to say one of them for all. A note that
+   * is simply not on this device was reported as one that "may have been
+   * archived or purged" — describing a deletion that never happened, to a
+   * user who could see the note one screen earlier.
+   */
+  const offline = paused || !online || (error instanceof ApiError && error.isOffline);
+  const unanswered = !offline && (patienceOver || (error instanceof ApiError && error.isRetryable));
+  /*
+   * No verdict is not a verdict. A notification tap wakes a phone whose
+   * radio is not up yet, and the first request fails or hangs before it
+   * reaches the server — which has had the note since before the push was
+   * sent. The query does not retry on its own and the browser, which never
+   * said "offline", fires no reconnect; so the screen stood on "Not on this
+   * device" over a note one more request would have shown. While the server
+   * has answered nothing final and the browser still reports a connection,
+   * the note is asked for again on the filing ladder (`noteRetryInterval`);
+   * a refetch during a request still in the air joins it, so this never
+   * doubles a slow one. A real 404 is a verdict and is not retried.
+   */
+  const reasking =
+    !note &&
+    online &&
+    !paused &&
+    (unanswered || (error instanceof ApiError && error.isOffline));
+  usePollNote(id ?? '', useSince(reasking), noteRetryInterval);
+
   if (waiting && !patienceOver) {
     return (
       <div className="screen">
@@ -289,16 +322,6 @@ export function NoteDetailScreen() {
   }
 
   if (!note) {
-    /*
-     * Three different sentences, because they are three different situations
-     * and the screen used to say one of them for all. A note that is simply
-     * not on this device was reported as one that "may have been archived or
-     * purged" — describing a deletion that never happened, to a user who could
-     * see the note one screen earlier.
-     */
-    const offline = paused || !online || (error instanceof ApiError && error.isOffline);
-    const unanswered = !offline && (patienceOver || (error instanceof ApiError && error.isRetryable));
-
     return (
       <div className="screen">
         <header className="screen__header screen__header--detail">
@@ -309,7 +332,7 @@ export function NoteDetailScreen() {
           {offline
             ? 'You’re offline and this note isn’t saved on this device. It will be here once you have a connection.'
             : unanswered
-              ? 'This note isn’t saved on this device, and the server hasn’t answered yet.'
+              ? 'This note isn’t saved on this device, and the server hasn’t answered yet. Trying again…'
               : 'No note with that identifier. It may have been archived or purged.'}
         </p>
         {unanswered && (
@@ -671,6 +694,46 @@ function NotePanel({
 
 /** How long "Loading…" is allowed to stand before the screen says what it knows. */
 export const LOADING_PATIENCE_MS = 6_000;
+
+/**
+ * How often a note the server has not answered for is asked for again: the
+ * filing poll's own ladder, since a note just announced by a push is the
+ * common case — brisk while the answer is most likely a second away, then
+ * every few seconds, then every fifteen for as long as the screen stays on
+ * it. Module-level, as `usePollNote` requires; `elapsedMs` is since the
+ * screen first found itself without an answer.
+ */
+export function noteRetryInterval(elapsedMs: number): number {
+  if (elapsedMs < CAPTURE_POLL_FAST_WINDOW_MS) return CAPTURE_POLL_FAST_MS;
+  if (elapsedMs < NOTE_RETRY_BRISK_MS) return CAPTURE_POLL_INTERVAL_MS;
+  return CAPTURE_POLL_SLOW_MS;
+}
+
+/** Brisk re-asks for this long since the first unanswered read, then the slow cadence. */
+const NOTE_RETRY_BRISK_MS = 2 * 60 * 1000;
+
+/**
+ * When `active` last became true, or null while it is false — the clock a
+ * ladder of re-asks is read against. Stamped from a timer, as `useTimedOut`
+ * is, so the render stays pure; the one tick it costs is nothing against the
+ * ladder's first rung.
+ */
+function useSince(active: boolean): number | null {
+  const [since, setSince] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    const timer = setTimeout(() => {
+      setSince(Date.now());
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      setSince(null);
+    };
+  }, [active]);
+
+  return since;
+}
 
 /**
  * True once `active` has been continuously true for `ms`. Falls back to false
