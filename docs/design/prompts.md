@@ -55,9 +55,9 @@ Runs for a capture with no destination (`Pipeline.route`,
 target note as the only candidate, for a capture recorded into a note whose
 transcript contains an instruction cue.
 
-**Sent.** The system prompt (about 1,300 tokens at four characters a token):
+**Sent.** The system prompt (about 1,400 tokens at four characters a token):
 the two kinds of words spoken to the app (filing, naming), the reply shape,
-then four sections and eight worked examples. *Destination*: append only when
+then four sections and nine worked examples. *Destination*: append only when
 a listed note was clearly asked for by its title or one of its other names;
 a spoken title that is a listed note's title or other name is an append to
 it (the rule `pipeline.existingNoteNamed` enforces after the reply, applied
@@ -76,7 +76,11 @@ is a new note titled with the name only; the speaker's script. *Kind*, for
 `new` only: `checklist` when the speaker names a list — shopping list,
 groceries, to-do, packing list, "add X to the Y list" — or dictates things to
 tick off; otherwise, and in doubt, `note`. The examples include "add milk to
-my groceries list" with no Groceries note listed (a new checklist) and the
+my groceries list" with no Groceries note listed (a new checklist), "Add
+umbrella and batteries to shopping list" with Shopping list listed (an
+append whose spans cover "Add" and "to shopping list" and never the things
+added, however many — without it the model spanned the things on a list
+append and the content came back empty) and the
 two name-first shapes (a listed "App feedback", an unlisted "Things to talk
 with Milos").
 
@@ -175,12 +179,16 @@ words were spoken is dropped and its children lifted, because it is the
 model's — leaked prompt text, an answer to a dictated instruction — and a
 reply of nothing but such items appends the recording as one item. One
 shared word, not a sub-sequence, because a sub-sequence rule would refuse the
-garbling fix and the group names the prompt asks for; the cost is that a
-garbling fix survives only when the item has a second spoken word: a
-one-word item respelled ("Tomatoes" for "tomatos", "Eggs" for "egg", "2"
-for "two", a transliteration, an emoji-only item, a group heading the model
-coined such as "Produce" with its children lifted) is lost to the raw word
-(`pipeline/testdata/replay/injection-items-respelled.json`). Nothing
+garbling fix and the group names the prompt asks for. A spoken word
+respelled counts as spoken (rule 16 of `routing.md`: a word of
+`routing.RespellMinRunes`, 4, runes or more within `routing.RespellMaxEdits`,
+2, Damerau-Levenshtein edits of a spoken word), so a one-word garbling fix
+("Tomatoes" for "tomatos", "Coriander" for "corriander") and a plural
+("Eggs" for "egg") reach the list as the model spelled them
+(`pipeline/testdata/replay/injection-items-respelled.json`); what is still
+lost to the raw word is a digit for a number word ("2" for "two"), an
+emoji-only item, a transliteration, and a group heading the model coined
+such as "Produce", dropped with its children lifted. Nothing
 compares an item to the title, because that would lose "add batteries" to a
 list titled Batteries — visible beats lost. A reply that is not a list, or an
 empty completion, appends the recording as one item. The tree is stored as
@@ -219,7 +227,7 @@ list it was meant to be": the body's format (one item a line, `- [ ] ` /
 `- [x] `, a sub-item two spaces in, two more for each level, at most four
 levels), the shared `checklistItemRules`, and four rules a whole list needs —
 every line's meaning kept (a line already one thing word for word, a line
-holding several things one item each, a sentence spoken to the app the things
+holding several things, or several tasks ("buy bread and call the plumber"), one item each, a sentence spoken to the app the things
 it named); the list's groups kept and an item put under an existing group
 when its words say so ("chicken from Costco" under Costco), two lines naming
 one thing one item; every item kept at its level, up to four, and no level
@@ -292,8 +300,8 @@ hint-echo check on the answer — are `routing.md`.
 ## Sizes
 
 System prompts, estimated from the source at four characters a token: routing
-about 1,300; cleanup about 300; checklist items about 800 and tasks about
-940, of which the shared `checklistItemRules` block with its two composed
+about 1,400; cleanup about 300; checklist items about 800 and tasks about
+950, of which the shared `checklistItemRules` block with its two composed
 rules is about 500; structured about 190 and polished about 210; Ask about
 350 (measured). The three shared rules together are about 120. Word numbering adds
 about three tokens a word to a routing user prompt (measured; `spans.go`

@@ -187,6 +187,7 @@ recording (§Replay).
 | 13 nothing heard (`pipeline.transcribe`, `provider.Transcription.NoSpeech`) | 0.04 peak; −1.0 | `QuietPeakRMS`, `LogprobThreshold` | silence and room noise are not filed |
 | 14 hint echo and the short-dictation tidy (`pipeline.spellingHints`, `transcriptOutcome`, `isShortDictation`) | 1,500 ms; 50 notes; 12 words | `MinHintAudioMS`, `MaxHintNotes`, `ShortDictationWords` | note titles do not become dictation; a short dictation does not wait on a model |
 | 15 the cleaned words share (`cleanup.WordShare`; `pipeline.clean`, `pipeline.CleanNote`) | 0.5 of the reply's words | `MinCleanedWordShare` | a translated, answered or replaced cleanup never becomes the paragraph or the view (`prompts.md` §Cleanup) |
+| 16 the respelled-item rescue in the invented-item drop (`cleanup.DropUnspoken`; `pipeline.extractItems`) | 2 edits; 4 runes | `RespellMaxEdits`, `RespellMinRunes` | a one-word item the model respelled ("Tomatoes" for "tomatos") is not lost as invented; a word under four runes is never a respelling (`prompts.md` §Checklist items, `prompt-safety.md`) |
 
 `MaxTitleRunes` (200) is the one bound that is not a rule's: every title,
 dictated, typed or stored, is cut at it (`SanitizeTitle`,

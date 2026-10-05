@@ -83,8 +83,11 @@ after the reply (below) is what holds whatever the model made of it.
   `ChecklistItemsDiscarded{Reason=invented}`), a dropped parent's children
   lifted; a reply of nothing but such items is settled like one that was no
   list, the recording as one item. One shared word, not a sub-sequence, so a
-  spoken group name survives and so does a garbling fix inside an item that
-  has a second spoken word; a one-word respelling does not (below).
+  spoken group name survives and so does a garbling fix; a word within
+  `routing.RespellMaxEdits` (2) edits of a spoken word of
+  `routing.RespellMinRunes` (4) runes or more counts as spoken, so a one-word
+  respelling ("Tomatoes" for "tomatos") survives too, and what the widening
+  lets through is below.
 - **A cleanup reply is held to the words it cleaned.** The per-capture
   cleanup and the structured and polished views store the model's text only
   when it shares at least `routing.MinCleanedWordShare` (0.5) of its words
@@ -146,13 +149,19 @@ items 18), measured through the same steps the worker runs.
   prompt") passes the one-word check and is appended to the person's own
   list, where they delete it; a sub-sequence check would refuse the garbling
   fixes and group names the prompt is asked for.
-- **A one-word item the model respelled is lost.** "Tomatoes" for
-  "tomatos", "Eggs" for "egg", "2" for "two", a transliteration, an
-  emoji-only item, a group heading the model coined ("Produce", its children
-  lifted): none shares a word with the recording, so the one-word check
-  drops it, and a reply of nothing but such items is the recording as one
-  item in its raw spelling (`injection-items-respelled.json`). A garbling
-  fix survives only inside an item with a second spoken word.
+- **A one-word item the model rewrote past a respelling is lost, and an
+  invented word two edits from a spoken one is kept.** "2" for "two", an
+  emoji-only item, a transliteration ("Ulli" for ഉള്ളി) or a translation
+  ("Leche" for "milk"), a group heading the model coined ("Produce", its
+  children lifted): none is within two edits of a spoken word, so the check
+  drops it and a reply of nothing but such items is the recording as one
+  item in its raw spelling. The transliteration and the translation drop on
+  purpose — `LanguageRule` forbids both, and the check compares in the
+  spoken script. The other way, a same-script cognate ("Tomate" for
+  "tomato") or any invented four-letter word two edits from a spoken one
+  ("Silk" beside "milk") passes as a respelling and lands on the person's
+  own list, visible and one tap from gone; three-letter words are never
+  respellings, because two edits reach too many words from three letters.
 - **A heavily respelled dictation is kept raw.** A Malayalam dictation whose
   every word Whisper respelled by a suffix shares 0.20 of its words with the
   model's cleanup and is refused for the raw transcript; the eval has no
