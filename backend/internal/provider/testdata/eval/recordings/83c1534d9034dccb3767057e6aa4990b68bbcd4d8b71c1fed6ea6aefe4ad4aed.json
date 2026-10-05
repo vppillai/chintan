@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"action\":\"new\",\"title\":\"Packing list for the weekend\",\"kind\":\"checklist\",\"confidence\":1,\"instruction_spans\":[]}",
+  "usage": {
+    "InputTokens": 1934,
+    "OutputTokens": 28
+  }
+}

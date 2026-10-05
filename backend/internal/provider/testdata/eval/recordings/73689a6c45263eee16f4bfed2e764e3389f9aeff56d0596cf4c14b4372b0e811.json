@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"items\":[{\"text\":\"Tomatos\"},{\"text\":\"Corriander\"}]}",
+  "usage": {
+    "InputTokens": 965,
+    "OutputTokens": 15
+  }
+}

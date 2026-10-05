@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"action\":\"new\",\"title\":\"Customer visits\",\"kind\":\"note\",\"confidence\":1,\"instruction_spans\":[{\"start_word\":0,\"end_word\":7}]}",
+  "usage": {
+    "InputTokens": 1951,
+    "OutputTokens": 33
+  }
+}

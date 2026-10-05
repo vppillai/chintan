@@ -1,6 +1,6 @@
 {
   "model": "MiniMax-M3",
-  "reply": "{\"items\":[{\"text\":\"A birthday card for Anu\"},{\"text\":\"Post it by Friday\"}]}",
+  "reply": "{\"items\":[{\"text\":\"Birthday card for Anu\"},{\"text\":\"Post it by Friday\"}]}",
   "usage": {
     "InputTokens": 971,
     "OutputTokens": 20

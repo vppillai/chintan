@@ -1,8 +1,0 @@
-{
-  "model": "MiniMax-M3",
-  "reply": "{\"action\":\"new\",\"title\":\"staging smoke\",\"kind\":\"note\",\"confidence\":1,\"instruction_spans\":[{\"start_word\":0,\"end_word\":3}]}",
-  "usage": {
-    "InputTokens": 1867,
-    "OutputTokens": 34
-  }
-}

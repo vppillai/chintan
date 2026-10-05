@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"action\":\"append\",\"note\":2,\"confidence\":1,\"instruction_spans\":[{\"start_word\":0,\"end_word\":4},{\"start_word\":5,\"end_word\":6}]}",
+  "usage": {
+    "InputTokens": 1932,
+    "OutputTokens": 39
+  }
+}

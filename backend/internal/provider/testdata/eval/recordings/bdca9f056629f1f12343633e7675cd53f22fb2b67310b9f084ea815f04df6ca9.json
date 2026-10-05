@@ -1,8 +1,0 @@
-{
-  "model": "MiniMax-M3",
-  "reply": "{\"items\":[{\"text\":\"Party\",\"children\":[{\"text\":\"Costco\",\"children\":[{\"text\":\"Plates\",\"children\":[{\"text\":\"Paper ones\",\"done\":true}]},{\"text\":\"Cups\"}]},{\"text\":\"Candles\"}]},{\"text\":\"Milk\"},{\"text\":\"Eggs\"},{\"text\":\"Call the plumber\"}]}",
-  "usage": {
-    "InputTokens": 1144,
-    "OutputTokens": 63
-  }
-}
