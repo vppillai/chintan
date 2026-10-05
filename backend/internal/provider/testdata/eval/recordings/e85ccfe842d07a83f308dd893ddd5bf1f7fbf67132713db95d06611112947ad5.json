@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"action\":\"new\",\"title\":\"Things to talk with Milos\",\"kind\":\"note\",\"confidence\":1,\"instruction_spans\":[{\"start_word\":0,\"end_word\":5}]}",
+  "usage": {
+    "InputTokens": 1781,
+    "OutputTokens": 37
+  }
+}

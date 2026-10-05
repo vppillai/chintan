@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"items\":[{\"text\":\"Party\",\"children\":[{\"text\":\"Plates\"},{\"text\":\"Cups\"},{\"text\":\"Napkins\"}]}]}",
+  "usage": {
+    "InputTokens": 951,
+    "OutputTokens": 27
+  }
+}

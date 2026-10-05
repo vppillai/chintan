@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"items\":[{\"text\":\"remove milk from the list\"}]}",
+  "usage": {
+    "InputTokens": 947,
+    "OutputTokens": 12
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "so basically what I want to do is I want to try and get the roofer to come before the monsoon starts because last time it was bad.",
+  "usage": {
+    "InputTokens": 370,
+    "OutputTokens": 30
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"action\":\"new\",\"title\":\"The dog is having his dinner\",\"kind\":\"note\",\"confidence\":0,\"instruction_spans\":[]}",
+  "usage": {
+    "InputTokens": 1769,
+    "OutputTokens": 27
+  }
+}

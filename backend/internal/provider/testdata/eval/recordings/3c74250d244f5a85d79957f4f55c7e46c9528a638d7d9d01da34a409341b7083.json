@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"items\":[{\"text\":\"Milk\"},{\"text\":\"Bread\"},{\"text\":\"Eggs\"},{\"text\":\"Hardware store\",\"children\":[{\"text\":\"A box of two inch screws\"},{\"text\":\"Wood glue\"}]},{\"text\":\"Call Anu about Saturday\"}]}",
+  "usage": {
+    "InputTokens": 992,
+    "OutputTokens": 48
+  }
+}

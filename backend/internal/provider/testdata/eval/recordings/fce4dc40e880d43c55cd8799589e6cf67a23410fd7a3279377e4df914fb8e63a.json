@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"items\":[{\"text\":\"Costco\",\"children\":[{\"text\":\"Paper towels\"},{\"text\":\"Chicken thighs\"},{\"text\":\"Olive oil\"}]},{\"text\":\"Indian store\",\"children\":[{\"text\":\"Curry leaves\"},{\"text\":\"Toor dal\"}]}]}",
+  "usage": {
+    "InputTokens": 965,
+    "OutputTokens": 49
+  }
+}

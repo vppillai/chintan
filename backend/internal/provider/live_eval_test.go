@@ -124,6 +124,7 @@ func runEval(t *testing.T, c *OpenAICleanup, replay bool) {
 					t.Fatalf("%s | ERROR %v", tc.Raw, err)
 				}
 				t.Logf("%s | %s", tc.Raw, out.Text)
+				unasserted(t, tc.Flaky, tc.KnownFailure)
 				checkText(t, "cleaned text", out.Text, tc.Contains, tc.Excludes)
 				if tc.Subsequence && !llm.VerifySubsequence(out.Text, tc.Raw) {
 					t.Errorf("cleaned text is not the transcript with words deleted")
@@ -210,6 +211,7 @@ func runEval(t *testing.T, c *OpenAICleanup, replay bool) {
 					t.Fatalf("%s | ERROR %v", tc.Question, err)
 				}
 				t.Logf("%s | grounded=%v sources=%v | %s", tc.Question, a.Grounded, a.Sources, a.Text)
+				unasserted(t, tc.Flaky, tc.KnownFailure)
 				if tc.Grounded != nil && a.Grounded != *tc.Grounded {
 					t.Errorf("grounded = %v, want %v", a.Grounded, *tc.Grounded)
 				}

@@ -1,0 +1,8 @@
+{
+  "model": "MiniMax-M3",
+  "reply": "{\"answer\": \"This is not in their notes.\", \"sources\": [], \"grounded\": false}",
+  "usage": {
+    "InputTokens": 652,
+    "OutputTokens": 21
+  }
+}

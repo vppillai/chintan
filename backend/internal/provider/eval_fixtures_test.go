@@ -161,6 +161,8 @@ type cleanupCase struct {
 	Subsequence   bool     `json:"subsequence"`
 	MaxWordsRatio float64  `json:"max_words_ratio"`
 	Script        string   `json:"script"`
+	Flaky         bool     `json:"flaky"`
+	KnownFailure  string   `json:"known_failure"`
 }
 
 // itemsCase: want is the tree as RenderItems writes it, two spaces before a
@@ -197,12 +199,14 @@ type tasksCase struct {
 }
 
 type askCase struct {
-	Question string   `json:"question"`
-	Comment  string   `json:"_note"`
-	Grounded *bool    `json:"grounded"`
-	Sources  []string `json:"sources"`
-	Contains []string `json:"contains"`
-	Excludes []string `json:"excludes"`
+	Question     string   `json:"question"`
+	Comment      string   `json:"_note"`
+	Grounded     *bool    `json:"grounded"`
+	Sources      []string `json:"sources"`
+	Contains     []string `json:"contains"`
+	Excludes     []string `json:"excludes"`
+	Flaky        bool     `json:"flaky"`
+	KnownFailure string   `json:"known_failure"`
 }
 
 func loadEvalFixtures(t *testing.T) evalFixtures {
