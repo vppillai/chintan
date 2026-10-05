@@ -521,6 +521,7 @@ type stage struct {
 // and runs whenever there is a note to read.
 var stages = []stage{
 	{name: "transcribe", skip: func(c *model.CaptureIndex) bool { return c.RawKey != "" }, run: (*captureRun).transcribe},
+	{name: "route", skip: func(c *model.CaptureIndex) bool { return c.NoteID != "" }, run: (*captureRun).route},
 }
 
 func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.CaptureIndex, error) {
@@ -540,19 +541,6 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 		return *capture, nil
 	}
 	tenantID := capture.UserID
-
-	if capture.NoteID == "" {
-		if capture.Status == model.StatusNeedsTarget {
-			// Nothing is written until the user picks a destination.
-			return *capture, nil
-		}
-		if err := p.route(ctx, tenantID, capture); err != nil {
-			return *capture, err
-		}
-		if capture.NoteID == "" {
-			return *capture, nil
-		}
-	}
 
 	note, err := p.destination(ctx, tenantID, capture.NoteID)
 	if errors.Is(err, repository.ErrNotFound) {

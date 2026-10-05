@@ -27,6 +27,14 @@ import (
 // Stage 2 — route
 // ---------------------------------------------------------------------------
 
+// route is the second stage, for a capture recorded with no destination:
+// the router's choice of note, or a new one, becomes NoteID, with the words
+// addressed to the app cut from the transcript at RoutedKey; a reply too
+// unsure to file parks the capture at needs_target, which ends the run.
+func (r *captureRun) route(ctx context.Context) error {
+	return r.p.route(ctx, r.tenantID, r.capture)
+}
+
 // stripInstructions removes a spoken app instruction from a capture that was
 // recorded into a note and so never reached routing.
 //
