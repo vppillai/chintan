@@ -470,3 +470,17 @@ Two backend PRs, each reviewed against the code and, for the prompts, against th
 **Two honest costs, both labelled in the fixtures and the history.** First, routing stability: the "name is a name" sentence made the tag case "file this under house" fall below the filing threshold; a reworded confidence rule restored it to three of three, but two other route cases now wobble once in three runs where they did not before, so route sits at 22 of 33 cases stable against 24 of 32. Nothing files into the wrong note; the cost is an occasional "which note?" ask that Move corrects. Second, a one-word item whose only word the model respelled or translated ("Tomatoes" for "tomatos") is now dropped in favour of the raw word; a fix survives when the item has a second spoken word. Both are on the list for the next prompt round, and the replay set is re-recorded so CI holds the current behaviour.
 
 **For you:** nothing new. The bundle rule, the Malayalam clips and the phone screen-lock check from earlier rounds still stand.
+
+## 5 Oct, evening — round 16: the last hardening items, route stability, ledger truth
+
+Four PRs, each reviewed against the code; the reviews drove a real app through the new local path and traced every moved line of the pipeline refactor.
+
+**Route stability and the respelling rule (#254).** With your session live, the routing prompt gained one worked example (an append of several things to a listed list, "things added are content, however many"); route went from 22 to 28 of 33 cases stable three of three, and the long-standing empty-content case is fixed. Tasks gained one parenthetical and its split case is restored. A one-word item the model respelled ("Tomatoes" for "tomatos") now survives when it is within two edits of a spoken word of four or more letters; a translated item still drops. Regressions stated: one tasks case and two route cases fell a pass each and are labelled. The replay set is re-recorded; 16 of 76 cases are unasserted in CI, down from 21.
+
+**The pipeline as stage objects (#253).** The worker's run is now a fifteen-line loop over a seven-entry stage table; the longest function fell from 321 lines to under 120 and the ceiling test holds everyone there. The review traced every non-moved line and found no change in which writes happen or in what order on any path, including every resume shape, which a new fourteen-row resume matrix now pins.
+
+**A local path without AWS (#252).** `scripts/dev/local.sh` starts the API and worker in one process on loopback over the in-memory store with a fake transcriber, the recorded model replies where they match, and a dev sign-in that the app's own PKCE flow accepts. The dev auth is a private type in that binary; the build script, a guard test and the dependency graph each keep it out of both Lambda binaries. The review's first run found the app could not complete sign-in (a missing CORS header on the token endpoint); fixed and confirmed in a real browser.
+
+**Ledger truth (#251).** Eleven rows finished in rounds 12 to 15 under new ids never had their old ids closed, so "Open, unowned" read sixteen when it was four. Correction rows close them.
+
+**For you:** nothing new. Still standing: the bundle rule, the Malayalam clips, the phone screen-lock check.
