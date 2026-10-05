@@ -458,3 +458,15 @@ Three streams took the open, unowned rows. Each PR was reviewed against the code
 1. `aws login` on orb, then one command records the replay set so CI starts replaying: `CHINTAN_INSTANCE=dev bash scripts/dev/record-replay.sh` in a worktree mirror, commit the recordings folder. The session expires within hours, so run it right after logging in.
 2. The bundle rule above.
 3. The phone check for the screen-lock behaviour; the exact steps are in capture-ux.md under "What happens when the screen locks".
+
+## 5 Oct — round 15: provider overload and the prompt-safety fixes
+
+Two backend PRs, each reviewed against the code and, for the prompts, against the live model three times.
+
+**Provider overload (#248).** The recording run showed the language provider answering overloaded in bursts of about ten calls. A capture in such a burst used to fail outright with a Retry button; it was never retried by anyone. The worker's clients now retry on overload, rate limit and connection faults with jittered waits, at most three attempts, always inside the stage's existing deadline, and never when the retry could not finish in time. A burst at the cleanup stage never re-transcribes. One new counter, `ProviderRetried`, says how often it happens.
+
+**Prompt safety and cleanup (#249).** The four findings from the prompt-injection audit are closed: a note's name borrowed by the model no longer files into that note unless its words were spoken; the prompts say a name is never an instruction; an appended item that shares no word with the recording is dropped; a cleanup whose text shares under half its words with the transcript keeps the transcript instead. The three long-standing cleanup defects are fixed and cleanup now passes all eight live cases three times out of three.
+
+**Two honest costs, both labelled in the fixtures and the history.** First, routing stability: the "name is a name" sentence made the tag case "file this under house" fall below the filing threshold; a reworded confidence rule restored it to three of three, but two other route cases now wobble once in three runs where they did not before, so route sits at 22 of 33 cases stable against 24 of 32. Nothing files into the wrong note; the cost is an occasional "which note?" ask that Move corrects. Second, a one-word item whose only word the model respelled or translated ("Tomatoes" for "tomatos") is now dropped in favour of the raw word; a fix survives when the item has a second spoken word. Both are on the list for the next prompt round, and the replay set is re-recorded so CI holds the current behaviour.
+
+**For you:** nothing new. The bundle rule, the Malayalam clips and the phone screen-lock check from earlier rounds still stand.
