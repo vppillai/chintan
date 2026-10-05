@@ -25,6 +25,19 @@ import (
 // Stage 3 — clean
 // ---------------------------------------------------------------------------
 
+// clean is the third stage: the cleanup for a plain note, the item
+// extraction for a checklist, or nothing when CleanKey says an earlier
+// attempt did it (cleanForNote, which keeps the rule because
+// regenerateCapture shares it). What it hands the append is the items a
+// checklist recording left the last time it was appended.
+func (r *captureRun) clean(ctx context.Context) error {
+	previous, err := r.p.cleanForNote(ctx, r.tenantID, r.capture, r.note)
+	if err == nil {
+		r.previousItems = previous
+	}
+	return err
+}
+
 // clean rewrites the transcript faithfully, or — for a verbatim note —
 // records the transcript itself as the cleaned text. README, the
 // OpenAPI document and the About screen promised that a verbatim note
@@ -270,23 +283,9 @@ func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *m
 	if err != nil {
 		return nil, fmt.Errorf("pipeline: clean key: %w", err)
 	}
-	if before, err := p.cfg.Objects.Get(ctx, cleanKey); err == nil && len(before) > 0 {
-		previous = strings.Split(string(before), "\n")
-		// Kept beside the artefact this call is about to overwrite, because
-		// the append that replaces these items can fail after it — an object
-		// store fault, a stamp wait that ran out — and the attempt that
-		// resumes at the append (run, regenerateCapture) has no other record
-		// of which lines are the recording's; without it the new items went
-		// in beside the old ones (review of #138).
-		prevKey, err := keys.CaptureCleanPrevious(tenantID, capture.ID)
-		if err != nil {
-			return nil, fmt.Errorf("pipeline: previous items key: %w", err)
-		}
-		if err := p.cfg.Objects.Put(ctx, prevKey, before, "text/plain"); err != nil {
-			return nil, fmt.Errorf("pipeline: keep previous items: %w", err)
-		}
-	} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
-		return nil, fmt.Errorf("pipeline: get previous items: %w", err)
+	previous, err = p.keepPreviousItems(ctx, tenantID, capture.ID, cleanKey)
+	if err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(transcript) == "" {
 		capture.Status = model.StatusNoContent
@@ -376,6 +375,31 @@ func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *m
 	capture.Status = model.StatusCleaned
 	capture.Error = ""
 	return previous, p.persist(ctx, capture)
+}
+
+// keepPreviousItems reads the items at cleanKey from the recording's last
+// append, nil when there are none, and keeps a copy beside the artefact
+// this call is about to overwrite, because the append that replaces these
+// items can fail after it — an object store fault, a stamp wait that ran
+// out — and the attempt that resumes at the append (run, regenerateCapture)
+// has no other record of which lines are the recording's; without it the
+// new items went in beside the old ones (review of #138).
+func (p *Pipeline) keepPreviousItems(ctx context.Context, tenantID, captureID, cleanKey string) ([]string, error) {
+	before, err := p.cfg.Objects.Get(ctx, cleanKey)
+	if errors.Is(err, repository.ErrNotFound) || (err == nil && len(before) == 0) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("pipeline: get previous items: %w", err)
+	}
+	prevKey, err := keys.CaptureCleanPrevious(tenantID, captureID)
+	if err != nil {
+		return nil, fmt.Errorf("pipeline: previous items key: %w", err)
+	}
+	if err := p.cfg.Objects.Put(ctx, prevKey, before, "text/plain"); err != nil {
+		return nil, fmt.Errorf("pipeline: keep previous items: %w", err)
+	}
+	return strings.Split(string(before), "\n"), nil
 }
 
 // errItemsAllInvented is the verdict on an items reply whose every item was

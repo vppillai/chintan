@@ -17,19 +17,22 @@ import (
 // a ceiling, not a ratchet: a function may grow up to it, and nothing here
 // notices one shrinking. Function literals (closures, the handlers in a var
 // block such as cmd/worker's scheduled) are not counted, only declarations.
-// Set just above the largest function at the time it was added (route, 193
-// lines; CleanNote 167; transcribe 166), so the line holds and the next gate
-// added to a stage function is written beside it, as transcriptOutcome and
-// tickSafety were (review 2026-10-01, BE-6, PR9-6). Lower it as those
-// shrink; raising it wants a reason in the commit.
-const functionLineCeiling = 195
+// Set at what the stage refactor achieved (review 2026-10-01, BE-6, PR9-6;
+// PR16-12): the pipeline's longest are clean at 115, CleanNote 111,
+// replaceChecklistItems 111, runCapture and Ask 109, extractItems 106, and
+// the next gate added to a stage function is written beside it, as
+// transcriptOutcome and tickSafety were. Lower it as those shrink; raising
+// it wants a reason in the commit.
+const functionLineCeiling = 120
 
 // functionLineAllowlist names the functions already past the ceiling, each
 // with the length it had when listed, so growth past that is still caught.
-// runReconcile is the chintanctl scan with its six classifications inline
-// (321 lines, unchanged since 2026-09-30); a later round lifts them out.
+// Three outside the pipeline were over it when the ceiling came down; each
+// is a split for the round that next edits its package.
 var functionLineAllowlist = map[string]int{
-	"cmd/chintanctl/reconcile.go:runReconcile": 321,
+	"internal/service/capture_move.go:moveInto": 152,
+	"internal/handler/errors.go:fail":           123,
+	"cmd/chintanctl/restore.go:runRestore":      123,
 }
 
 // TestNoFunctionOutgrowsTheCeiling reads every non-test Go file under

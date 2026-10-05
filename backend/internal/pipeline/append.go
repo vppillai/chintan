@@ -23,6 +23,14 @@ import (
 // Stage 4 — append
 // ---------------------------------------------------------------------------
 
+// append is the last stage: the cleaned text into the note, exactly once,
+// and the capture marked appended. A capture's own run asks for the
+// cleaned view to follow (autoClean); a regeneration does not.
+func (r *captureRun) append(ctx context.Context) error {
+	_, err := r.p.append(ctx, r.tenantID, r.capture, r.note, appendOptions{autoClean: true, previousItems: r.previousItems})
+	return err
+}
+
 // appendOptions is what differs between a capture's own run and a
 // regeneration of its note (regenerate.go).
 type appendOptions struct {
@@ -44,26 +52,9 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 		return *capture, err
 	}
 
-	cleanBytes, err := p.cfg.Objects.Get(ctx, capture.CleanKey)
+	cleanedText, items, err := p.appendText(ctx, capture, note)
 	if err != nil {
-		return *capture, fmt.Errorf("pipeline: get clean text: %w", err)
-	}
-	cleanedText := string(cleanBytes)
-	// items is the recording's tree for a checklist, nil for a plain note:
-	// what the first append merges into the lines the list already has
-	// (mergeChecklistItems) before the rest goes under the marker.
-	var items []cleanup.Item
-	if note.Kind == model.NoteKindChecklist {
-		// One line per item the extraction returned, a sub-item indented
-		// under its parent, all under this one marker, so deleting or moving
-		// the recording cuts exactly its items. A verbatim checklist skipped
-		// the extraction and the cleaned text is the recording as spoken:
-		// one item however it was line-broken.
-		if note.Verbatim {
-			cleanedText = strings.Join(strings.Fields(cleanedText), " ")
-		}
-		items = cleanup.ItemsFromLines(cleanedText)
-		cleanedText = checklistItems(cleanedText)
+		return *capture, err
 	}
 
 	// The append is the one step that must happen exactly once. Append, index
@@ -117,55 +108,7 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 		}
 	}
 	if !claimed {
-		*capture = current
-		if current.AppendedAt != 0 {
-			// An earlier attempt finished it. This one must not write the
-			// text a second time.
-			return current, nil
-		}
-		if current.AppendToken != token {
-			// Another attempt, with another cleaned artefact, owns this
-			// append and has not finished: concede to it as every other
-			// lost write of the row concedes, rather than returning a
-			// pending status as if it were done.
-			obs.Log(ctx).Info("append claim is held by another attempt; leaving the capture to it",
-				slog.String("note_id", note.ID))
-			return current, errDeliveryConceded
-		}
-
-		// Our own token, unfinished, inside the lease. Either the earlier
-		// attempt is still running, or it died after taking the claim; from
-		// here the two look the same, and the paragraph under the marker is
-		// what tells them apart.
-		//
-		// If this attempt's text is in the note body the dangerous part is
-		// over, whoever did it: finishing the bookkeeping is idempotent (the
-		// index refresh re-derives from the body, the completion is a
-		// versioned write on the same token), so do it now rather than wait
-		// for the lease. This is the case a Lambda retry a minute later
-		// actually meets — the paragraph was written and the worker died
-		// before marking the capture appended.
-		//
-		// Otherwise fail the invocation. Conceding here would leave the capture
-		// in `appending` with nothing left to finish it; appending would race a
-		// holder that may still be about to write. Lambda's automatic retries
-		// at about one and two minutes both fall inside the twenty-minute
-		// lease, so an attempt that died between claiming and writing — a
-		// window of one object read and one write — dead-letters and raises
-		// the alarm, and the user's retry after the lease takes the claim over
-		// and does the append once.
-		if written, err := p.paragraphInNote(ctx, note.S3MarkdownKey, capture.ID, cleanedText, opts.previousItems, items); err != nil {
-			return current, fmt.Errorf("pipeline: check note for interrupted append: %w", err)
-		} else if written {
-			obs.Log(ctx).Info("append claim is held but the capture's paragraph is already in the note; finishing the interrupted attempt",
-				slog.String("note_id", note.ID))
-			obs.Count(ctx, "AppendResumedWithoutRewriting", map[string]string{"Stage": string(service.StatusAppending)})
-			return p.finishAppend(ctx, tenantID, capture, note, token, opts.autoClean)
-		}
-		return current, fmt.Errorf("pipeline: append claim for this capture is still held by an "+
-			"unfinished attempt (claimed %s ago, lease %s): %w",
-			time.Since(time.Unix(current.AppendClaimedAt, 0)).Round(time.Second),
-			repository.AppendClaimLease, errAppendClaimHeld)
+		return p.appendClaimRefused(ctx, tenantID, capture, note, token, cleanedText, items, opts, current)
 	}
 	*capture = current
 
@@ -200,6 +143,88 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 	}
 
 	return p.finishAppend(ctx, tenantID, capture, note, token, opts.autoClean)
+}
+
+// appendText is what the append writes: the cleaned text, and for a
+// checklist the recording's item tree, nil for a plain note — what the first
+// append merges into the lines the list already has (mergeChecklistItems)
+// before the rest goes under the marker.
+func (p *Pipeline) appendText(ctx context.Context, capture *model.CaptureIndex, note model.NoteIndex) (string, []cleanup.Item, error) {
+	cleanBytes, err := p.cfg.Objects.Get(ctx, capture.CleanKey)
+	if err != nil {
+		return "", nil, fmt.Errorf("pipeline: get clean text: %w", err)
+	}
+	cleanedText := string(cleanBytes)
+	var items []cleanup.Item
+	if note.Kind == model.NoteKindChecklist {
+		// One line per item the extraction returned, a sub-item indented
+		// under its parent, all under this one marker, so deleting or moving
+		// the recording cuts exactly its items. A verbatim checklist skipped
+		// the extraction and the cleaned text is the recording as spoken:
+		// one item however it was line-broken.
+		if note.Verbatim {
+			cleanedText = strings.Join(strings.Fields(cleanedText), " ")
+		}
+		items = cleanup.ItemsFromLines(cleanedText)
+		cleanedText = checklistItems(cleanedText)
+	}
+	return cleanedText, items, nil
+}
+
+// appendClaimRefused is the append when the claim was not taken: finished
+// by an earlier attempt, held by another, or held by this attempt's own
+// token with the paragraph written or not. current is the row the claim
+// returned.
+func (p *Pipeline) appendClaimRefused(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex, token, cleanedText string, items []cleanup.Item, opts appendOptions, current model.CaptureIndex) (model.CaptureIndex, error) {
+	*capture = current
+	if current.AppendedAt != 0 {
+		// An earlier attempt finished it. This one must not write the
+		// text a second time.
+		return current, nil
+	}
+	if current.AppendToken != token {
+		// Another attempt, with another cleaned artefact, owns this
+		// append and has not finished: concede to it as every other
+		// lost write of the row concedes, rather than returning a
+		// pending status as if it were done.
+		obs.Log(ctx).Info("append claim is held by another attempt; leaving the capture to it",
+			slog.String("note_id", note.ID))
+		return current, errDeliveryConceded
+	}
+
+	// Our own token, unfinished, inside the lease. Either the earlier
+	// attempt is still running, or it died after taking the claim; from
+	// here the two look the same, and the paragraph under the marker is
+	// what tells them apart.
+	//
+	// If this attempt's text is in the note body the dangerous part is
+	// over, whoever did it: finishing the bookkeeping is idempotent (the
+	// index refresh re-derives from the body, the completion is a
+	// versioned write on the same token), so do it now rather than wait
+	// for the lease. This is the case a Lambda retry a minute later
+	// actually meets — the paragraph was written and the worker died
+	// before marking the capture appended.
+	//
+	// Otherwise fail the invocation. Conceding here would leave the capture
+	// in `appending` with nothing left to finish it; appending would race a
+	// holder that may still be about to write. Lambda's automatic retries
+	// at about one and two minutes both fall inside the twenty-minute
+	// lease, so an attempt that died between claiming and writing — a
+	// window of one object read and one write — dead-letters and raises
+	// the alarm, and the user's retry after the lease takes the claim over
+	// and does the append once.
+	if written, err := p.paragraphInNote(ctx, note.S3MarkdownKey, capture.ID, cleanedText, opts.previousItems, items); err != nil {
+		return current, fmt.Errorf("pipeline: check note for interrupted append: %w", err)
+	} else if written {
+		obs.Log(ctx).Info("append claim is held but the capture's paragraph is already in the note; finishing the interrupted attempt",
+			slog.String("note_id", note.ID))
+		obs.Count(ctx, "AppendResumedWithoutRewriting", map[string]string{"Stage": string(service.StatusAppending)})
+		return p.finishAppend(ctx, tenantID, capture, note, token, opts.autoClean)
+	}
+	return current, fmt.Errorf("pipeline: append claim for this capture is still held by an "+
+		"unfinished attempt (claimed %s ago, lease %s): %w",
+		time.Since(time.Unix(current.AppendClaimedAt, 0)).Round(time.Second),
+		repository.AppendClaimLease, errAppendClaimHeld)
 }
 
 // defaultAppendStampWait bounds how long one append waits for another

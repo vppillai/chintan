@@ -24,6 +24,40 @@ import (
 // Stage 1 — transcribe
 // ---------------------------------------------------------------------------
 
+// transcribe is the first stage: the recording to its transcript at RawKey,
+// in the destination's language when the capture has one, else the tenant's
+// default.
+func (r *captureRun) transcribe(ctx context.Context) error {
+	return r.p.transcribe(ctx, r.tenantID, r.capture)
+}
+
+// retranscribe is the transcribe stage once more, for a capture whose
+// destination was not known when the recording was transcribed (it was
+// routed, or a person chose it afterwards) and asks for another language:
+// the transcript is in the tenant's default and the note's "Transcription
+// language" was never applied — a Malayalam dictation aimed by voice at an
+// ml note went to Whisper as auto and came back in Tamil script (review
+// 2026-09-21, T2). Transcribing once more in the note's language is the
+// promise that field makes; it costs one more STT call only in the mismatch
+// case. The routed text goes too, so
+// the instruction strip runs over the new transcript with the destination
+// pinned. Language is written with RawKey, so a retry that finds the second
+// transcript does not make a third; CleanKey skips the stage altogether.
+func (r *captureRun) retranscribe(ctx context.Context) error {
+	capture, note := r.capture, r.note
+	if !wantsNoteLanguage(*capture, note) {
+		return nil
+	}
+	obs.Log(ctx).Info("destination note asks for another language; transcribing again",
+		slog.String("capture_id", capture.ID),
+		slog.String("note_id", note.ID),
+		slog.String("language_sent", capture.Language),
+		slog.String("language_wanted", note.Language))
+	obs.Count(ctx, "CaptureRetranscribedForNote", nil)
+	capture.RawKey, capture.SegmentsKey, capture.RoutedKey = "", "", ""
+	return r.p.transcribe(ctx, r.tenantID, capture)
+}
+
 func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *model.CaptureIndex) error {
 	if err := p.setStatus(ctx, capture, service.StatusTranscribing); err != nil {
 		return err
@@ -57,14 +91,6 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		return fmt.Errorf("pipeline: presign audio: %w", err)
 	}
 
-	// Estimating from the recorder's own measurement keeps the reservation honest
-	// before the provider has told us anything. Whatever it says afterwards
-	// reconciles it.
-	estimateSeconds := float64(capture.DurationMS) / 1000
-	if estimateSeconds <= 0 {
-		estimateSeconds = defaultAudioSecondsEstimate
-	}
-
 	language, err := p.transcriptionLanguage(ctx, tenantID, capture)
 	if err != nil {
 		return err
@@ -77,70 +103,15 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 
 	hints := p.spellingHints(ctx, tenantID, capture)
 
-	var result provider.Transcription
-	_, err = p.cfg.Breaker.Do(ctx, breaker.Estimate{
-		Provider: p.cfg.STTProvider,
-		Model:    p.cfg.STTModel,
-		Op:       meter.OpTranscribe,
-		Usage:    meter.Quantities{meter.UnitAudioSeconds: estimateSeconds},
-		TenantID: tenantID,
-	}, func(ctx context.Context) (breaker.Result, error) {
-		// The deadline applies to the provider call only, as in routeOnce:
-		// breaker.Do releases the reservation on the caller's context, which
-		// is still live when this one has expired.
-		stageCtx, cancel := context.WithTimeout(ctx, p.cfg.TranscribeTimeout)
-		defer cancel()
-		out, err := p.cfg.STT.Transcribe(stageCtx, provider.Audio{
-			URL:         audioURL,
-			ContentType: contentTypeForAudioKey(capture.AudioKey),
-			Language:    sent,
-			Hints:       hints,
-		})
-		if err != nil {
-			return breaker.Result{}, err
-		}
-		result = out
-		return breaker.Result{Usage: meter.Quantities{meter.UnitAudioSeconds: out.Duration}}, nil
-	})
+	result, err := p.transcribeAudio(ctx, tenantID, capture, audioURL, sent, hints)
 	if err != nil {
 		return p.handleProviderError(ctx, capture, "transcribe", err)
 	}
 
-	rawKey, err := keys.CaptureRaw(tenantID, capture.ID)
-	if err != nil {
-		return fmt.Errorf("pipeline: raw key: %w", err)
-	}
 	verdict := transcriptOutcome(result, hints, capture.SkipGates)
-	segmentsKey := ""
-	var segments []byte
-	if !verdict.echoed && (len(result.Segments) > 0 || len(result.Words) > 0) {
-		segments, err = json.Marshal(newTranscriptDocument(result))
-		if err != nil {
-			return fmt.Errorf("pipeline: encode segments: %w", err)
-		}
-		segmentsKey, err = keys.CaptureSegments(tenantID, capture.ID)
-		if err != nil {
-			return fmt.Errorf("pipeline: segments key: %w", err)
-		}
-	}
-	// The two objects are independent, so they are written side by side
-	// rather than one round trip after the other (R7-16a). Either failing
-	// fails the stage, and the retry writes both again.
-	segmentsDone := make(chan error, 1)
-	go func() {
-		if segmentsKey == "" {
-			segmentsDone <- nil
-			return
-		}
-		segmentsDone <- p.cfg.Objects.Put(ctx, segmentsKey, segments, "application/json")
-	}()
-	rawErr := p.cfg.Objects.Put(ctx, rawKey, []byte(result.Text), "text/plain")
-	segmentsErr := <-segmentsDone
-	if rawErr != nil {
-		return fmt.Errorf("pipeline: store raw text: %w", rawErr)
-	}
-	if segmentsErr != nil {
-		return fmt.Errorf("pipeline: store segments: %w", segmentsErr)
+	rawKey, segmentsKey, err := p.storeTranscript(ctx, tenantID, capture, result, verdict.echoed)
+	if err != nil {
+		return err
 	}
 	if verdict.echoed {
 		// The transcript is kept, nothing else of it is: no segments, no
@@ -154,42 +125,7 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		return p.persist(ctx, capture)
 	}
 
-	// Shape, never content. The shape is taken on its own line so the
-	// log-hygiene check, which reads an emitter's argument list for anything
-	// that names user content, sees only the summary being logged.
-	rawShape := obs.Redact(result.Text)
-	// Both languages are metadata, not content: the code this worker sent and
-	// the name Whisper answered with. Sixteen days of prod logs could not say
-	// whether Malayalam was being transcribed as Tamil until these two fields
-	// existed (review 2026-09-21, T10).
-	attrs := []any{
-		slog.String("capture_id", capture.ID),
-		slog.Int64("duration_ms", result.DurationMS()),
-		slog.Int("segments", len(result.Segments)),
-		slog.String("language_sent", language),
-		slog.String("language_detected", result.Language),
-		slog.String("gate", verdict.gate),
-		slog.Any("raw", rawShape),
-	}
-	if capture.Peak != nil {
-		attrs = append(attrs, slog.Float64("peak", *capture.Peak))
-	}
-	if len(result.Segments) > 0 {
-		// The silence gate's inputs, as numbers: when three seconds of
-		// silence filed "Thank you." the log could not say which test it
-		// passed (R7-10d). The least silent segment decides the gate; the
-		// compression ratio is logged for the next tuning, not read.
-		noSpeechMin, logprobMax, ratioMax := result.Segments[0].NoSpeechProb, result.Segments[0].AvgLogprob, result.Segments[0].CompressionRatio
-		for _, s := range result.Segments[1:] {
-			noSpeechMin, logprobMax, ratioMax = min(noSpeechMin, s.NoSpeechProb), max(logprobMax, s.AvgLogprob), max(ratioMax, s.CompressionRatio)
-		}
-		attrs = append(attrs,
-			slog.Float64("no_speech_prob_min", noSpeechMin),
-			slog.Float64("avg_logprob_max", logprobMax),
-			slog.Float64("compression_ratio_max", ratioMax))
-	}
-	obs.Log(ctx).Info("transcribed capture", attrs...)
-	obs.Count(ctx, "TranscribedLanguage", map[string]string{"Outcome": languageOutcome(sent, result.Language)})
+	logTranscribed(ctx, capture, result, language, sent, verdict.gate)
 
 	capture.RawKey = rawKey
 	// The cleaned text replaces this at the clean; until then the transcript
@@ -215,6 +151,128 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	// the instruction strip's model call before the cleanup's status write,
 	// so the transcript is recorded now rather than left for that write.
 	return p.persist(ctx, capture)
+}
+
+// transcribeAudio is the provider call: the recording at audioURL, in the
+// language sent ("" for the provider's own detection), with the spelling
+// hints, through the breaker under the stage's deadline.
+func (p *Pipeline) transcribeAudio(ctx context.Context, tenantID string, capture *model.CaptureIndex, audioURL, sent string, hints []string) (provider.Transcription, error) {
+	// Estimating from the recorder's own measurement keeps the reservation honest
+	// before the provider has told us anything. Whatever it says afterwards
+	// reconciles it.
+	estimateSeconds := float64(capture.DurationMS) / 1000
+	if estimateSeconds <= 0 {
+		estimateSeconds = defaultAudioSecondsEstimate
+	}
+
+	var result provider.Transcription
+	_, err := p.cfg.Breaker.Do(ctx, breaker.Estimate{
+		Provider: p.cfg.STTProvider,
+		Model:    p.cfg.STTModel,
+		Op:       meter.OpTranscribe,
+		Usage:    meter.Quantities{meter.UnitAudioSeconds: estimateSeconds},
+		TenantID: tenantID,
+	}, func(ctx context.Context) (breaker.Result, error) {
+		// The deadline applies to the provider call only, as in routeOnce:
+		// breaker.Do releases the reservation on the caller's context, which
+		// is still live when this one has expired.
+		stageCtx, cancel := context.WithTimeout(ctx, p.cfg.TranscribeTimeout)
+		defer cancel()
+		out, err := p.cfg.STT.Transcribe(stageCtx, provider.Audio{
+			URL:         audioURL,
+			ContentType: contentTypeForAudioKey(capture.AudioKey),
+			Language:    sent,
+			Hints:       hints,
+		})
+		if err != nil {
+			return breaker.Result{}, err
+		}
+		result = out
+		return breaker.Result{Usage: meter.Quantities{meter.UnitAudioSeconds: out.Duration}}, nil
+	})
+	return result, err
+}
+
+// storeTranscript writes the transcript at the raw key and, unless the
+// transcript is the hint echo (echoed), the segments document beside it,
+// and returns both keys ("" for no segments).
+func (p *Pipeline) storeTranscript(ctx context.Context, tenantID string, capture *model.CaptureIndex, result provider.Transcription, echoed bool) (rawKey, segmentsKey string, err error) {
+	rawKey, err = keys.CaptureRaw(tenantID, capture.ID)
+	if err != nil {
+		return "", "", fmt.Errorf("pipeline: raw key: %w", err)
+	}
+	var segments []byte
+	if !echoed && (len(result.Segments) > 0 || len(result.Words) > 0) {
+		segments, err = json.Marshal(newTranscriptDocument(result))
+		if err != nil {
+			return "", "", fmt.Errorf("pipeline: encode segments: %w", err)
+		}
+		segmentsKey, err = keys.CaptureSegments(tenantID, capture.ID)
+		if err != nil {
+			return "", "", fmt.Errorf("pipeline: segments key: %w", err)
+		}
+	}
+	// The two objects are independent, so they are written side by side
+	// rather than one round trip after the other (R7-16a). Either failing
+	// fails the stage, and the retry writes both again.
+	segmentsDone := make(chan error, 1)
+	go func() {
+		if segmentsKey == "" {
+			segmentsDone <- nil
+			return
+		}
+		segmentsDone <- p.cfg.Objects.Put(ctx, segmentsKey, segments, "application/json")
+	}()
+	rawErr := p.cfg.Objects.Put(ctx, rawKey, []byte(result.Text), "text/plain")
+	segmentsErr := <-segmentsDone
+	if rawErr != nil {
+		return "", "", fmt.Errorf("pipeline: store raw text: %w", rawErr)
+	}
+	if segmentsErr != nil {
+		return "", "", fmt.Errorf("pipeline: store segments: %w", segmentsErr)
+	}
+	return rawKey, segmentsKey, nil
+}
+
+// logTranscribed writes the one line a transcribed capture gets and counts
+// the language outcome. Shape, never content.
+func logTranscribed(ctx context.Context, capture *model.CaptureIndex, result provider.Transcription, language, sent, gate string) {
+	// The shape is taken on its own line so the log-hygiene check, which
+	// reads an emitter's argument list for anything that names user
+	// content, sees only the summary being logged.
+	rawShape := obs.Redact(result.Text)
+	// Both languages are metadata, not content: the code this worker sent and
+	// the name Whisper answered with. Sixteen days of prod logs could not say
+	// whether Malayalam was being transcribed as Tamil until these two fields
+	// existed (review 2026-09-21, T10).
+	attrs := []any{
+		slog.String("capture_id", capture.ID),
+		slog.Int64("duration_ms", result.DurationMS()),
+		slog.Int("segments", len(result.Segments)),
+		slog.String("language_sent", language),
+		slog.String("language_detected", result.Language),
+		slog.String("gate", gate),
+		slog.Any("raw", rawShape),
+	}
+	if capture.Peak != nil {
+		attrs = append(attrs, slog.Float64("peak", *capture.Peak))
+	}
+	if len(result.Segments) > 0 {
+		// The silence gate's inputs, as numbers: when three seconds of
+		// silence filed "Thank you." the log could not say which test it
+		// passed (R7-10d). The least silent segment decides the gate; the
+		// compression ratio is logged for the next tuning, not read.
+		noSpeechMin, logprobMax, ratioMax := result.Segments[0].NoSpeechProb, result.Segments[0].AvgLogprob, result.Segments[0].CompressionRatio
+		for _, s := range result.Segments[1:] {
+			noSpeechMin, logprobMax, ratioMax = min(noSpeechMin, s.NoSpeechProb), max(logprobMax, s.AvgLogprob), max(ratioMax, s.CompressionRatio)
+		}
+		attrs = append(attrs,
+			slog.Float64("no_speech_prob_min", noSpeechMin),
+			slog.Float64("avg_logprob_max", logprobMax),
+			slog.Float64("compression_ratio_max", ratioMax))
+	}
+	obs.Log(ctx).Info("transcribed capture", attrs...)
+	obs.Count(ctx, "TranscribedLanguage", map[string]string{"Outcome": languageOutcome(sent, result.Language)})
 }
 
 // transcriptVerdict is what transcriptOutcome decides from the provider's

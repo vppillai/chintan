@@ -27,6 +27,32 @@ import (
 // Stage 2 — route
 // ---------------------------------------------------------------------------
 
+// route is the second stage, for a capture recorded with no destination:
+// the router's choice of note, or a new one, becomes NoteID, with the words
+// addressed to the app cut from the transcript at RoutedKey; a reply too
+// unsure to file parks the capture at needs_target, which ends the run.
+func (r *captureRun) route(ctx context.Context) error {
+	return r.p.route(ctx, r.tenantID, r.capture)
+}
+
+// strip is routing's share of a capture recorded into a note: routing — and
+// with it the removal of the words addressed to the app — was skipped, so
+// stripInstructions runs once the destination is known. A checklist is not
+// stripped: its items come from the raw transcript, and the extraction
+// prompt handles the words addressed to the app itself, so neither the
+// router's spans nor this strip is consulted — the item is not at the mercy
+// of where a span ended ("Add umbrella to shopping list" routed as the item
+// "list", owner feedback 2026-09-26). A verbatim checklist takes the raw transcript itself as its one
+// item, on the routed path as on the targeted one; the routed text would
+// carry the same span damage. A routed text already on the row is the
+// router's own, or an earlier attempt's, and stands.
+func (r *captureRun) strip(ctx context.Context) error {
+	if r.note.Kind == model.NoteKindChecklist || r.capture.RoutedKey != "" {
+		return nil
+	}
+	return r.p.stripInstructions(ctx, r.tenantID, r.capture, r.note)
+}
+
 // stripInstructions removes a spoken app instruction from a capture that was
 // recorded into a note and so never reached routing.
 //
@@ -125,7 +151,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	if !decided {
 		outcome = outcomeNew
 	}
-	finish := func(outcome string) error {
+	finish := func(decision provider.RouteDecision, matchedBy, outcome string) error {
 		if decided {
 			logRoutingDecision(ctx, capture.ID, decision, matchedBy, outcome, r.candidates, transcript, sourceDim(capture.Source))
 		}
@@ -145,41 +171,63 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	capture.RouteConfidence = decision.Confidence
 
 	if outcome == outcomeAppend || outcome == outcomeNeedsTarget {
-		// Falling through to "make a new note" is only correct for an answer, not
-		// for a failure to get one. A throttle or a 5xx on this read used to be
-		// indistinguishable from ErrNotFound, so a transient DynamoDB fault
-		// started a second note on the subject the user has been dictating into
-		// all week — silently, unretried, and with the two halves of the thought
-		// now in different notes. The invocation is worth retrying; a duplicate
-		// note is not worth creating.
-		note, err := p.getNote(ctx, tenantID, decision.NoteID)
-		switch {
-		case err == nil && service.NoteIsActive(note):
-			if outcome == outcomeAppend {
-				capture.NoteID = decision.NoteID
-				capture.TargetSource = model.TargetSourceRouter
-				capture.Status = model.StatusTranscribed
-				return finish(outcomeAppend)
-			}
-			// Plausible but unsure: ask before writing into an existing note.
-			capture.SuggestedNoteID = decision.NoteID
-			capture.Status = model.StatusNeedsTarget
-			return finish(outcomeNeedsTarget)
-		case err == nil:
-			obs.Log(ctx).Info("routed note is archived; keeping the dictation in a new note",
-				slog.String("capture_id", capture.ID),
-				slog.String("note_id", decision.NoteID))
-			outcome = outcomeNewAfterMissing
-		case errors.Is(err, repository.ErrNotFound):
-			obs.Log(ctx).Info("routed note no longer exists; keeping the dictation in a new note",
-				slog.String("capture_id", capture.ID),
-				slog.String("note_id", decision.NoteID))
-			outcome = outcomeNewAfterMissing
-		default:
-			return fmt.Errorf("pipeline: get routed note %s: %w", decision.NoteID, err)
+		filed, next, err := p.routeToExisting(ctx, tenantID, capture, decision, matchedBy, outcome, finish)
+		if err != nil || filed {
+			return err
 		}
+		outcome = next
 	}
+	return p.routeToNewNote(ctx, tenantID, capture, decision, transcript, matchedBy, outcome, finish)
+}
 
+// routeFinish writes the decision line, for a reply the router gave, and
+// persists the row: route's last call on every branch.
+type routeFinish func(decision provider.RouteDecision, matchedBy, outcome string) error
+
+// routeToExisting files the capture into the note the decision names, or
+// asks first when the reply was unsure (outcomeNeedsTarget). filed is false
+// when the note is archived or gone: the caller starts a new note, logged
+// as next (outcomeNewAfterMissing).
+func (p *Pipeline) routeToExisting(ctx context.Context, tenantID string, capture *model.CaptureIndex, decision provider.RouteDecision, matchedBy, outcome string, finish routeFinish) (filed bool, next string, err error) {
+	// Falling through to "make a new note" is only correct for an answer, not
+	// for a failure to get one. A throttle or a 5xx on this read used to be
+	// indistinguishable from ErrNotFound, so a transient DynamoDB fault
+	// started a second note on the subject the user has been dictating into
+	// all week — silently, unretried, and with the two halves of the thought
+	// now in different notes. The invocation is worth retrying; a duplicate
+	// note is not worth creating.
+	note, err := p.getNote(ctx, tenantID, decision.NoteID)
+	switch {
+	case err == nil && service.NoteIsActive(note):
+		if outcome == outcomeAppend {
+			capture.NoteID = decision.NoteID
+			capture.TargetSource = model.TargetSourceRouter
+			capture.Status = model.StatusTranscribed
+			return true, "", finish(decision, matchedBy, outcomeAppend)
+		}
+		// Plausible but unsure: ask before writing into an existing note.
+		capture.SuggestedNoteID = decision.NoteID
+		capture.Status = model.StatusNeedsTarget
+		return true, "", finish(decision, matchedBy, outcomeNeedsTarget)
+	case err == nil:
+		obs.Log(ctx).Info("routed note is archived; keeping the dictation in a new note",
+			slog.String("capture_id", capture.ID),
+			slog.String("note_id", decision.NoteID))
+		return false, outcomeNewAfterMissing, nil
+	case errors.Is(err, repository.ErrNotFound):
+		obs.Log(ctx).Info("routed note no longer exists; keeping the dictation in a new note",
+			slog.String("capture_id", capture.ID),
+			slog.String("note_id", decision.NoteID))
+		return false, outcomeNewAfterMissing, nil
+	default:
+		return false, "", fmt.Errorf("pipeline: get routed note %s: %w", decision.NoteID, err)
+	}
+}
+
+// routeToNewNote starts the note the decision describes — or parks the
+// capture with the title it would have had when the pipeline cannot create
+// notes, or files it into a sibling capture's note that appeared meanwhile.
+func (p *Pipeline) routeToNewNote(ctx context.Context, tenantID string, capture *model.CaptureIndex, decision provider.RouteDecision, transcript, matchedBy, outcome string, finish routeFinish) error {
 	// The provider sanitised the model's title already; the fake routers and
 	// the fallback did not, and the function is idempotent.
 	title := routing.SanitizeTitle(decision.Title)
@@ -189,7 +237,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	if p.cfg.Notes == nil {
 		capture.SuggestedTitle = title
 		capture.Status = model.StatusNeedsTarget
-		return finish(outcomeNeedsTarget)
+		return finish(decision, matchedBy, outcomeNeedsTarget)
 	}
 
 	// The candidate list was read before the model call, and the ring posts
@@ -214,7 +262,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 		capture.RouteConfidence = decision.Confidence
 		capture.TargetSource = model.TargetSourceRouter
 		capture.Status = model.StatusTranscribed
-		return finish(outcomeDeduped)
+		return finish(decision, matchedBy, outcomeDeduped)
 	}
 
 	spec := model.NoteIndex{ID: service.RoutedNoteID(capture.ID), Title: title}
@@ -257,7 +305,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 			slog.String("note_id", note.ID))
 		capture.SuggestedTitle = title
 		capture.Status = model.StatusNeedsTarget
-		return finish(outcomeNeedsTarget)
+		return finish(decision, matchedBy, outcomeNeedsTarget)
 	}
 	// One count per new note says how often the model answers "checklist"
 	// in production, which the eval battery only samples.
@@ -270,7 +318,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	capture.CreatedNote = true
 	capture.TargetSource = model.TargetSourceRouter
 	capture.Status = model.StatusTranscribed
-	return finish(outcome)
+	return finish(decision, matchedBy, outcome)
 }
 
 // errRouteCandidates marks a routing failure that happened before the router

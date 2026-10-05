@@ -240,230 +240,294 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 	repairs := func(kind string) bool { return len(only) == 0 || slices.Contains(only, kind) }
 
 	for _, tenantID := range tenants {
-		tctx := obs.WithTenant(ctx, tenantID)
-
-		// The raw rows that predate attribute promotion, kept by sort key so
-		// the repair can rewrite exactly what it read. Judged on the row, not
-		// the decoded model: the model cannot say whether note_id was promoted
-		// or recovered from the blob.
-		legacy := map[string]Item{}
-		idx, err := buildIndex(tctx, e.Part, tenantID, func(it Item) error {
-			sk := it.SK()
-			switch {
-			case strings.HasPrefix(sk, "NOTE#") && !hasAttr(it, "note_id"):
-				legacy[sk] = it
-			case strings.HasPrefix(sk, "CAPTURE#") && !hasAttr(it, "gsi1pk"):
-				legacy[sk] = it
-			}
-			return nil
-		})
-		if err != nil {
+		if err := reconcileTenant(ctx, e, tenantID, repairs, res); err != nil {
 			return nil, err
 		}
-		res.Items += idx.ItemCount
-		refs := referencedKeys(idx)
-
-		// Captures filed into a note that has no row. Every object under such
-		// a capture goes with the row under --apply, whether or not an
-		// attribute names it: once the row is gone they would be orphans on
-		// the next run anyway.
-		dangling := make(map[string][]string)
-		for id, c := range idx.Captures {
-			if c.NoteID == "" {
-				continue
-			}
-			if _, ok := idx.Notes[c.NoteID]; !ok {
-				dangling[id] = nil
-			}
-		}
-
-		// The present set is keys only — never bodies. It is the one
-		// unavoidable accumulation in this command, and it is bounded by the
-		// object count, not by the corpus size.
-		present := make(map[string]bool)
-		// Sizes, for the captures whose rows record none. Bounded like present.
-		sizes := make(map[string]int64)
-		var orphans []finding
-		err = e.Blobs.List(tctx, tenantPrefix(tenantID), func(info ObjectInfo) error {
-			res.Objects++
-			present[info.Key] = true
-			sizes[info.Key] = info.Size
-			ref := parseObjectKey(info.Key)
-			if ref.Group == "captures" {
-				if _, isDangling := dangling[ref.EntityID]; isDangling {
-					dangling[ref.EntityID] = append(dangling[ref.EntityID], info.Key)
-					return nil
-				}
-			}
-			if _, referenced := refs[info.Key]; referenced || ref.Group == "exports" { // a snapshot: no row names it, its tag expires it
-				return nil
-			}
-			switch ref.Group {
-			case "notes":
-				if _, ok := idx.Notes[ref.EntityID]; !ok {
-					orphans = append(orphans, finding{
-						Kind: findingOrphanObject, TenantID: tenantID, Key: info.Key,
-						Owner:  "NOTE#" + ref.EntityID,
-						Detail: "no index row for the owning note", Repairable: repairs(findingOrphanObject),
-					})
-					return nil
-				}
-				orphans = append(orphans, finding{
-					Kind: findingUnreferencedObject, TenantID: tenantID, Key: info.Key,
-					Owner:  "NOTE#" + ref.EntityID,
-					Detail: "the note exists but names no such key",
-				})
-			case "captures":
-				if _, ok := idx.Captures[ref.EntityID]; !ok {
-					orphans = append(orphans, finding{
-						Kind: findingOrphanObject, TenantID: tenantID, Key: info.Key,
-						Owner:  "CAPTURE#" + ref.EntityID,
-						Detail: "no index row for the owning capture", Repairable: repairs(findingOrphanObject),
-					})
-					return nil
-				}
-				orphans = append(orphans, finding{
-					Kind: findingUnreferencedObject, TenantID: tenantID, Key: info.Key,
-					Owner:  "CAPTURE#" + ref.EntityID,
-					Detail: "the capture exists but names no such key",
-				})
-			default:
-				orphans = append(orphans, finding{
-					Kind: findingUnknownObject, TenantID: tenantID, Key: info.Key,
-					Detail: "key does not fit the tenants/<id>/<group>/<entity>/<file> layout",
-				})
-			}
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		// The other direction: a row whose object is gone. A dangling
-		// capture's objects are its own finding, not this one's.
-		missing := make([]string, 0)
-		for key, owner := range refs {
-			if id, ok := strings.CutPrefix(owner, "CAPTURE#"); ok {
-				if _, isDangling := dangling[id]; isDangling {
-					continue
-				}
-			}
-			if !present[key] {
-				missing = append(missing, key)
-			}
-		}
-		sort.Strings(missing)
-		for _, key := range missing {
-			res.Findings = append(res.Findings, finding{
-				Kind: findingMissingObject, TenantID: tenantID, Key: key,
-				Owner:  refs[key],
-				Detail: "an index row points at an object that is not in the bucket",
-			})
-		}
-
-		sort.Slice(orphans, func(i, j int) bool { return orphans[i].Key < orphans[j].Key })
-		res.Findings = append(res.Findings, orphans...)
-
-		danglingIDs := make([]string, 0, len(dangling))
-		for id := range dangling {
-			danglingIDs = append(danglingIDs, id)
-		}
-		sort.Strings(danglingIDs)
-		for _, id := range danglingIDs {
-			keys := dangling[id]
-			sort.Strings(keys)
-			res.Findings = append(res.Findings, finding{
-				Kind: findingDanglingCapture, TenantID: tenantID, SK: "CAPTURE#" + id,
-				Owner:   "NOTE#" + idx.Captures[id].NoteID,
-				Objects: keys,
-				Detail: fmt.Sprintf("filed into a note that has no row; %d object(s) unreachable through the app",
-					len(keys)),
-				Repairable: repairs(findingDanglingCapture),
-			})
-		}
-
-		stuck := make([]string, 0)
-		for id, c := range idx.Captures {
-			if !model.IsTerminalStatus(c.Status) {
-				stuck = append(stuck, id)
-			}
-		}
-		sort.Strings(stuck)
-		for _, id := range stuck {
-			res.Findings = append(res.Findings, finding{
-				Kind: findingStuckCapture, TenantID: tenantID, SK: "CAPTURE#" + id,
-				Detail: fmt.Sprintf("capture is still %q", idx.Captures[id].Status),
-			})
-		}
-
-		legacySKs := make([]string, 0, len(legacy))
-		for sk := range legacy {
-			legacySKs = append(legacySKs, sk)
-		}
-		sort.Strings(legacySKs)
-		for _, sk := range legacySKs {
-			if id, ok := strings.CutPrefix(sk, "NOTE#"); ok {
-				n := idx.Notes[id]
-				res.Findings = append(res.Findings, finding{
-					Kind: findingUnlistedNote, TenantID: tenantID, SK: sk,
-					Detail:     "row carries only the record blob; " + describeNoteShelf(n),
-					Repairable: repairs(findingUnlistedNote),
-				})
-				continue
-			}
-			id := strings.TrimPrefix(sk, "CAPTURE#")
-			if _, isDangling := dangling[id]; isDangling {
-				// Deleted by the finding above; nothing to re-index.
-				continue
-			}
-			res.Findings = append(res.Findings, finding{
-				Kind: findingUnindexedCapture, TenantID: tenantID, SK: sk,
-				Owner:      "NOTE#" + idx.Captures[id].NoteID,
-				Detail:     "row carries no GSI1 keys, so no note-scoped read can find it",
-				Repairable: repairs(findingUnindexedCapture),
-			})
-		}
-
-		// Captures that name an audio object but record no size for it. The
-		// size comes from the listing above; a capture whose audio is not in
-		// the bucket is already a missing_object and has nothing to record.
-		unsized := make([]string, 0)
-		for id, c := range idx.Captures {
-			if _, isDangling := dangling[id]; isDangling {
-				continue
-			}
-			if c.AudioKey != "" && c.AudioBytes == 0 {
-				unsized = append(unsized, id)
-			}
-		}
-		sort.Strings(unsized)
-		for _, id := range unsized {
-			c := idx.Captures[id]
-			size, known := sizes[c.AudioKey]
-			f := finding{Kind: findingCaptureSizeUnknown, TenantID: tenantID, SK: "CAPTURE#" + id, Owner: c.AudioKey}
-			switch {
-			case !known:
-				f.Detail = "row records no audio size and the audio object is not in the bucket"
-			case size == 0:
-				f.Detail = "row records no audio size and the audio object is empty"
-			default:
-				f.Detail = fmt.Sprintf("row records no audio size; the object is %d bytes", size)
-				f.Bytes = size
-				f.Repairable = repairs(findingCaptureSizeUnknown)
-			}
-			res.Findings = append(res.Findings, f)
-		}
-
-		obs.Log(tctx).Info("reconciled tenant",
-			slog.Int("items", idx.ItemCount),
-			slog.Int("objects", len(present)),
-			slog.Int("findings", len(res.Findings)),
-		)
 	}
 
 	if !apply {
 		return res, nil
 	}
+	if err := applyRepairs(ctx, e, res); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+// tenantScan is one tenant's reconciliation as it is being built: the index,
+// what the rows reference, and what the bucket listing found. The six
+// classifications each read it and return their findings in the order the
+// report prints them.
+type tenantScan struct {
+	tenantID string
+	repairs  func(kind string) bool
+	idx      *tenantIndex
+	// legacy holds the raw rows that predate attribute promotion, kept by
+	// sort key so the repair can rewrite exactly what it read. Judged on the
+	// row, not the decoded model: the model cannot say whether note_id was
+	// promoted or recovered from the blob.
+	legacy map[string]Item
+	refs   map[string]string
+	// dangling is the captures filed into a note that has no row, each with
+	// the objects found under it. Every object under such a capture goes
+	// with the row under --apply, whether or not an attribute names it:
+	// once the row is gone they would be orphans on the next run anyway.
+	dangling map[string][]string
+	// present is keys only — never bodies. It is the one unavoidable
+	// accumulation in this command, and it is bounded by the object count,
+	// not by the corpus size. sizes, for the captures whose rows record
+	// none, is bounded the same way.
+	present map[string]bool
+	sizes   map[string]int64
+	objects int
+	orphans []finding
+}
+
+// reconcileTenant walks one tenant's index and bucket and appends what it
+// finds to res.
+func reconcileTenant(ctx context.Context, e *env, tenantID string, repairs func(string) bool, res *reconcileResult) error {
+	tctx := obs.WithTenant(ctx, tenantID)
+	s := &tenantScan{
+		tenantID: tenantID, repairs: repairs,
+		legacy: map[string]Item{}, dangling: map[string][]string{}, present: map[string]bool{}, sizes: map[string]int64{},
+	}
+	idx, err := buildIndex(tctx, e.Part, tenantID, s.legacyRow)
+	if err != nil {
+		return err
+	}
+	s.idx = idx
+	res.Items += idx.ItemCount
+	s.refs = referencedKeys(idx)
+	for id, c := range idx.Captures {
+		if c.NoteID == "" {
+			continue
+		}
+		if _, ok := idx.Notes[c.NoteID]; !ok {
+			s.dangling[id] = nil
+		}
+	}
+	if err := e.Blobs.List(tctx, tenantPrefix(tenantID), s.object); err != nil {
+		return err
+	}
+	res.Objects += s.objects
+
+	res.Findings = append(res.Findings, s.missingFindings()...)
+	sort.Slice(s.orphans, func(i, j int) bool { return s.orphans[i].Key < s.orphans[j].Key })
+	res.Findings = append(res.Findings, s.orphans...)
+	res.Findings = append(res.Findings, s.danglingFindings()...)
+	res.Findings = append(res.Findings, s.stuckFindings()...)
+	res.Findings = append(res.Findings, s.legacyFindings()...)
+	res.Findings = append(res.Findings, s.unsizedFindings()...)
+
+	obs.Log(tctx).Info("reconciled tenant",
+		slog.Int("items", idx.ItemCount),
+		slog.Int("objects", len(s.present)),
+		slog.Int("findings", len(res.Findings)),
+	)
+	return nil
+}
+
+// legacyRow keeps a row that predates attribute promotion.
+func (s *tenantScan) legacyRow(it Item) error {
+	sk := it.SK()
+	switch {
+	case strings.HasPrefix(sk, "NOTE#") && !hasAttr(it, "note_id"):
+		s.legacy[sk] = it
+	case strings.HasPrefix(sk, "CAPTURE#") && !hasAttr(it, "gsi1pk"):
+		s.legacy[sk] = it
+	}
+	return nil
+}
+
+// object classifies one listed object: a dangling capture's, referenced,
+// a snapshot, an orphan, unreferenced, or of no known shape.
+func (s *tenantScan) object(info ObjectInfo) error {
+	s.objects++
+	s.present[info.Key] = true
+	s.sizes[info.Key] = info.Size
+	ref := parseObjectKey(info.Key)
+	if ref.Group == "captures" {
+		if _, isDangling := s.dangling[ref.EntityID]; isDangling {
+			s.dangling[ref.EntityID] = append(s.dangling[ref.EntityID], info.Key)
+			return nil
+		}
+	}
+	if _, referenced := s.refs[info.Key]; referenced || ref.Group == "exports" { // a snapshot: no row names it, its tag expires it
+		return nil
+	}
+	switch ref.Group {
+	case "notes":
+		if _, ok := s.idx.Notes[ref.EntityID]; !ok {
+			s.orphans = append(s.orphans, finding{
+				Kind: findingOrphanObject, TenantID: s.tenantID, Key: info.Key,
+				Owner:  "NOTE#" + ref.EntityID,
+				Detail: "no index row for the owning note", Repairable: s.repairs(findingOrphanObject),
+			})
+			return nil
+		}
+		s.orphans = append(s.orphans, finding{
+			Kind: findingUnreferencedObject, TenantID: s.tenantID, Key: info.Key,
+			Owner:  "NOTE#" + ref.EntityID,
+			Detail: "the note exists but names no such key",
+		})
+	case "captures":
+		if _, ok := s.idx.Captures[ref.EntityID]; !ok {
+			s.orphans = append(s.orphans, finding{
+				Kind: findingOrphanObject, TenantID: s.tenantID, Key: info.Key,
+				Owner:  "CAPTURE#" + ref.EntityID,
+				Detail: "no index row for the owning capture", Repairable: s.repairs(findingOrphanObject),
+			})
+			return nil
+		}
+		s.orphans = append(s.orphans, finding{
+			Kind: findingUnreferencedObject, TenantID: s.tenantID, Key: info.Key,
+			Owner:  "CAPTURE#" + ref.EntityID,
+			Detail: "the capture exists but names no such key",
+		})
+	default:
+		s.orphans = append(s.orphans, finding{
+			Kind: findingUnknownObject, TenantID: s.tenantID, Key: info.Key,
+			Detail: "key does not fit the tenants/<id>/<group>/<entity>/<file> layout",
+		})
+	}
+	return nil
+}
+
+// missingFindings is the other direction: a row whose object is gone. A
+// dangling capture's objects are its own finding, not this one's.
+func (s *tenantScan) missingFindings() []finding {
+	missing := make([]string, 0)
+	for key, owner := range s.refs {
+		if id, ok := strings.CutPrefix(owner, "CAPTURE#"); ok {
+			if _, isDangling := s.dangling[id]; isDangling {
+				continue
+			}
+		}
+		if !s.present[key] {
+			missing = append(missing, key)
+		}
+	}
+	sort.Strings(missing)
+	var out []finding
+	for _, key := range missing {
+		out = append(out, finding{
+			Kind: findingMissingObject, TenantID: s.tenantID, Key: key,
+			Owner:  s.refs[key],
+			Detail: "an index row points at an object that is not in the bucket",
+		})
+	}
+	return out
+}
+
+func (s *tenantScan) danglingFindings() []finding {
+	danglingIDs := make([]string, 0, len(s.dangling))
+	for id := range s.dangling {
+		danglingIDs = append(danglingIDs, id)
+	}
+	sort.Strings(danglingIDs)
+	var out []finding
+	for _, id := range danglingIDs {
+		keys := s.dangling[id]
+		sort.Strings(keys)
+		out = append(out, finding{
+			Kind: findingDanglingCapture, TenantID: s.tenantID, SK: "CAPTURE#" + id,
+			Owner:   "NOTE#" + s.idx.Captures[id].NoteID,
+			Objects: keys,
+			Detail: fmt.Sprintf("filed into a note that has no row; %d object(s) unreachable through the app",
+				len(keys)),
+			Repairable: s.repairs(findingDanglingCapture),
+		})
+	}
+	return out
+}
+
+func (s *tenantScan) stuckFindings() []finding {
+	stuck := make([]string, 0)
+	for id, c := range s.idx.Captures {
+		if !model.IsTerminalStatus(c.Status) {
+			stuck = append(stuck, id)
+		}
+	}
+	sort.Strings(stuck)
+	var out []finding
+	for _, id := range stuck {
+		out = append(out, finding{
+			Kind: findingStuckCapture, TenantID: s.tenantID, SK: "CAPTURE#" + id,
+			Detail: fmt.Sprintf("capture is still %q", s.idx.Captures[id].Status),
+		})
+	}
+	return out
+}
+
+func (s *tenantScan) legacyFindings() []finding {
+	legacySKs := make([]string, 0, len(s.legacy))
+	for sk := range s.legacy {
+		legacySKs = append(legacySKs, sk)
+	}
+	sort.Strings(legacySKs)
+	var out []finding
+	for _, sk := range legacySKs {
+		if id, ok := strings.CutPrefix(sk, "NOTE#"); ok {
+			n := s.idx.Notes[id]
+			out = append(out, finding{
+				Kind: findingUnlistedNote, TenantID: s.tenantID, SK: sk,
+				Detail:     "row carries only the record blob; " + describeNoteShelf(n),
+				Repairable: s.repairs(findingUnlistedNote),
+			})
+			continue
+		}
+		id := strings.TrimPrefix(sk, "CAPTURE#")
+		if _, isDangling := s.dangling[id]; isDangling {
+			// Deleted by the finding above; nothing to re-index.
+			continue
+		}
+		out = append(out, finding{
+			Kind: findingUnindexedCapture, TenantID: s.tenantID, SK: sk,
+			Owner:      "NOTE#" + s.idx.Captures[id].NoteID,
+			Detail:     "row carries no GSI1 keys, so no note-scoped read can find it",
+			Repairable: s.repairs(findingUnindexedCapture),
+		})
+	}
+	return out
+}
+
+// unsizedFindings is the captures that name an audio object but record no
+// size for it. The size comes from the listing; a capture whose audio is not
+// in the bucket is already a missing_object and has nothing to record.
+func (s *tenantScan) unsizedFindings() []finding {
+	unsized := make([]string, 0)
+	for id, c := range s.idx.Captures {
+		if _, isDangling := s.dangling[id]; isDangling {
+			continue
+		}
+		if c.AudioKey != "" && c.AudioBytes == 0 {
+			unsized = append(unsized, id)
+		}
+	}
+	sort.Strings(unsized)
+	var out []finding
+	for _, id := range unsized {
+		c := s.idx.Captures[id]
+		size, known := s.sizes[c.AudioKey]
+		f := finding{Kind: findingCaptureSizeUnknown, TenantID: s.tenantID, SK: "CAPTURE#" + id, Owner: c.AudioKey}
+		switch {
+		case !known:
+			f.Detail = "row records no audio size and the audio object is not in the bucket"
+		case size == 0:
+			f.Detail = "row records no audio size and the audio object is empty"
+		default:
+			f.Detail = fmt.Sprintf("row records no audio size; the object is %d bytes", size)
+			f.Bytes = size
+			f.Repairable = s.repairs(findingCaptureSizeUnknown)
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// applyRepairs acts on every repairable finding, in report order, and marks
+// each one repaired.
+func applyRepairs(ctx context.Context, e *env, res *reconcileResult) error {
 	for i := range res.Findings {
 		f := &res.Findings[i]
 		if !f.Repairable {
@@ -477,7 +541,7 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 			// skipped and reported rather than overwritten.
 			it, ok, err := e.Part.Get(ctx, tenantPK(f.TenantID), f.SK)
 			if err != nil {
-				return res, err
+				return err
 			}
 			if !ok {
 				f.Detail += "; gone before --apply reached it"
@@ -485,7 +549,7 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 			}
 			set, err := promotedAttributes(f.TenantID, it)
 			if err != nil {
-				return res, err
+				return err
 			}
 			err = e.Part.Update(ctx, it.PK(), it.SK(), set, it.Num("version"))
 			if errors.Is(err, ErrItemChanged) {
@@ -493,7 +557,7 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 				continue
 			}
 			if err != nil {
-				return res, err
+				return err
 			}
 			obs.Log(ctx).Info("re-promoted a legacy row",
 				slog.String("sk", f.SK), slog.Int("attributes", len(set)))
@@ -504,7 +568,7 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 			// same version condition as the other row repairs.
 			it, ok, err := e.Part.Get(ctx, tenantPK(f.TenantID), f.SK)
 			if err != nil {
-				return res, err
+				return err
 			}
 			if !ok {
 				f.Detail += "; gone before --apply reached it"
@@ -521,7 +585,7 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 				continue
 			}
 			if err != nil {
-				return res, err
+				return err
 			}
 			obs.Log(ctx).Info("recorded a capture's audio size",
 				slog.String("sk", f.SK), slog.Int64("bytes", f.Bytes))
@@ -532,17 +596,17 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 			// only by a prefix walk.
 			for _, key := range f.Objects {
 				if err := e.Blobs.Delete(ctx, key); err != nil {
-					return res, err
+					return err
 				}
 			}
 			if err := e.Part.Delete(ctx, tenantPK(f.TenantID), f.SK); err != nil {
-				return res, err
+				return err
 			}
 			obs.Log(ctx).Info("deleted dangling capture",
 				slog.String("sk", f.SK), slog.String("owner", f.Owner), slog.Int("objects", len(f.Objects)))
 		default:
 			if err := e.Blobs.Delete(ctx, f.Key); err != nil {
-				return res, err
+				return err
 			}
 			obs.Log(ctx).Info("deleted orphaned object",
 				slog.String("key", f.Key), slog.String("owner", f.Owner))
@@ -550,5 +614,5 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 		f.Repaired = true
 		res.Repaired++
 	}
-	return res, nil
+	return nil
 }
