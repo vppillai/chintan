@@ -37,8 +37,14 @@ const (
 	// Six seconds at most in all: inside the shortest attempt a call runs
 	// under (routing's fifteen seconds, ask's retry at fifteen) with room
 	// for the calls themselves, and short enough that a burst is waited
-	// out rather than reasoned about. A Retry-After the provider sends is
-	// honoured as sent, under the context's deadline alone.
+	// out rather than reasoned about.
 	ProviderRetryBaseWait = 1 * time.Second
 	ProviderRetryMaxWait  = 4 * time.Second
+
+	// ProviderRetryMaxRetryAfter is the longest Retry-After that is waited
+	// as sent: three times the jittered cap. A provider asking for more is
+	// saying "come back later", not "wait", and a wait cut short would be
+	// refused again, so past it the refusal is returned at once rather
+	// than waited on or truncated. Under the context's deadline as well.
+	ProviderRetryMaxRetryAfter = 12 * time.Second
 )

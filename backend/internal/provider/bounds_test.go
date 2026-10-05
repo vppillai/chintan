@@ -15,10 +15,11 @@ import (
 // purpose, as routing's rule table repeats its literals: changing a bound is
 // two edits, the number and its row, which is the review this test forces.
 var providerBounds = map[string]string{
-	"ProviderRetryAttempts":    "3",
-	"ProviderRetryAttemptsAsk": "2",
-	"ProviderRetryBaseWait":    "1 * time.Second",
-	"ProviderRetryMaxWait":     "4 * time.Second",
+	"ProviderRetryAttempts":      "3",
+	"ProviderRetryAttemptsAsk":   "2",
+	"ProviderRetryBaseWait":      "1 * time.Second",
+	"ProviderRetryMaxWait":       "4 * time.Second",
+	"ProviderRetryMaxRetryAfter": "12 * time.Second",
 }
 
 // TestProviderBoundsAreRegistered holds bounds.go to the table both ways: a

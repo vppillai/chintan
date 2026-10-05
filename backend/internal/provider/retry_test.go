@@ -129,12 +129,12 @@ func TestRetryRecoversFromAnOverloadBurst(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(metrics.String()), "\n")
 	counted := 0
 	for _, line := range lines {
-		if strings.Contains(line, `"ProviderRetried"`) && strings.Contains(line, `"Provider":"openai"`) && strings.Contains(line, `"Status":"529"`) {
+		if strings.Contains(line, `"ProviderRetried"`) && strings.Contains(line, `"Provider":"openai"`) && strings.Contains(line, `"Status":"5xx"`) {
 			counted++
 		}
 	}
 	if counted != 2 {
-		t.Errorf("ProviderRetried{openai,529} was emitted %d times, want 2:\n%s", counted, metrics.String())
+		t.Errorf("ProviderRetried{openai,5xx} was emitted %d times, want 2:\n%s", counted, metrics.String())
 	}
 }
 
@@ -148,6 +148,9 @@ func TestRetryGivesUpWithTheLastStatus(t *testing.T) {
 	if code := statusCode(t, err); code != 503 {
 		t.Errorf("error status = %d, want 503, the last refusal", code)
 	}
+	if !strings.Contains(err.Error(), "after 3 attempts") {
+		t.Errorf("error = %v, want the attempt count on it", err)
+	}
 	if n := s.calls.Load(); n != ProviderRetryAttempts {
 		t.Errorf("server saw %d requests, want %d", n, ProviderRetryAttempts)
 	}
@@ -157,7 +160,7 @@ func TestRetryGivesUpWithTheLastStatus(t *testing.T) {
 // seconds or as a date, instead of the jittered wait.
 func TestRetryHonoursRetryAfter(t *testing.T) {
 	waits := recordWaits(t)
-	at := time.Now().Add(90 * time.Second).UTC().Format(http.TimeFormat)
+	at := time.Now().Add(10 * time.Second).UTC().Format(http.TimeFormat)
 	s := newScriptedServer(t, scripted{status: 429, retryAfter: "7"}, scripted{status: 529, retryAfter: at}, scripted{status: 200})
 
 	if _, err := newTestLLM(t, s).Cleanup(context.Background(), "raw transcript here", ""); err != nil {
@@ -166,8 +169,88 @@ func TestRetryHonoursRetryAfter(t *testing.T) {
 	if len(*waits) != 2 || (*waits)[0] != 7*time.Second {
 		t.Fatalf("waits = %v, want 7s first", *waits)
 	}
-	if w := (*waits)[1]; w < 85*time.Second || w > 90*time.Second {
-		t.Errorf("second wait = %s, want about 90s from the HTTP date", w)
+	if w := (*waits)[1]; w < 8*time.Second || w > 10*time.Second {
+		t.Errorf("second wait = %s, want about 10s from the HTTP date", w)
+	}
+}
+
+// A Retry-After past ProviderRetryMaxRetryAfter is "come back later": the
+// refusal is returned at once, neither waited on nor truncated.
+func TestRetryDoesNotWaitOnALongRetryAfter(t *testing.T) {
+	waits := recordWaits(t)
+	s := newScriptedServer(t, scripted{status: 429, retryAfter: "30"}, scripted{status: 200})
+
+	_, err := newTestLLM(t, s).Cleanup(context.Background(), "raw transcript here", "")
+	if code := statusCode(t, err); code != 429 {
+		t.Errorf("error status = %d, want the 429 itself", code)
+	}
+	if n := s.calls.Load(); n != 1 || len(*waits) != 0 {
+		t.Errorf("%d requests and %d waits, want 1 and 0", n, len(*waits))
+	}
+}
+
+// The budget covers the retried request too, measured by the refused one:
+// here the wait alone fits before the deadline but the wait plus a request
+// as long as the first does not, so the refusal is returned rather than a
+// retry the deadline would cut — which the stage would read as a timeout
+// and hand to Lambda, where the refusal is a verdict.
+func TestRetryBudgetsTheRetriedRequest(t *testing.T) {
+	recordWaits(t)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		time.Sleep(500 * time.Millisecond)
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "overloaded", 529)
+	}))
+	t.Cleanup(srv.Close)
+	llm, err := NewOpenAICleanup("k", srv.URL, "MiniMax-M3", srv.Client())
+	if err != nil {
+		t.Fatalf("NewOpenAICleanup: %v", err)
+	}
+	// 1.8 s: after the 0.5 s request about 1.3 s remain — more than the 1 s
+	// wait, less than the wait plus another 0.5 s request.
+	ctx, cancel := context.WithTimeout(context.Background(), 1800*time.Millisecond)
+	defer cancel()
+
+	_, err = llm.Cleanup(ctx, "raw transcript here", "")
+	if code := statusCode(t, err); code != 529 {
+		t.Errorf("error status = %d, want the 529 itself", code)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("the refusal was reported as a deadline: %v", err)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Errorf("server saw %d requests, want 1", n)
+	}
+}
+
+// A fault a moment later cannot clear — a name that does not resolve, a
+// certificate that does not verify — is not transport and is not retried.
+func TestRetrySkipsFaultsThatWillNotClear(t *testing.T) {
+	waits := recordWaits(t)
+	tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(okCompletion))
+	}))
+	t.Cleanup(tls.Close)
+	for name, base := range map[string]string{
+		"an unresolvable name":        "http://provider.invalid",
+		"an unverifiable certificate": tls.URL,
+	} {
+		// http.DefaultClient's transport, not the test server's, so the
+		// certificate is checked like a real one.
+		llm, err := NewOpenAICleanup("k", base, "MiniMax-M3", &http.Client{Timeout: 10 * time.Second})
+		if err != nil {
+			t.Fatalf("NewOpenAICleanup: %v", err)
+		}
+		if _, err := llm.Cleanup(context.Background(), "raw transcript here", ""); err == nil {
+			t.Errorf("%s: no error", name)
+		} else if _, ok := statusOf(err); ok {
+			t.Errorf("%s: carries a provider status: %v", name, err)
+		}
+		if len(*waits) != 0 {
+			t.Errorf("%s: waited %v; want no retry", name, *waits)
+		}
 	}
 }
 
@@ -215,7 +298,7 @@ func TestRetrySkipsClientErrors(t *testing.T) {
 func TestRetryStopsWhenTheContextIsCancelled(t *testing.T) {
 	restore := obs.SetMetricOutput(io.Discard)
 	defer restore()
-	s := newScriptedServer(t, scripted{status: 529, retryAfter: "30"}, scripted{status: 200})
+	s := newScriptedServer(t, scripted{status: 529, retryAfter: "10"}, scripted{status: 200})
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(20*time.Millisecond, cancel)
 
