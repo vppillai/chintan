@@ -140,16 +140,20 @@ Three outcomes besides items:
 - **Verbatim checklist**: no model call; the raw transcript — never the
   router's span-cut text — is one item with its line breaks collapsed.
 
-The prompt is the only guard on what an item is. `ParseItems` checks the
-shape (a JSON object with an `items` array of objects or bare strings, at
-most 100 counting sub-items, each text at most `MaxChecklistItemRunes` =
-2,000 runes, an item with no text dropped and its children lifted) and
-nothing about the words: a subsequence check against the transcript would
-refuse the garbling fix the prompt asks for, and dropping an item equal to
-the title would silently lose "add batteries" to a list titled Batteries. An
-item the prompt should not have produced is visible and one tap from gone; a
-dropped one is lost. So an invented item is caught only by the live
-evaluation (`provider.TestLiveEval/items`; `docs/design/prompts.md`). A
+The prompt is the guard on what an item is; the code holds one line behind
+it. `ParseItems` checks the shape (a JSON object with an `items` array of
+objects or bare strings, at most 100 counting sub-items, each text at most
+`MaxChecklistItemRunes` = 2,000 runes, an item with no text dropped and its
+children lifted), and `cleanup.DropUnspoken` drops an item none of whose
+words were spoken — no word of it is one of the recording's — lifting its
+children, counted as `ChecklistItemsDiscarded{Reason=invented}`; a reply of
+nothing but such items is the recording as one item. One shared word, not a
+sub-sequence: a subsequence check against the transcript would refuse the
+garbling fix and the group names the prompt asks for, and dropping an item
+equal to the title would silently lose "add batteries" to a list titled
+Batteries. An item that reuses a spoken word is visible and one tap from
+gone; the live evaluation (`provider.TestLiveEval/items`;
+`docs/design/prompts.md`) measures the prompt behind the drop. A
 request that is not an add — "remove milk from the list" — comes back as one
 open item exactly as spoken, never turned into an add of the thing named;
 nothing applies such a request to the list.
