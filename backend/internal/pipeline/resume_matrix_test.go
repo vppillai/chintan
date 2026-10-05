@@ -154,6 +154,22 @@ func TestResumeMatrix(t *testing.T) {
 			final:   model.StatusAppended,
 		},
 		{
+			name:    "cleaned text, chosen note, an instruction cue: the strip is not asked again",
+			note:    "note1",
+			row:     model.CaptureIndex{Status: model.StatusCleaned, RawKey: matrixRawKey, NoteID: "note1", CleanKey: matrixCleanKey, Language: "en"},
+			objects: map[string]string{matrixRawKey: "add this to my roof note " + matrixTranscript, matrixCleanKey: "The gutter is leaking again."},
+			want:    []model.CaptureStatus{model.StatusAppending},
+			final:   model.StatusAppended,
+		},
+		{
+			name:    "cleaned text, note in another language: not transcribed again",
+			note:    "note_ml",
+			row:     model.CaptureIndex{Status: model.StatusCleaned, RawKey: matrixRawKey, NoteID: "note_ml", CleanKey: matrixCleanKey, Language: "en"},
+			objects: map[string]string{matrixRawKey: matrixTranscript, matrixCleanKey: "The gutter is leaking again."},
+			want:    []model.CaptureStatus{model.StatusAppending},
+			final:   model.StatusAppended,
+		},
+		{
 			name:    "parked at needs_target: nothing runs until a person chooses",
 			note:    "note1",
 			row:     model.CaptureIndex{Status: model.StatusNeedsTarget, RawKey: matrixRawKey, RoutedKey: matrixRoutedKey, Language: "en"},

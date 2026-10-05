@@ -32,7 +32,9 @@ import (
 // checklist recording left the last time it was appended.
 func (r *captureRun) clean(ctx context.Context) error {
 	previous, err := r.p.cleanForNote(ctx, r.tenantID, r.capture, r.note)
-	r.previousItems = previous
+	if err == nil {
+		r.previousItems = previous
+	}
 	return err
 }
 

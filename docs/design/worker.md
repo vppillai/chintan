@@ -117,9 +117,11 @@ its own.
 | append | never | The cleaned text into the note exactly once, under the claim and the marker (below), and the capture marked `appended` | `append.go` |
 
 The statuses a capture passes through are the stages' own:
-`transcribing` → `routing` → `cleaning` → `appending` → `appended`, with
-`transcribed` and `cleaned` written when the next stage's own status write
-does not follow at once (`deferPersist`). A retry therefore resumes at the
+`transcribing` → `routing` → `cleaning` → `appending` → `appended`. The
+transcription's and the cleanup's done-writes (`transcribed`, `cleaned`)
+are folded into the next stage's own status write (`deferPersist`), and
+written on their own only when a model call comes between — the strip for
+a chosen note, the items call. A retry therefore resumes at the
 first stage whose artefact is missing and transcribes, routes or cleans
 nothing twice; `TestResumeMatrix` (`pipeline/resume_matrix_test.go`) holds
 which stages run, and which provider calls are made, for every set of
