@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from './problem.ts';
-import { Session, type TokenRefresher } from './session.ts';
+import { CognitoRefresher, REFRESH_TIMEOUT_MS, Session, type TokenRefresher } from './session.ts';
 import { createMemoryTokenStore, type TokenSet } from './tokens.ts';
 
 function tokens(overrides: Partial<TokenSet> = {}): TokenSet {
@@ -90,5 +90,73 @@ describe('signing out beats a refresh that is already in flight', () => {
     const session = new Session(createMemoryTokenStore(tokens()), deferredRefresher());
     session.clear();
     await expect(session.refresh()).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe('a token endpoint that never answers', () => {
+  it('gives up after the bound as a network failure, keeping the session', async () => {
+    vi.useFakeTimers();
+    try {
+      // Honours the abort it is handed and otherwise never settles.
+      const hanging = vi.fn<typeof fetch>(
+        (_input, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              reject(new DOMException('aborted', 'AbortError'));
+            });
+          }),
+      );
+      const store = createMemoryTokenStore(tokens({ expiresAt: Date.now() - 1 }));
+      const session = new Session(
+        store,
+        new CognitoRefresher('https://cognito.test', 'client', hanging),
+      );
+
+      const outcome = session.refresh().then(
+        () => 'resolved',
+        (error: unknown) => error,
+      );
+      await vi.advanceTimersByTimeAsync(REFRESH_TIMEOUT_MS + 1);
+      const error = await outcome;
+
+      expect(error).toBeInstanceOf(ApiError);
+      expect((error as ApiError).isOffline).toBe(true);
+      // Offline is not unauthenticated: the stale set is kept for the next try.
+      expect(session.isAuthenticated()).toBe(true);
+      expect(store.read()?.idToken).toBe('id-1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up within the bound when the headers arrive and the body never ends', async () => {
+    vi.useFakeTimers();
+    try {
+      // A 200 whose body stream is never closed: `json()` would hang for good.
+      const headersOnly = vi.fn<typeof fetch>(
+        async () =>
+          new Response(new ReadableStream({ start() {} }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+      );
+      const session = new Session(
+        createMemoryTokenStore(tokens({ expiresAt: Date.now() - 1 })),
+        new CognitoRefresher('https://cognito.test', 'client', headersOnly),
+      );
+
+      const outcome = session.refresh().then(
+        () => 'resolved',
+        (error: unknown) => error,
+      );
+      await vi.advanceTimersByTimeAsync(REFRESH_TIMEOUT_MS + 1);
+      const error = await outcome;
+
+      expect(error).toBeInstanceOf(ApiError);
+      expect((error as ApiError).isOffline).toBe(true);
+      expect(session.isAuthenticated()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

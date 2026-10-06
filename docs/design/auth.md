@@ -76,7 +76,13 @@ token, so the previous one is carried forward. The HTTP client
 once per request, replaying the same attempt with the same
 `Idempotency-Key`. A refresh that fails because the network is down does not
 clear the session (offline is not unauthenticated); one that Cognito refuses
-does. A `generation` counter makes a refresh in flight during sign-out drop
+does. The call is bounded by `REFRESH_TIMEOUT_MS` (fifteen seconds): the
+client awaits a due refresh before it arms its own request timer, so an
+unanswered token endpoint — a phone woken by a notification before its
+radio is up — would otherwise hold the app's first request open for good;
+a refresh that times out counts as the network failing, and the request
+goes out with the token it has (`session.test.ts`, "a token endpoint that
+never answers"). A `generation` counter makes a refresh in flight during sign-out drop
 its result rather than restore the session (`session.test.ts`, "signing out
 beats a refresh that is already in flight").
 

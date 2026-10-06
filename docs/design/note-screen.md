@@ -65,6 +65,37 @@ state belong to one note, and "Open <title>" after a move walks from one note
 to another without remounting the screen. The Find state is not keyed — a
 query carried into the next note is one the user may want there too.
 
+## Arriving
+
+The screen reads the note with `useNote` and, while the server has not
+answered, shows the device's copy if it holds the full note (`offline.md`,
+"A note"). With no copy it says "Loading…" for at most `LOADING_PATIENCE_MS`
+(six seconds), then one of three things, chosen by what it knows: offline —
+the browser reports no connection, the query is paused, or the request
+failed on the way out — reads "Not on this device" with the offline
+sentence; a server that has answered nothing final (a request still in the
+air past the patience, or a retryable failure) reads "Not on this device"
+with "the server hasn't answered yet. Trying again…" and a Try again
+button; and a verdict — a 404, a refusal, anything neither retryable nor
+offline — reads "Note not found", because the server said so.
+
+No verdict is not a verdict. A note opened from a push notification
+(`push.md`) is the common case: the phone the tap woke fails or hangs its
+first request before it reaches the server, which has had the note since
+before the push. So while the browser still reports a connection and the
+answer is offline-on-the-way-out or unanswered, the note is asked for again
+on the filing ladder (`noteRetryInterval`, measured from the screen's
+mount: every 1.5 s for the first half minute, every 4 s to two minutes,
+every 15 s to ten minutes, then not at all — the sentence drops its
+"Trying again…" and Try again is the only way; only while the app is in
+front, through `usePollNote`), until the note or a verdict arrives. The
+latch is the verdict, not the fetch state: a refetch of a query with no
+data goes back to pending with its error cleared, so a latch read from the
+error would restart the clock on every tick. A refetch while a request is
+still in the air joins it, so a slow answer is never doubled. The browser's
+own reconnect — `navigator.onLine` turning true — refetches as before; this
+covers the link that never said it was down.
+
 ## The three tabs
 
 Text · Cleaned · Recordings (N); on a checklist note, Items · Recordings (N)
@@ -462,7 +493,8 @@ own deadline (`pipeline-deadlines.md`).
 
 ## Tests
 
-`NoteDetailScreen.test.tsx` (the composition and the tab precedence),
+`NoteDetailScreen.test.tsx` (the composition and the tab precedence; the
+re-ask after a first read that failed on the way out),
 `NoteTabs.test.tsx`, `FindBar.test.tsx` and `find.test.ts`,
 `useHorizontalSwipe.test.tsx` (commit at 30 %, the flick, the damped follow
 with no neighbour, mouse, edge, the `.swipe` row closed and open, the enter
@@ -470,7 +502,8 @@ pose and the two frames, the swallowed tap and the keyboard click let
 through), `PullToRefresh.test.tsx`, `useKeyboardInset.test.tsx`,
 `Recordings.test.tsx`, `recordings/RecordingRow.test.tsx`,
 `recordings/labels.test.ts`, `components/ShareButton.test.tsx`; end to
-end, `e2e/drawer.spec.ts` (the drag
+end, `e2e/push-open.spec.ts` (a note opened cold whose first read fails on
+the way out, and one whose token refresh never answers), `e2e/drawer.spec.ts` (the drag
 to close, with a real touch), `e2e/note-tabs.spec.ts` (the
 strip's count, `?tab=`, the session memory and Back; the arrow keys; the
 strip sticking under the banner; the Details sheet; the swipe cases; the

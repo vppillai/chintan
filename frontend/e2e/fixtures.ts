@@ -38,6 +38,12 @@ export interface ApiState {
   requests: { method: string; url: string; headers: Record<string, string> }[];
   /** When true, every API call fails as if the device were offline. */
   offline: boolean;
+  /**
+   * How many of the next `GET /v1/notes/{id}` to fail at the network level,
+   * as a phone whose radio is not up yet fails them. Counted per attempt, so
+   * the client's own retries use it up.
+   */
+  dropNoteGets: number;
   /** Forces the next PATCH to return 409 once. */
   conflictOnce: boolean;
   /**
@@ -71,6 +77,8 @@ interface AuthState {
   rejectExchange: boolean;
   /** Set to send the user back with `error=access_denied` instead of a code. */
   denyLogin: boolean;
+  /** Set to leave `/oauth2/token` unanswered, as a token endpoint behind a dead link is. */
+  stallToken: boolean;
   /** What `/passkeys/add` was asked with, per visit. */
   passkeyAdd: Record<string, string>[];
   /**
@@ -217,6 +225,7 @@ export function freshState(): ApiState {
       daily_spend_cap_micros: 0,
     },
     offline: false,
+    dropNoteGets: 0,
     conflictOnce: false,
     rejectPatch: null,
     purged: [],
@@ -227,6 +236,7 @@ export function freshState(): ApiState {
       logout: [],
       rejectExchange: false,
       denyLogin: false,
+      stallToken: false,
       passkeyAdd: [],
       passkeySession: true,
     },
@@ -787,6 +797,11 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         await problem(route, 404, { title: 'Not found' });
         return;
       }
+      if (method === 'GET' && state.dropNoteGets > 0) {
+        state.dropNoteGets -= 1;
+        await route.abort('internetdisconnected');
+        return;
+      }
       if (method === 'GET') {
         // The detail always carries the two cleaned-view fields and the kind.
         await json(route, {
@@ -987,6 +1002,11 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       const body = Object.fromEntries(new URLSearchParams(route.request().postData() ?? ''));
       state.auth.token.push(body);
 
+      if (state.auth.stallToken) {
+        // Never fulfilled: the browser's request stays open until the app
+        // gives up on it, which is the behaviour under test.
+        await new Promise<never>(() => {});
+      }
       if (state.auth.rejectExchange) {
         await route.fulfill({
           status: 400,

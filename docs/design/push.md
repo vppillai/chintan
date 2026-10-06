@@ -124,7 +124,13 @@ manifest's icon, and `tag` = the note id, so a ring day's fourth filing into
 "Shopping list" replaces the third in the shade rather than stacking under
 it — the grouping Home does. `notificationclick` focuses an open window and
 navigates it to the note (`ROUTES.note`, under the registration's scope), or
-opens one.
+opens one. Either way the note screen then loads cold: the shell from the
+precache, the note by its first `GET /v1/notes/{id}`, which on a phone the
+tap has just woken can fail or hang before it reaches the server — the
+server has had the note since before the push was sent. The screen keeps
+asking on its own until the note or a verdict arrives (`note-screen.md`,
+"Arriving"), and a token refresh the first request must wait for is bounded
+(`auth.md`, "Tokens: storage and refresh").
 
 ## The card
 
