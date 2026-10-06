@@ -166,7 +166,10 @@ worked is the request's to say. Tests: `OfflineBanner.test.tsx`.
 - **A note**: the cached full note stands in while the server has not
   answered (`offlineCopy`); a note the device holds only as a row reads
   "Not on this device" with the offline sentence, never "archived or
-  purged". The editor saves into the queue as above; the Recordings tab
+  purged". While the browser still reports a connection and the server has
+  given no verdict — a read that failed on the way out or has not been
+  answered — the note is asked for again on its own (`note-screen.md`,
+  "Arriving"). The editor saves into the queue as above; the Recordings tab
   treats a paused or network-failed artifacts query as unreachable
   (`RecordingRow` `unreachable`) rather than as audio that is gone.
 - **Capture**: recording works; the bytes are on disk, and a send that
