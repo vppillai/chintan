@@ -484,3 +484,15 @@ Four PRs, each reviewed against the code; the reviews drove a real app through t
 **Ledger truth (#251).** Eleven rows finished in rounds 12 to 15 under new ids never had their old ids closed, so "Open, unowned" read sixteen when it was four. Correction rows close them.
 
 **For you:** nothing new. Still standing: the bundle rule, the Malayalam clips, the phone screen-lock check.
+
+## 5 Oct, night — round 17: the notification that opened on "not found"
+
+You tapped a new-note notification and the app said the note was not here. The note existed the whole time; the server never answered "not found".
+
+**What happened, from the logs.** The ring recording filed at 22:32:59 UTC and the push went out the same second, after the note was written. Then nothing from your phone reached the gateway for seventeen minutes. The app had last been used eight hours earlier, so its token had expired; on a cold open the first request waits for a token refresh, and that refresh call had no timeout. On a phone just waking its radio it hung. After six seconds the screen gave up with "the server hasn't answered yet", and Try again only joined the same dead request. At 22:49 the app got through and the note came back in 35 ms.
+
+**Fixed (#256).** The token refresh is bounded at fifteen seconds, headers and body; a timed-out refresh counts as a network blip and the request goes out with the token it has. While the browser says it is online and the server has given no verdict, the note screen re-asks on the filing ladder (1.5 s, 4 s, 15 s) for up to ten minutes and says "Trying again…"; a real "not found" is still a verdict. Two browser tests reproduce both shapes. The review caught the first version of the ladder resetting its clock on every attempt, a two-second loop dressed as a back-off, and the refresh bound stopping at the headers; both fixed before merge.
+
+**Found on the way:** bursts of real 404s after cold starts come from the idle body prefetch re-asking for notes deleted elsewhere (PR17-4), and a second read follows every real 404 about a second later (PR17-5). Both small, both queued.
+
+**For you:** nothing. The three standing items are unchanged.
