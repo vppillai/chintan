@@ -59,7 +59,11 @@ test('a token refresh that never answers is given up on, and the note still appe
     /Ridge tiles on the south slope/,
     { timeout: 25_000 },
   );
-  // At least the one the first request waited on; a query that starts after
-  // it gave up asks again, which is the client's rule, not this test's.
+  // At least the one the first request waited on. The count floats: the
+  // token set is still stale after a timed-out refresh and `stallToken`
+  // still stalls, so every query that starts after the first refresh gave
+  // up — the captures poll, a ladder tick — owes a refresh of its own and
+  // asks again. That is the client's rule (a due refresh before each
+  // request), not this test's.
   expect(api.auth.token.length).toBeGreaterThanOrEqual(1);
 });

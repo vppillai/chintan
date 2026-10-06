@@ -128,4 +128,35 @@ describe('a token endpoint that never answers', () => {
       vi.useRealTimers();
     }
   });
+
+  it('gives up within the bound when the headers arrive and the body never ends', async () => {
+    vi.useFakeTimers();
+    try {
+      // A 200 whose body stream is never closed: `json()` would hang for good.
+      const headersOnly = vi.fn<typeof fetch>(
+        async () =>
+          new Response(new ReadableStream({ start() {} }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+      );
+      const session = new Session(
+        createMemoryTokenStore(tokens({ expiresAt: Date.now() - 1 })),
+        new CognitoRefresher('https://cognito.test', 'client', headersOnly),
+      );
+
+      const outcome = session.refresh().then(
+        () => 'resolved',
+        (error: unknown) => error,
+      );
+      await vi.advanceTimersByTimeAsync(REFRESH_TIMEOUT_MS + 1);
+      const error = await outcome;
+
+      expect(error).toBeInstanceOf(ApiError);
+      expect((error as ApiError).isOffline).toBe(true);
+      expect(session.isAuthenticated()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -185,37 +185,56 @@ export class CognitoRefresher implements TokenRefresher {
     });
 
     // A refresh that times out is a network failure, not a refusal: the
-    // session stays, and the next request asks again.
+    // session stays, and the next request asks again. The bound covers the
+    // body as well as the headers — a link that dies mid-response leaves
+    // `json()` hanging just as the connect did — raced against the abort
+    // explicitly, since a stand-in Response is not tied to the signal.
     const controller = new AbortController();
     const timer = setTimeout(() => {
       controller.abort();
     }, REFRESH_TIMEOUT_MS);
-    let response: Response;
+    let wire: TokenSetWire;
     try {
-      response = await this.fetchImpl(`${this.domain}/oauth2/token`, {
+      const response = await this.fetchImpl(`${this.domain}/oauth2/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body,
         signal: controller.signal,
       });
+      if (!response.ok) {
+        throw new ApiError({
+          kind: 'http',
+          status: response.status === 400 ? 401 : response.status,
+          title: 'Your session has expired',
+          detail: 'Sign in again to continue.',
+        });
+      }
+      wire = await untilAborted(response.json() as Promise<TokenSetWire>, controller.signal);
     } catch (cause) {
+      if (cause instanceof ApiError) throw cause;
       throw networkError(cause);
     } finally {
       clearTimeout(timer);
     }
-
-    if (!response.ok) {
-      throw new ApiError({
-        kind: 'http',
-        status: response.status === 400 ? 401 : response.status,
-        title: 'Your session has expired',
-        detail: 'Sign in again to continue.',
-      });
-    }
-
-    const wire = (await response.json()) as TokenSetWire;
     return tokenSetFromWire(wire, Date.now(), tokens);
   }
+}
+
+/** `promise`, or a rejection the moment `signal` aborts, whichever is first. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      reject(new DOMException('The refresh timed out', 'AbortError'));
+    };
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener('abort', onAbort);
+    });
+  });
 }
 
 export function createSession(

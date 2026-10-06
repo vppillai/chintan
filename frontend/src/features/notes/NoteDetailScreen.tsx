@@ -298,18 +298,25 @@ export function NoteDetailScreen() {
    * reaches the server — which has had the note since before the push was
    * sent. The query does not retry on its own and the browser, which never
    * said "offline", fires no reconnect; so the screen stood on "Not on this
-   * device" over a note one more request would have shown. While the server
-   * has answered nothing final and the browser still reports a connection,
-   * the note is asked for again on the filing ladder (`noteRetryInterval`);
-   * a refetch during a request still in the air joins it, so this never
-   * doubles a slow one. A real 404 is a verdict and is not retried.
+   * device" over a note one more request would have shown. Until the note
+   * or a verdict arrives — a 404, a refusal, anything neither retryable nor
+   * offline — the note is asked for again on the filing ladder
+   * (`noteRetryInterval`), while the browser still reports a connection.
+   *
+   * The latch is the verdict, not the fetch state: a refetch of a query
+   * with no data goes back to pending with its error cleared, and a latch
+   * read from the error flipped off on every tick, restarted the clock and
+   * held the cadence at the first rung for ever. `since` is stamped once,
+   * at mount. A tick during a read still in the air joins it at no cost,
+   * which holds because `!note` gates this: with no data TanStack hands a
+   * refetch the in-flight promise rather than starting a second request.
    */
-  const reasking =
-    !note &&
-    online &&
-    !paused &&
-    (unanswered || (error instanceof ApiError && error.isOffline));
-  usePollNote(id ?? '', useSince(reasking), noteRetryInterval);
+  const verdict = error instanceof ApiError && !error.isRetryable && !error.isOffline;
+  const reasking = !note && online && !paused && !verdict;
+  const [since] = useState(() => Date.now());
+  usePollNote(id ?? '', reasking ? since : null, noteRetryInterval);
+  // Past the ladder's end the sentence stops promising a retry; Try again stands.
+  const gaveUp = useTimedOut(reasking, NOTE_RETRY_GIVE_UP_MS);
 
   if (waiting && !patienceOver) {
     return (
@@ -332,7 +339,7 @@ export function NoteDetailScreen() {
           {offline
             ? 'You’re offline and this note isn’t saved on this device. It will be here once you have a connection.'
             : unanswered
-              ? 'This note isn’t saved on this device, and the server hasn’t answered yet. Trying again…'
+              ? `This note isn’t saved on this device, and the server hasn’t answered yet.${gaveUp ? '' : ' Trying again…'}`
               : 'No note with that identifier. It may have been archived or purged.'}
         </p>
         {unanswered && (
@@ -699,41 +706,21 @@ export const LOADING_PATIENCE_MS = 6_000;
  * How often a note the server has not answered for is asked for again: the
  * filing poll's own ladder, since a note just announced by a push is the
  * common case — brisk while the answer is most likely a second away, then
- * every few seconds, then every fifteen for as long as the screen stays on
- * it. Module-level, as `usePollNote` requires; `elapsedMs` is since the
- * screen first found itself without an answer.
+ * every few seconds, then every fifteen until `NOTE_RETRY_GIVE_UP_MS`, after
+ * which Try again is the only way. Module-level, as `usePollNote` requires;
+ * `elapsedMs` is since the screen mounted.
  */
-export function noteRetryInterval(elapsedMs: number): number {
+export function noteRetryInterval(elapsedMs: number): number | false {
+  if (elapsedMs >= NOTE_RETRY_GIVE_UP_MS) return false;
   if (elapsedMs < CAPTURE_POLL_FAST_WINDOW_MS) return CAPTURE_POLL_FAST_MS;
   if (elapsedMs < NOTE_RETRY_BRISK_MS) return CAPTURE_POLL_INTERVAL_MS;
   return CAPTURE_POLL_SLOW_MS;
 }
 
-/** Brisk re-asks for this long since the first unanswered read, then the slow cadence. */
+/** Brisk re-asks for this long since the screen mounted, then the slow cadence. */
 const NOTE_RETRY_BRISK_MS = 2 * 60 * 1000;
-
-/**
- * When `active` last became true, or null while it is false — the clock a
- * ladder of re-asks is read against. Stamped from a timer, as `useTimedOut`
- * is, so the render stays pure; the one tick it costs is nothing against the
- * ladder's first rung.
- */
-function useSince(active: boolean): number | null {
-  const [since, setSince] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (!active) return;
-    const timer = setTimeout(() => {
-      setSince(Date.now());
-    }, 0);
-    return () => {
-      clearTimeout(timer);
-      setSince(null);
-    };
-  }, [active]);
-
-  return since;
-}
+/** The ladder's end: after this the screen asks no more on its own. */
+export const NOTE_RETRY_GIVE_UP_MS = 10 * 60 * 1000;
 
 /**
  * True once `active` has been continuously true for `ms`. Falls back to false

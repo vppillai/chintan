@@ -84,13 +84,17 @@ No verdict is not a verdict. A note opened from a push notification
 first request before it reaches the server, which has had the note since
 before the push. So while the browser still reports a connection and the
 answer is offline-on-the-way-out or unanswered, the note is asked for again
-on the filing ladder (`noteRetryInterval`: every 1.5 s for the first half
-minute, every 4 s to two minutes, every 15 s after, and only while the app is
-in front, through `usePollNote`), until the note or a verdict arrives. A
-refetch while a request is still in the air joins it, so a slow answer is
-never doubled. The browser's own reconnect — `navigator.onLine` turning
-true — refetches as before; this covers the link that never said it was
-down.
+on the filing ladder (`noteRetryInterval`, measured from the screen's
+mount: every 1.5 s for the first half minute, every 4 s to two minutes,
+every 15 s to ten minutes, then not at all — the sentence drops its
+"Trying again…" and Try again is the only way; only while the app is in
+front, through `usePollNote`), until the note or a verdict arrives. The
+latch is the verdict, not the fetch state: a refetch of a query with no
+data goes back to pending with its error cleared, so a latch read from the
+error would restart the clock on every tick. A refetch while a request is
+still in the air joins it, so a slow answer is never doubled. The browser's
+own reconnect — `navigator.onLine` turning true — refetches as before; this
+covers the link that never said it was down.
 
 ## The three tabs
 
