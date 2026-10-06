@@ -18,7 +18,10 @@ test('a first read that failed on the way out is asked again, and the note appea
   api.dropNoteGets = 4;
   await page.goto('/notes/roof-repair');
 
-  await expect(page.getByRole('heading', { name: 'Not on this device' })).toBeVisible();
+  // Not asserted on the way: "Not on this device" stands only between the
+  // dropped read's failure and the next rung of the ladder, which re-reads a
+  // query with no data and so clears its error — a window a fast machine
+  // closes before the locator looks.
   await expect(page.getByRole('textbox', { name: 'Note body' })).toHaveValue(
     /Ridge tiles on the south slope/,
     { timeout: 10_000 },
