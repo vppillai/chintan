@@ -111,9 +111,15 @@ type NoteUpdates struct {
 	// Pinned puts the note in the Pinned group at the top of Home, or takes
 	// it out. A new pin lands last among the pinned notes; the order within
 	// the group is ReorderPins's.
-	Pinned          *bool
+	Pinned *bool
+	// Color tints the note's row on Home: one of model.NoteColors, or "" for
+	// none. Like a pin it is not an edit, so updated_at stays where it was.
+	Color           *string
 	ExpectedVersion *int64
 }
+
+// ErrInvalidNoteColor rejects a colour that is not one of model.NoteColors.
+var ErrInvalidNoteColor = errors.New("color must be none, rose, peach, sand, lime, mint, sky, lavender or slate")
 
 // ErrInvalidNoteKind rejects a kind that is not "" or checklist.
 var ErrInvalidNoteKind = errors.New("kind must be note or checklist")
@@ -607,6 +613,12 @@ func (s *NotesService) applyNoteUpdates(ctx context.Context, userID string, note
 			return false, err
 		}
 		note.CleanMode = *updates.CleanMode
+	}
+	if updates.Color != nil {
+		if !model.ValidNoteColor(*updates.Color) {
+			return false, ErrInvalidNoteColor
+		}
+		note.Color = *updates.Color
 	}
 	if updates.Pinned != nil {
 		switch {

@@ -359,7 +359,10 @@ export function NoteDetailScreen() {
   }
 
   return (
-    <div className="screen note-screen">
+    <div
+      className="screen note-screen"
+      data-color={(editor.model.draft.color ?? 'none') === 'none' ? undefined : editor.model.draft.color}
+    >
       <PullToRefresh onRefresh={refresh} />
 
       <header className="screen__header screen__header--detail">

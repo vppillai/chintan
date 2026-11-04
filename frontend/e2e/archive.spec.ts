@@ -79,8 +79,8 @@ test('Delete on a row archives it, and Undo is reached from the keyboard', async
   const row = page.getByRole('button', { name: /roof repair/i });
   await row.hover();
   await page.locator('.note-row-wrap', { has: row }).getByRole('button', { name: 'More' }).click();
-  // The row's ⋮ has Pin and Delete — no separate Archive on Home, and no Select.
-  await expect(page.getByRole('menuitem')).toHaveText(['Pin', 'Delete']);
+  // The row's ⋮ has Pin, Colour… and Delete — no separate Archive on Home, and no Select.
+  await expect(page.getByRole('menuitem')).toHaveText(['Pin', 'Colour…', 'Delete']);
   await page.getByRole('menuitem', { name: 'Delete' }).click();
   await page.getByRole('dialog', { name: 'Delete “Roof repair”?' }).getByRole('button', { name: 'Delete' }).click();
 

@@ -24,7 +24,12 @@ region's rules in `styles/shell.css` `.app__main`).
 
 Top to bottom, inside the shell's one scroll region (`.app__main`):
 
-- **Header** (`screen__header--detail`): "‹ Notes" (`BackLink`, which goes
+- **Header** (`screen__header--detail`), under a wash of the note's colour
+  when it has one: the screen wears `data-color` from the draft and the tint
+  fades out below the title (`.note-screen[data-color]`, `home.css`). The
+  colour rides the draft like the language — one PATCH with the note's
+  version, queued offline with the rest of the draft — so the wash follows
+  a swatch at once: "‹ Notes" (`BackLink`, which goes
   back one history entry when the app has one beneath and otherwise replaces
   itself with the library through `goBackTo`; the stack model is
   `navigation.md`), the Find toggle (`aria-expanded`, `aria-controls` the
@@ -209,7 +214,8 @@ scrolls sideways.
 
 ## The drawer
 
-Details — the transcription language, Tags, "Also called", the Word for
+Details — the transcription language, Tags, "Also called", Colour (the
+row of swatches Home's Colour… dialog holds, home.md "Colour"), the Word for
 word and Checklist switches, and the note's id in monospace with a **Copy
 note id** button and the `X-Chintan-Note-Id` hint — or Share. The rules:
 
@@ -443,6 +449,28 @@ are one zip built on the device (`zipRecordings.ts`: the manifest from `GET
 /v1/notes/{id}/recordings/urls`, fetched one at a time with progress, stored
 not deflated via `fflate`). What an action did is said on the notice line
 under the rows.
+
+A download — one file or the zip — is in the format chosen on You →
+Your data (`downloadFormat.ts`, per device in `localStorage`): as recorded
+(WebM from a browser, M4A or MP3 from a shortcut), or MP4. MP4 is made on
+the device by `toMp4.ts`, a chunk of its own loaded only at that tap:
+`decodeAudioData` reads the recording at 48 kHz, it is mixed to one channel,
+WebCodecs' `AudioEncoder` writes AAC-LC, and a small ISO BMFF writer puts it
+in an `.m4a` (`moov` before `mdat`). The AAC config in the file is always
+the writer's own (48 kHz mono), never the encoder's: Safari 26/27 reports a
+wrong one (WebKit bug 302253) and the file plays silent. An edit list skips
+1024 samples of encoder delay; an encoder that primes more (Apple's 2112)
+leaves about 23 ms of silence at the start. A browser with no AAC encoder
+(Firefox, open-source Chromium) gets Opus in the same container as `.mp4`;
+one with no `AudioEncoder` at all — Safari before 26, so an iPhone before
+iOS 26 — gets the fixed sentence on the notice line and can still download
+as recorded. An M4A or MP4 already in the bucket is saved untouched. The
+encoder holds at most four 100 ms blocks before the loop waits on it
+(`dequeue`), so what memory the conversion takes is the decoded recording:
+32-bit PCM at 48 kHz, about 230 MB for twenty minutes, on top of the file
+itself. The server does not transcode: that would mean an ffmpeg layer in
+the worker and a second object per recording, for a conversion every
+browser with a WebCodecs `AudioEncoder` does itself.
 
 ### Transcribe again
 

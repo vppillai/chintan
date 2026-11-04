@@ -12,6 +12,7 @@ import { SelectionBar } from '@/components/SelectionBar.tsx';
 import { LocalUploadItem } from '@/features/capture/FilingRow.tsx';
 import type { CaptureModel } from '@/features/capture/machine.ts';
 
+import { downloadFormat, needsConversion, withExtension } from './downloadFormat.ts';
 import { MoveSheet } from './MoveSheet.tsx';
 import type { TranscriptView } from './TranscriptPanel.tsx';
 import { RecordingRow } from './recordings/RecordingRow.tsx';
@@ -253,6 +254,18 @@ export function Recordings({
    */
   const runDownload = async (ids: string[]): Promise<void> => {
     setNotice(null);
+    /*
+     * The format chosen on You, read at the tap. MP4 is converted on the
+     * device, and the converter is its own chunk, loaded only here — a
+     * download as recorded never fetches it (`toMp4.ts`).
+     */
+    const format = downloadFormat();
+    const convert = async (bytes: ArrayBuffer, filename: string): Promise<[ArrayBuffer, string]> => {
+      if (!needsConversion(filename, format)) return [bytes, filename];
+      const { toMp4 } = await import('./toMp4.ts');
+      const mp4 = await toMp4(bytes);
+      return [await mp4.blob.arrayBuffer(), withExtension(filename, mp4.extension)];
+    };
     setDownload({ phase: 'working', done: 0, total: ids.length });
     try {
       const wanted = new Set(ids);
@@ -274,14 +287,20 @@ export function Recordings({
         const [item] = items as [(typeof items)[number]];
         const response = await fetch(item.url, { cache: 'no-store' });
         if (!response.ok) throw new Error(`audio fetch failed: ${String(response.status)}`);
-        saveBlob(await response.blob(), item.filename);
+        const [bytes, filename] = await convert(await response.arrayBuffer(), item.filename);
+        saveBlob(new Blob([bytes]), filename);
       } else {
         // The zip writer and `fflate` arrive only when an archive is asked
         // for: no launch needs them, and they are a chunk of their own.
         const { archiveName, zipRecordings } = await import('./zipRecordings.ts');
-        const blob = await zipRecordings(items, (done, total) => {
-          setDownload({ phase: 'working', done, total });
-        });
+        const blob = await zipRecordings(
+          items,
+          (done, total) => {
+            setDownload({ phase: 'working', done, total });
+          },
+          undefined,
+          convert,
+        );
         saveBlob(blob, archiveName(note.title));
       }
       setDownload({ phase: 'idle' });
@@ -295,9 +314,15 @@ export function Recordings({
         tone: 'ok',
       });
       stopSelecting();
-    } catch {
+    } catch (error) {
       setDownload({ phase: 'idle' });
-      setNotice({ text: 'Could not download — try again.', tone: 'error' });
+      setNotice({
+        text:
+          error instanceof Error && error.name === 'Mp4Unsupported'
+            ? 'This browser cannot make MP4 files. Choose “As recorded” under You → Your data.'
+            : 'Could not download — try again.',
+        tone: 'error',
+      });
     }
   };
 

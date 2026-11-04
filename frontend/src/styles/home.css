@@ -599,3 +599,124 @@
   font-size: var(--font-size-sm);
   color: var(--color-muted);
 }
+
+/* ==========================================================================
+   Note colour — a tint by name (`data-color`), the row's ground on Home, the
+   wash at the top of the note screen and the swatch in the picker. The
+   whole card is tinted rather than banded: a pastel band beside a raised
+   card barely registers, and the tint is chosen so every text on the card
+   keeps AA (tokens.css). `none` exists only for the picker's swatch.
+   ========================================================================== */
+
+[data-color='none'] {
+  --note-tint: var(--color-raised);
+}
+
+[data-color='rose'] {
+  --note-tint: var(--color-tint-rose);
+}
+
+[data-color='peach'] {
+  --note-tint: var(--color-tint-peach);
+}
+
+[data-color='sand'] {
+  --note-tint: var(--color-tint-sand);
+}
+
+[data-color='lime'] {
+  --note-tint: var(--color-tint-lime);
+}
+
+[data-color='mint'] {
+  --note-tint: var(--color-tint-mint);
+}
+
+[data-color='sky'] {
+  --note-tint: var(--color-tint-sky);
+}
+
+[data-color='lavender'] {
+  --note-tint: var(--color-tint-lavender);
+}
+
+[data-color='slate'] {
+  --note-tint: var(--color-tint-slate);
+}
+
+/* `:where` keeps this at the base rule's weight, so `.note-row:active`
+   still presses a tinted card. */
+:where(.note-row)[data-color] {
+  background-color: var(--note-tint);
+}
+
+/* A tag chip's hairline disappears into a tint; the stronger line keeps it. */
+.note-row[data-color] .note-row__tag {
+  border-color: var(--color-line-strong);
+}
+
+/* The note screen: the tint at the top, fading out under the title. */
+.note-screen[data-color] {
+  background-image: linear-gradient(to bottom, var(--note-tint), var(--note-tint) var(--space-8), transparent 12rem);
+}
+
+/* The picker: a row of 44 px swatches, each a radio stretched over its disc. */
+.color-picker {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+
+.color-picker__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.color-picker__swatch {
+  position: relative;
+  display: grid;
+  place-items: center;
+  inline-size: var(--layout-touch-target-min);
+  block-size: var(--layout-touch-target-min);
+  border-radius: var(--radius-full);
+}
+
+.color-picker__swatch::before {
+  content: '';
+  inline-size: var(--space-8);
+  block-size: var(--space-8);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  background-color: var(--note-tint);
+}
+
+/* No colour: the plain card with a slash through it. */
+.color-picker__swatch[data-color='none']::before {
+  background-image: linear-gradient(
+    135deg,
+    transparent calc(50% - 1px),
+    var(--color-line-strong) calc(50% - 1px),
+    var(--color-line-strong) calc(50% + 1px),
+    transparent calc(50% + 1px)
+  );
+}
+
+.color-picker__input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* The current colour: a ring in ink, which every tint carries at AA. */
+.color-picker__swatch:has(:checked)::before {
+  border: 3px solid var(--color-ink);
+}
+
+.color-picker__swatch:has(:focus-visible) {
+  outline: var(--layout-focus-ring-width) solid var(--color-ink);
+  outline-offset: calc(var(--layout-focus-ring-offset) * -1);
+}

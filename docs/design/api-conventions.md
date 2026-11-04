@@ -105,6 +105,12 @@ other. Field bounds are constants in `body.go`: `MaxTitleRunes` 200
 (`routing.MaxTitleRunes`), 32 aliases of 120 runes, 32 tags of 40,
 `MaxMatchQuery` 2000, `MaxSearchQuery` 500.
 
+An enum whose stored default is the empty string is never absent on the
+wire: a note's `kind` reads `note` and its `color` reads `none`
+(`wireNoteKind`, `wireNoteColor` in `handler/wire.go`), and the same name is
+what a PATCH sends to set it back. Storage keeps `""`, so a row written
+before the field existed needs no backfill.
+
 Every collection is cursor-paginated: `limit` defaults to
 `repository.DefaultListLimit` (50) and is clamped to `MaxListLimit` (200);
 the cursor is opaque base64url bound to the query that minted it — a note

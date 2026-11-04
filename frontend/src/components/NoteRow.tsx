@@ -1,9 +1,10 @@
-import { useId, useState } from 'react';
+import { Suspense, lazy, useId, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
 import {
   useArchiveNote,
+  useColorNote,
   useDeleteNoteForever,
   usePinNote,
   useRestoreNote,
@@ -22,12 +23,17 @@ import { describeRecordings, formatRowTime } from '@/features/notes/groups.ts';
 import { describePurge, purgeCountdown } from '@/features/notes/purge.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 
+import { colorName } from './colorName.ts';
 import { ConfirmDialog } from './ConfirmDialog.tsx';
 import { DeleteConfirm } from './DeleteConfirm.tsx';
+import { announce } from './StatusRegion.tsx';
 import { showDeleted } from './Toast.tsx';
 import { Icon } from './Icon.tsx';
 import { OverflowMenu, type OverflowMenuItem } from './OverflowMenu.tsx';
 import { SwipeRow, type SwipeAction } from './SwipeRow.tsx';
+
+// The picker arrives when Colour… is first opened: no launch needs it.
+const ColorDialog = lazy(() => import('./ColorPicker.tsx').then((m) => ({ default: m.ColorDialog })));
 
 export interface NoteRowProps {
   note: NoteWire;
@@ -67,7 +73,7 @@ export interface NoteRowProps {
  * on the row does nothing and its release opens the note like a tap. Every
  * action is on the row. The ⋮ at its right is revealed on hover and on focus
  * for a pointer that can hover, always there at low emphasis under a finger,
- * where nothing can hover. It holds Pin (or Unpin) and Delete — or Restore
+ * where nothing can hover. It holds Pin (or Unpin), Colour… and Delete — or Restore
  * and Delete forever, in the archive — and, on a pinned row, Move up and
  * Move down, so every action the swipe tray offers is a click away on the
  * desktop too, and the pinned order can be changed without a drag.
@@ -107,10 +113,13 @@ export function NoteRow({
   const undo = useUndoDelete();
   const purge = useDeleteNoteForever();
   const pin = usePinNote();
-  const [confirming, setConfirming] = useState<'delete' | 'purge' | null>(null);
+  const color = useColorNote(note.id);
+  const [confirming, setConfirming] = useState<'delete' | 'purge' | 'color' | null>(null);
   const busy =
     archive.isPending || restore.isPending || undo.isPending || purge.isPending || pin.isPending;
-  const failure = archive.error ?? restore.error ?? undo.error ?? purge.error ?? pin.error;
+  const failure =
+    archive.error ?? restore.error ?? undo.error ?? purge.error ?? pin.error ?? color.error;
+  const tint = note.color ?? 'none';
 
   const tags = note.tags ?? [];
   const time = formatRowTime(note.updated_at);
@@ -221,6 +230,15 @@ export function NoteRow({
         ]
       : [
           { label: pinLabel, disabled: busy || !online, onSelect: togglePin },
+          // Online only, like the pin: the row has no queue of its own. The
+          // note screen's Details carries a colour through the offline queue.
+          {
+            label: 'Colour…',
+            disabled: busy || !online,
+            onSelect: () => {
+              setConfirming('color');
+            },
+          },
           { label: 'Delete', destructive: true, disabled: busy, onSelect: remove },
         ]),
     ...(onMoveUp ? [{ label: 'Move up', disabled: !online, onSelect: onMoveUp }] : []),
@@ -240,6 +258,7 @@ export function NoteRow({
             type="button"
             className="note-row"
             data-pinned={note.pinned || undefined}
+            data-color={tint === 'none' ? undefined : tint}
             onClick={() => {
               void navigate(ROUTES.note(note.id));
             }}
@@ -263,6 +282,22 @@ export function NoteRow({
         <p className="note-row__error" role="alert">
           {failure instanceof ApiError ? failure.userMessage : 'That did not go through.'}
         </p>
+      )}
+
+      {confirming === 'color' && (
+        <Suspense fallback={null}>
+          <ColorDialog
+            title={note.title}
+            value={tint}
+            onChange={(next) => {
+              color.mutate({ version: note.version, color: next });
+              announce(`Colour: ${colorName(next)}`);
+            }}
+            onClose={() => {
+              setConfirming(null);
+            }}
+          />
+        </Suspense>
       )}
 
       <DeleteConfirm

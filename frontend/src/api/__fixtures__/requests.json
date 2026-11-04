@@ -126,6 +126,15 @@
     }
   },
   {
+    "name": "colorNote",
+    "method": "PATCH",
+    "path": "/v1/notes/contract-note",
+    "body": {
+      "version": 1,
+      "color": "mint"
+    }
+  },
+  {
     "name": "reorderPins",
     "method": "POST",
     "path": "/v1/notes/pins",
