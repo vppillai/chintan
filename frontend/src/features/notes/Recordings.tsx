@@ -28,7 +28,9 @@ import { useRetranscribeCapture } from './recordings/useRetranscribeCapture.ts';
 
 // Its own chunk: the sheet is opened from a menu, and the launch carries a
 // fixed budget of bytes (check-bundle).
-const MoveSheet = lazy(() => import('./MoveSheet.tsx').then((module) => ({ default: module.MoveSheet })));
+const MoveSheet = lazy(() =>
+  import('./MoveSheet.tsx').then((module) => ({ default: module.MoveSheet })),
+);
 
 type DownloadProgress = { phase: 'idle' } | { phase: 'working'; done: number; total: number };
 

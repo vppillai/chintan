@@ -301,6 +301,8 @@ describe('NoteRow colour', () => {
     expect(screen.getByRole('button', { name: /roof repair/i })).not.toHaveAttribute('data-color');
     await user.click(screen.getByRole('button', { name: 'More' }));
     expect(screen.getByRole('menuitem', { name: 'Colour…' })).toBeDisabled();
+  });
+});
 
 describe('a search hit', () => {
   it('marks every word of the search, apart, as the search matched them', () => {
