@@ -24,7 +24,7 @@ link (`base.css` `.skip-link`, `--z-skip-link`) and `useRouteFocus` land
 `note-screen.md`'s. The shell mounts the app-wide hooks once: `useBackGuard`,
 `usePendingTab`, `useScrollRestore` (`navigation.md`), `useKeyboardInset`
 (`note-screen.md`), `useResendOnReconnect` (`offline.md`), `usePushWakeup`
-(`push.md`) and `usePasskeyReturn` (`auth.md`). Below the gate — the shell
+and `usePushResync` (`push.md`) and `usePasskeyReturn` (`auth.md`). Below the gate — the shell
 renders `SignedOutScreen` alone while `useAuthGate` is not `signed-in` — so
 no authenticated query can mount without a token.
 
