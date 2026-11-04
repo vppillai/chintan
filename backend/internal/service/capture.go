@@ -503,15 +503,18 @@ func (s *CaptureService) RetryCapture(ctx context.Context, userID, captureID str
 	// device that recorded it, whose resend lands on this row while its link
 	// is live and arrives as a new capture after, so there is nothing a
 	// failed status would let anyone do that delete does not. While the link
-	// could still be used (uploadMayStillLand) it is refused as in flight,
-	// since the upload may yet arrive.
-	if neverMoved && capture.AudioKey != "" {
+	// could still be used (UploadMayStillLand) it is refused as in flight,
+	// since the upload may yet arrive. A failed row that resumes at
+	// `uploaded` — the reaper's verdict on one whose link expired
+	// (reconcile.NeverUploadedVerdict) — is checked the same way, so its
+	// Retry button is not a run against a missing object.
+	if capture.Status == model.StatusUploaded && capture.AudioKey != "" {
 		present, err := s.objects.Exists(ctx, capture.AudioKey)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check the recording's audio: %w", err)
 		}
 		if !present {
-			if uploadMayStillLand(capture, now) {
+			if neverMoved && UploadMayStillLand(capture, now) {
 				return &capture, ErrCaptureInFlight
 			}
 			return &capture, ErrCaptureNeverUploaded

@@ -198,3 +198,77 @@ func TestRunLeavesAnUploadedCaptureWhoseRecordingHasNotLanded(t *testing.T) {
 		t.Fatalf("an upload in flight was counted:\n%s", metrics.String())
 	}
 }
+
+// Past the upload link's expiry and its margin nothing can land on the row:
+// it is marked failed with its own sentence rather than rescanned, and polled
+// by the app, for good.
+func TestRunFailsAnUploadedCaptureWhoseLinkHasExpired(t *testing.T) {
+	ctx := context.Background()
+	var metrics bytes.Buffer
+	defer obs.SetMetricOutput(&metrics)()
+	store := dynamofake.NewStore()
+	old := now.Add(-36 * time.Minute)
+	if _, err := store.PutCapture(ctx, model.CaptureIndex{
+		ID: "abandoned", UserID: "tenant-a", Status: model.StatusUploaded,
+		AudioKey:  "tenants/tenant-a/captures/abandoned/audio.webm",
+		CreatedAt: model.FormatTime(old), LastProgressAt: model.FormatTime(old),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	run := func(ctx context.Context, tenantID, captureID string) (model.CaptureIndex, error) {
+		return model.CaptureIndex{}, errors.New("must not run")
+	}
+	r, _ := New(store, memory.NewObjects(), run)
+	r.now = func() time.Time { return now }
+	report, err := r.Run(ctx)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if report.Failed != 1 {
+		t.Fatalf("report = %+v, want one failed", report)
+	}
+	c, _ := store.GetCapture(ctx, "tenant-a", "abandoned")
+	if c.Status != model.StatusFailed || c.Error != NeverUploadedVerdict {
+		t.Fatalf("status = %s, error = %q; want failed with NeverUploadedVerdict", c.Status, c.Error)
+	}
+	if strings.Contains(metrics.String(), "CaptureReaped") {
+		t.Fatalf("an abandoned upload was counted as a reaped capture, which pages:\n%s", metrics.String())
+	}
+}
+
+// A pass with less than runBudget left starts no run, and a run its own
+// deadline cut is left for the next pass rather than marked failed.
+func TestRunStopsAtItsTimeBudgetAndFailsNothingItCut(t *testing.T) {
+	store := dynamofake.NewStore()
+	seed(t, store, "c1", model.StatusCleaned, now.Add(-time.Hour))
+
+	ran := 0
+	run := func(ctx context.Context, tenantID, captureID string) (model.CaptureIndex, error) {
+		ran++
+		return model.CaptureIndex{}, errors.New("must not run")
+	}
+	r, _ := New(store, memory.NewObjects(), run)
+	r.now = func() time.Time { return now }
+	short, cancel := context.WithTimeout(context.Background(), runBudget-time.Minute)
+	defer cancel()
+	if _, err := r.Run(short); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if ran != 0 {
+		t.Fatalf("a pass with less than its budget left started %d runs", ran)
+	}
+
+	cut, cancelCut := context.WithCancel(context.Background())
+	r.run = func(ctx context.Context, tenantID, captureID string) (model.CaptureIndex, error) {
+		cancelCut()
+		return model.CaptureIndex{Status: model.StatusCleaned}, context.Canceled
+	}
+	report, err := r.Run(cut)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	c, _ := store.GetCapture(context.Background(), "tenant-a", "c1")
+	if c.Status == model.StatusFailed || report.Failed != 0 {
+		t.Fatalf("a run the pass's own deadline cut was marked failed: status %s, report %+v", c.Status, report)
+	}
+}

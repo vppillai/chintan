@@ -66,9 +66,9 @@ func (s *CaptureService) DeleteCapture(ctx context.Context, userID, captureID st
 	// Stuck is not enough for an upload with no object yet: its link outlives
 	// the stuck threshold, so another device's delete could land between the
 	// recording device's PUT starting and finishing, and the recording would
-	// be lost (uploadMayStillLand). Once the object is there the row goes as
+	// be lost (UploadMayStillLand). Once the object is there the row goes as
 	// any stuck one does.
-	if capture.Status == model.StatusUploaded && capture.AudioKey != "" && uploadMayStillLand(capture, now) {
+	if capture.Status == model.StatusUploaded && capture.AudioKey != "" && UploadMayStillLand(capture, now) {
 		present, err := s.objects.Exists(ctx, capture.AudioKey)
 		if err != nil {
 			return fmt.Errorf("failed to check the recording's audio: %w", err)

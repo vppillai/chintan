@@ -662,6 +662,21 @@ func TestAnUploadThatNeverLandedIsKeptWhileItsLinkLives(t *testing.T) {
 		}
 	})
 
+	t.Run("minute 36, failed by the reaper, no object: retry says so", func(t *testing.T) {
+		svc, store, _, worker := seed(t, 36)
+		row, _ := store.GetCapture(context.Background(), "user1", "c_1")
+		row.Status, row.Error = model.StatusFailed, "The recording never finished uploading."
+		if _, err := store.PutCapture(context.Background(), row); err != nil {
+			t.Fatalf("PutCapture: %v", err)
+		}
+		if _, err := svc.RetryCapture(context.Background(), "user1", "c_1"); !errors.Is(err, ErrCaptureNeverUploaded) {
+			t.Fatalf("retry err = %v, want ErrCaptureNeverUploaded", err)
+		}
+		if len(worker.calls) != 0 {
+			t.Fatalf("the worker was handed audio that does not exist: %v", worker.calls)
+		}
+	})
+
 	t.Run("minute 20, object landed: retried as any stuck capture", func(t *testing.T) {
 		svc, _, objects, worker := seed(t, 20)
 		if err := objects.Put(context.Background(), audioKey, []byte("audio"), "audio/webm"); err != nil {
