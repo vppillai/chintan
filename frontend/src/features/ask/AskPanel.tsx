@@ -9,7 +9,8 @@ import { renderMarkdown } from '@/features/notes/markdown.ts';
 import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
 import { COST_NOTE, costNoteDismissed, dismissCostNote } from './costNote.ts';
-import { TIMEOUT_MESSAGE, noteFromThread, sourceLabels, type AskTurn } from './thread.ts';
+import { noteFromThread, sourceLabels } from './panelThread.ts';
+import { TIMEOUT_MESSAGE, type AskTurn } from './thread.ts';
 import type { AskThread } from './useAskThread.ts';
 
 /**

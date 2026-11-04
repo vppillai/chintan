@@ -9,7 +9,6 @@ import type { AskWire } from '@/api/schema.ts';
 import { ASK_POLL_TIMEOUT_MS } from '@/api/queries.ts';
 
 import {
-  ASK_NOTE_TAG,
   HISTORY_ANSWER_LIMIT,
   HISTORY_BYTES_BUDGET,
   HISTORY_LIMIT,
@@ -27,14 +26,12 @@ import {
   loadThread,
   nameSources,
   newTurn,
-  noteFromThread,
   resendTurn,
   resumeTurn,
   saveThread,
-  sourceLabels,
-  sourcesOf,
   type AskTurn,
 } from './thread.ts';
+import { ASK_NOTE_TAG, noteFromThread, sourceLabels, sourcesOf } from './panelThread.ts';
 
 /**
  * The generated row, with its sources told apart. The contract generator

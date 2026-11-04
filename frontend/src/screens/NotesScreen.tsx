@@ -12,9 +12,7 @@ import type { NoteWire } from '@/api/schema.ts';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
 import { Wordmark } from '@/components/Wordmark.tsx';
 import { useAskThread } from '@/features/ask/useAskThread.ts';
-import { PasskeyNudge } from '@/features/auth/PasskeyNudge.tsx';
 import { FilingRow } from '@/features/capture/FilingRow.tsx';
-import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
 import { groupByDay, splitPinned } from '@/features/notes/groups.ts';
 import { mergeResults, rankLocal } from '@/features/search/localSearch.ts';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue.ts';
@@ -36,6 +34,19 @@ export { chipScrollBy } from './library/LibraryField.tsx';
  */
 const AskPanel = lazy(() =>
   import('@/features/ask/AskPanel.tsx').then((m) => ({ default: m.AskPanel })),
+);
+
+/*
+ * So are the offer of a recording a killed tab stranded, which has something
+ * to say only after a crash, and the passkey nudge, which a device sees until
+ * it has one: each arrives a moment after Home's first paint rather than in
+ * every launch's download.
+ */
+const PasskeyNudge = lazy(() =>
+  import('@/features/auth/PasskeyNudge.tsx').then((m) => ({ default: m.PasskeyNudge })),
+);
+const ResumePrompt = lazy(() =>
+  import('@/features/capture/ResumePrompt.tsx').then((m) => ({ default: m.ResumePrompt })),
 );
 
 /**
@@ -311,8 +322,10 @@ export function NotesScreen() {
       {!asking && !searching && view === 'active' && (
         <>
           {/* Only once there is a note (round-3 T56): the first screen is about the first recording. */}
-          {notes.length > 0 && <PasskeyNudge />}
-          <ResumePrompt />
+          <Suspense fallback={null}>
+            {notes.length > 0 && <PasskeyNudge />}
+            <ResumePrompt />
+          </Suspense>
           <FilingRow />
         </>
       )}
