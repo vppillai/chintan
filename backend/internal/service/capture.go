@@ -480,6 +480,7 @@ func (s *CaptureService) RetryCapture(ctx context.Context, userID, captureID str
 	if err != nil {
 		return nil, fmt.Errorf("failed to get capture: %w", err)
 	}
+	prior := capture
 	now := s.now()
 	neverMoved := capture.Status == model.StatusUploaded && capture.Error == ""
 
@@ -528,7 +529,7 @@ func (s *CaptureService) RetryCapture(ctx context.Context, userID, captureID str
 	}
 	capture = updated
 
-	if err := s.invokeWorker(ctx, userID, captureID, "retry"); err != nil {
+	if err := s.handOff(ctx, userID, prior, capture, "retry"); err != nil {
 		return nil, err
 	}
 	return &capture, nil
@@ -558,6 +559,7 @@ func (s *CaptureService) RetranscribeCapture(ctx context.Context, userID, captur
 	if err != nil {
 		return nil, fmt.Errorf("failed to get capture: %w", err)
 	}
+	prior := capture
 	now := s.now()
 	if !model.IsTerminalStatus(capture.Status) && !CaptureStuck(capture, now) {
 		return &capture, ErrCaptureInFlight
@@ -613,7 +615,7 @@ func (s *CaptureService) RetranscribeCapture(ctx context.Context, userID, captur
 		return nil, fmt.Errorf("failed to reset capture: %w", err)
 	}
 
-	if err := s.invokeWorker(ctx, userID, captureID, "retranscribe"); err != nil {
+	if err := s.handOff(ctx, userID, prior, updated, "retranscribe"); err != nil {
 		return nil, err
 	}
 	return &updated, nil
@@ -645,6 +647,7 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 	if err != nil {
 		return nil, fmt.Errorf("failed to get capture: %w", err)
 	}
+	prior := capture
 	if capture.NoteID != "" {
 		return nil, ErrCaptureAlreadyTargeted
 	}
@@ -692,7 +695,7 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 		return nil, fmt.Errorf("failed to update capture: %w", err)
 	}
 
-	if err := s.invokeWorker(ctx, userID, captureID, "target"); err != nil {
+	if err := s.handOff(ctx, userID, prior, updated, "target"); err != nil {
 		return nil, err
 	}
 	return &updated, nil
@@ -742,6 +745,26 @@ func (s *CaptureService) invokeWorker(ctx context.Context, userID, captureID, re
 		slog.String("capture_id", captureID),
 		slog.String("reason", reason))
 	return nil
+}
+
+// handOff invokes the worker for a row just written as handed to it, and on
+// a failed invoke writes prior back over it. The written row's fresh
+// LastProgressAt reads as in flight for CaptureStuckAfter, so without the
+// rollback the person's next tap after the error was refused for fifteen
+// minutes with nothing running. Best effort: a rollback that fails is
+// logged, and the stuck rule is the bound it always was.
+func (s *CaptureService) handOff(ctx context.Context, userID string, prior, written model.CaptureIndex, reason string) error {
+	err := s.invokeWorker(ctx, userID, written.ID, reason)
+	if err == nil {
+		return nil
+	}
+	prior.Version = written.Version
+	if _, rerr := s.store.PutCapture(ctx, prior); rerr != nil {
+		obs.Log(ctx).Warn("could not roll the capture back after the worker hand-off failed; it reads as in flight until the stuck rule",
+			slog.String("capture_id", written.ID),
+			slog.String("error", rerr.Error()))
+	}
+	return err
 }
 
 // GetCapture returns a capture by ID.
