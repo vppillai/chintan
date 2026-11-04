@@ -451,6 +451,17 @@ export interface PresignedUploadWire {
   headers?: Record<string, string>;
 }
 
+/** `POST /v1/captures/text`: a typed thought, filed as a recording's transcript would be. */
+export interface CaptureTextWire {
+  text: string;
+  note_id?: string | null;
+}
+
+/** Its 202: the capture, already at `transcribed`. */
+export interface CaptureTextAcceptedWire {
+  capture: CaptureWire;
+}
+
 export interface CaptureCreatedWire {
   capture: CaptureWire;
   upload: PresignedUploadWire & { max_bytes: number };

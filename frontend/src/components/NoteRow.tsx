@@ -19,6 +19,7 @@ import {
   progressOf,
   snippetIsCut,
 } from '@/features/notes/checklist.ts';
+import { findMatches, splitRuns, type FindMatch } from '@/features/notes/find.ts';
 import { describeRecordings, formatRowTime } from '@/features/notes/groups.ts';
 import { describePurge, purgeCountdown } from '@/features/notes/purge.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
@@ -183,6 +184,12 @@ export function NoteRow({
   };
   const pinLabel = note.pinned ? 'Unpin' : 'Pin';
   /*
+   * A search hit only the server found is drawn from the hit alone
+   * (`noteForHit`): no version, so a Pin would be sent on version 0 and
+   * refused. Pin and Colour… wait until the row is a note the list has loaded.
+   */
+  const pinnable = online && note.version > 0;
+  /*
    * Delete on Home, once confirmed: archive, then offer Undo. Chained on the
    * promise rather than in a per-call `onSuccess`, which TanStack drops once
    * the row has unmounted — and the archive's own refetch is about to remove
@@ -219,7 +226,7 @@ export function NoteRow({
       ]
     : [
         // The tray has no disabled state, so offline the pin is simply not offered.
-        ...(online ? [{ id: 'pin', label: pinLabel, icon: 'pin' as const, onSelect: togglePin }] : []),
+        ...(pinnable ? [{ id: 'pin', label: pinLabel, icon: 'pin' as const, onSelect: togglePin }] : []),
         { id: 'delete', label: 'Delete', icon: 'trash', destructive: true, onSelect: remove },
       ];
   const menu: OverflowMenuItem[] = [
@@ -229,12 +236,13 @@ export function NoteRow({
           { label: 'Delete forever', destructive: true, disabled: busy, onSelect: removeForever },
         ]
       : [
-          { label: pinLabel, disabled: busy || !online, onSelect: togglePin },
+          { label: pinLabel, disabled: busy || !pinnable, onSelect: togglePin },
           // Online only, like the pin: the row has no queue of its own. The
           // note screen's Details carries a colour through the offline queue.
+          // Not on a server-only search hit either, which has no version.
           {
             label: 'Colour…',
-            disabled: busy || !online,
+            disabled: busy || !pinnable,
             onSelect: () => {
               setConfirming('color');
             },
@@ -260,7 +268,11 @@ export function NoteRow({
             data-pinned={note.pinned || undefined}
             data-color={tint === 'none' ? undefined : tint}
             onClick={() => {
-              void navigate(ROUTES.note(note.id));
+              // A search hit opens with Find on the search's first word, so
+              // the match is marked in the note, not hunted for again. Find
+              // looks for one phrase; the search, for every word apart.
+              const find = highlight?.trim().split(/\s+/u)[0];
+              void navigate(ROUTES.note(note.id), find ? { state: { find } } : undefined);
             }}
           >
             {body}
@@ -330,16 +342,48 @@ export function NoteRow({
   );
 }
 
-/** Renders the match in situ, with the hit marked rather than stripped out. */
+/**
+ * Renders the match in situ, with the hit marked rather than stripped out:
+ * every word of the search, each where it occurs, folded the way the search
+ * matched it (`findMatches`) — a two-word search marked nothing when the
+ * whole query was looked for as one phrase.
+ */
 function Marked({ text, term }: { text: string; term: string }) {
-  const index = term ? text.toLowerCase().indexOf(term.toLowerCase()) : -1;
-  if (index === -1) return <>{text}</>;
+  const matches = keptMatches(text, term);
+  if (matches.length === 0) return <>{text}</>;
 
   return (
     <>
-      {text.slice(0, index)}
-      <mark className="search-hit">{text.slice(index, index + term.length)}</mark>
-      {text.slice(index + term.length)}
+      {splitRuns(text, matches).map((run, index) =>
+        run.match === null ? (
+          run.text
+        ) : (
+          <mark key={index} className="search-hit">
+            {run.text}
+          </mark>
+        ),
+      )}
     </>
   );
+}
+
+/**
+ * Every word's matches, left to right, each kept only if it starts past the
+ * end of the last one kept: "kit" and "hen" inside "kitchen" are dropped,
+ * not drawn twice.
+ */
+function keptMatches(text: string, term: string): FindMatch[] {
+  const all = term
+    .split(/\s+/u)
+    .filter(Boolean)
+    .flatMap((word) => findMatches(text, word))
+    .sort((a, b) => a.start - b.start || b.end - a.end);
+  const kept: FindMatch[] = [];
+  let lastEnd = 0;
+  for (const match of all) {
+    if (match.start < lastEnd) continue;
+    kept.push(match);
+    lastEnd = match.end;
+  }
+  return kept;
 }

@@ -948,6 +948,9 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
           cleanup: { cost_micros: 11_842, calls: 50, input_tokens: 61_022, output_tokens: 13_131 },
         },
         days: [{ date: today, cost_micros: 40_791, calls: 118, audio_seconds: 1391.2 }],
+        // The month's facts, so /usage draws them (and the a11y sweep reads them).
+        api: { requests: 1_204 },
+        storage: { recordings: 50, audio_seconds: 1391.2, audio_bytes: 9_800_000, notes: 6, approximate: false },
         // The instance's AWS month to date, as the daily worker task recorded it (D6b).
         aws: {
           month_micros: 3_120_000,

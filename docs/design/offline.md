@@ -159,8 +159,8 @@ a conflict can be dropped".
 `OfflineBanner`, in the shell's banner row, says two things and only when
 true: "Offline — showing saved notes." or "Offline — nothing is saved on this
 device yet.", decided by whether any `['notes']` query in the TanStack cache
-holds an item (there is no query persister, so an offline cold start has
-nothing cached before a read lands); and "Waiting to sync N changes." /
+holds an item, the device's own copy among them — the banner reads it from
+IndexedDB itself (`useCachedNotes`), so every screen says the same as Home; and "Waiting to sync N changes." /
 "Syncing N changes." from the entries still to be sent (`queue.waiting`); a
 retired entry is not waiting, and its note's screen says what became of it.
 Signing out counts every entry (`queue.count`), retired ones included. Online with an empty queue it

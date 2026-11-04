@@ -43,7 +43,8 @@ Top to bottom, inside the shell's one scroll region (`.app__main`):
   arriving from Home's + carries `focusTitle` in its route state; once the
   editor holds the title, the field takes focus with the placeholder
   selected, one time per arrival, so typing replaces it (`home.md`, "New
-  note"). A title cleared to nothing is never sent (`autosave.ts`
+  note"). A title is one line: Enter in it moves on to the body, or to a
+  checklist's "Add an item". A title cleared to nothing is never sent (`autosave.ts`
   `patchFor`): the server refuses a blank title, and the placeholder stands
   on the server until there is a new one. Left untouched — placeholder
   title, empty body, no recording — such a note is discarded as the screen
@@ -286,7 +287,9 @@ note id** button and the `X-Chintan-Note-Id` hint — or Share. The rules:
   body keeps a drag past its end from reaching the page.
 - **A drag on the sheet never pulls to refresh.** `usePullToRefresh` arms
   only when `.app__main` is at its top *and* the finger lands outside any
-  nested scroller: on `touchstart` it walks from the target up to the
+  nested scroller, and claims the touch only after `GESTURE_SLOP_PX` of
+  travel that is more down than sideways, so a swipe along the chips or
+  across a row with a pixel of drift is never pulled: on `touchstart` it walks from the target up to the
   container and stands down inside an element with computed `overflow-y:
   auto|scroll` and more content than height (`insideNestedScroller`), which
   covers the sheet's body and the transcript scrollers on the Recordings
@@ -412,7 +415,10 @@ checklist the mirror is the rows (`ChecklistFindMirror`): the box as a
 glyph, the words marked, a sub-item set in by its level, a done row struck
 through, and none of the task-list syntax. The Recordings tab is not
 searchable; the bar stays, greyed, and says so. Enter is next, Shift+Enter
-previous, Escape closes.
+previous, Escape closes. A note opened from a search hit on Home arrives with
+the query's first word as `find` in its route state and the bar open on it,
+the hit marked; the field takes no focus for that arrival, so no keyboard
+covers the note, and does the next time the bar is opened by hand.
 
 ## The Recordings tab
 

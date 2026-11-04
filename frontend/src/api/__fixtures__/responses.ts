@@ -24,6 +24,7 @@
 import type {
   AskWire,
   CaptureCreatedWire,
+  CaptureTextAcceptedWire,
   CaptureWire,
   DeviceCreatedWire,
   DeviceWire,
@@ -843,6 +844,34 @@ export const captureCreated: CaptureCreatedWire = {
     },
     "max_bytes": 4194304,
     "url": "https://example.invalid/presigned"
+  }
+};
+
+/** POST /v1/captures/text → 202. A typed thought, already transcribed; the worker routes, cleans and appends it. */
+export const captureTextAccepted: CaptureTextAcceptedWire = {
+  "capture": {
+    "appended_at": null,
+    "created_at": "2026-01-01T00:00:00.000000000Z",
+    "created_note": false,
+    "duration_ms": null,
+    "error": null,
+    "excerpt": "Call the roofer about the ridge.",
+    "gate": null,
+    "has_audio": false,
+    "has_peaks": false,
+    "has_segments": false,
+    "id": "fixture-id",
+    "language": null,
+    "language_detected": null,
+    "last_progress_at": "2026-01-01T00:00:00.000000000Z",
+    "note_id": null,
+    "retry_after": "2026-01-01T00:00:00.000000000Z",
+    "source": "app",
+    "status": "transcribed",
+    "suggested_note_id": null,
+    "suggested_title": null,
+    "targeted": false,
+    "version": 1
   }
 };
 

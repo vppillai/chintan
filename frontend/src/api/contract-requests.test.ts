@@ -223,6 +223,12 @@ describe('the requests the frontend actually sends', () => {
     await call('createCaptureUnrouted', () =>
       api.createCapture({ content_type: 'audio/mp4' }, 'capture-local-2'),
     );
+    await call('captureText', () =>
+      api.captureText({ text: 'Call the roofer.', note_id: NOTE_ID }, 'typed-local-1'),
+    );
+    await call('captureTextUnrouted', () =>
+      api.captureText({ text: 'Call the roofer.' }, 'typed-local-2'),
+    );
     await call('getCapture', () => api.getCapture(CAPTURE_ID));
     await call('setCaptureTargetExisting', () =>
       api.setCaptureTarget(CAPTURE_ID, { note_id: NOTE_ID }),

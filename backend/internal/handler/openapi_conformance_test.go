@@ -1034,6 +1034,24 @@ func statusScenarios() map[string]scenario {
 			return h.do(t, http.MethodPost, "/v1/captures", "user1", map[string]any{"content_type": "audio/webm"}).Code
 		},
 
+		"POST /v1/captures/text -> 202": send(http.MethodPost, "/v1/captures/text", "user1", map[string]any{"text": "buy milk"}),
+		"POST /v1/captures/text -> 400": send(http.MethodPost, "/v1/captures/text", "user1", map[string]any{"text": "  "}),
+		"POST /v1/captures/text -> 401": send(http.MethodPost, "/v1/captures/text", "", map[string]any{"text": "buy milk"}),
+		"POST /v1/captures/text -> 404": send(http.MethodPost, "/v1/captures/text", "user1", map[string]any{"text": "buy milk", "note_id": "missing"}),
+		"POST /v1/captures/text -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/captures/text", "user1", map[string]any{"text": "buy milk", "note_id": archivedNote(t, h)}).Code
+		},
+		"POST /v1/captures/text -> 413": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/captures/text", "user1", map[string]any{"text": strings.Repeat("x", handler.MaxInboxTextRequestBytes)}).Code
+		},
+		"POST /v1/captures/text -> 429": func(t *testing.T) int {
+			h := newHarness(t)
+			h.spend.capped = true
+			return h.do(t, http.MethodPost, "/v1/captures/text", "user1", map[string]any{"text": "buy milk"}).Code
+		},
+
 		"GET /v1/captures/{captureId} -> 200": func(t *testing.T) int {
 			h := newHarness(t)
 			c := h.putCapture(t, model.CaptureIndex{ID: "c_r", UserID: "user1", Status: model.StatusUploaded, CreatedAt: model.Now()})

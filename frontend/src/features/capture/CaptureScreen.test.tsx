@@ -11,7 +11,7 @@ import { CaptureScreen, captureReturnPath } from './CaptureScreen.tsx';
 import { DISCARD_CONFIRM_AFTER_MS, INITIAL_CAPTURE } from './machine.ts';
 import type { RecorderDeps } from './recorder.ts';
 import { useCaptureStore } from './store.ts';
-import { optionMeta } from './TargetChooser.tsx';
+import { optionMeta } from './TargetChooserSheet.tsx';
 
 /* ---------------------------------------------------------------------------
    A recorder that produces one chunk and nothing else. jsdom has no media
@@ -739,7 +739,8 @@ describe('the screen says which language the recording will be transcribed in', 
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /into roof repair/i }));
-    await user.click(screen.getByRole('button', { name: 'Chintan decides' }));
+    // The sheet is a lazy chunk: its options land a tick after the pill.
+    await user.click(await screen.findByRole('button', { name: 'Chintan decides' }));
     expect(await screen.findByText('Language detected per recording')).toBeInTheDocument();
 
     // A note that inherits the default says the default.
@@ -798,6 +799,66 @@ describe('the target chooser', () => {
     expect(useCaptureStore.getState().model.noteId).toBeNull();
   });
 
+  it('finds any note the device holds, and starts a new one from the name typed', async () => {
+    const user = userEvent.setup();
+    const created: unknown[] = [];
+    const older = { ...TEST_NOTES[0], id: 'tax-2025', title: 'Tax 2025', updated_at: '2025-04-01T00:00:00.000Z' };
+    const recentNotes = Array.from({ length: 20 }, (_, index) => ({
+      ...TEST_NOTES[1],
+      id: `recent-${String(index)}`,
+      title: `Recent ${String(index)}`,
+    }));
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/v1/notes/tax-2026')) {
+        // The discard's check when the screen goes: a note with a capture in it.
+        return new Response(
+          JSON.stringify({ ...TEST_NOTES[0], id: 'tax-2026', title: 'Tax 2026', body: '', captures: [{ id: 'c1' }] }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url.pathname.endsWith('/v1/notes') && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as { title: string };
+        created.push(body);
+        return new Response(
+          JSON.stringify({ ...TEST_NOTES[0], id: 'tax-2026', title: body.title, body: '', captures: [] }),
+          { status: 201, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify({ items: [...recentNotes, older] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    mount('/capture', testApiContext(fetchImpl));
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Chintan decides' }));
+    const sheet = screen.getByRole('group', { name: 'Where this recording goes' });
+    await screen.findByRole('button', { name: /^Recent 0/ });
+    // The twenty-first note is not in the short list, but the field finds it.
+    expect(within(sheet).queryByRole('button', { name: /^Tax 2025/ })).toBeNull();
+    const field = within(sheet).getByRole('searchbox', { name: /find a note/i });
+    await user.type(field, 'tax 2025');
+    expect(within(sheet).getByRole('button', { name: /^Tax 2025/ })).toBeInTheDocument();
+    expect(within(sheet).queryByRole('button', { name: /^Recent 0/ })).toBeNull();
+    // A note of that name exists: no second one is offered.
+    expect(within(sheet).queryByRole('button', { name: /^New note/ })).toBeNull();
+
+    await user.clear(field);
+    await user.type(field, 'Tax 2026');
+    await user.click(within(sheet).getByRole('button', { name: 'New note “Tax 2026”' }));
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.noteId).toBe('tax-2026');
+    });
+    expect(created).toEqual([{ title: 'Tax 2026', kind: 'note' }]);
+    expect(screen.getByRole('button', { name: /into tax 2026/i })).toBeInTheDocument();
+    // The recording itself is untouched by any of it.
+    expect(useCaptureStore.getState().model.state).toBe('recording');
+  });
+
   it('closes on a tap beside the sheet or Escape, since it overlays the controls (QA 2026-09-21, finding 10)', async () => {
     const user = userEvent.setup();
     mount();
@@ -817,7 +878,7 @@ describe('the target chooser', () => {
     // Tabbed into the list, as a keyboard user is when Escape unmounts the
     // option under focus: focus comes back to the pill, not the body.
     await user.tab();
-    expect(within(sheet() as HTMLElement).getByRole('button', { name: 'Chintan decides' })).toHaveFocus();
+    expect(within(sheet() as HTMLElement).getByRole('searchbox', { name: /find a note/i })).toHaveFocus();
     await user.keyboard('{Escape}');
     expect(sheet()).toBeNull();
     expect(pill).toHaveFocus();
@@ -959,5 +1020,179 @@ describe('where the capture screen goes when it is done', () => {
     // shows the upload from any tab (owner feedback 2026-09-24).
     expect(captureReturnPath('roof-repair')).toBe('/notes/roof-repair');
     expect(captureReturnPath(null)).toBe('/');
+  });
+});
+
+describe('a thought typed instead of said', () => {
+  it('drops the take just begun and files the text through the same pipeline, into the same note', async () => {
+    const user = userEvent.setup();
+    const sent: { path: string; body: unknown; key: string | null }[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/v1/captures/text')) {
+        sent.push({
+          path: url.pathname,
+          body: JSON.parse(String(init?.body)),
+          key: new Headers(init?.headers).get('Idempotency-Key'),
+        });
+        return new Response(
+          JSON.stringify({ capture: { id: 'srv-typed', status: 'transcribed', created_at: new Date().toISOString(), version: 1 } }),
+          { status: 202, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify({ items: TEST_NOTES }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    mount('/capture?note=roof-repair', testApiContext(fetchImpl));
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Type instead' }));
+    // The microphone is let go: nothing is recording behind the field.
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('idle');
+    });
+    expect(await screen.findByRole('button', { name: /into roof repair/i })).toBeInTheDocument();
+    const field = screen.getByRole('textbox', { name: 'Your thought' });
+    expect(field).toHaveFocus();
+    await user.type(field, '  Ellis can start on the fourteenth. ');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText(/Note roof-repair/)).toBeInTheDocument();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.body).toEqual({ text: 'Ellis can start on the fourteenth.', note_id: 'roof-repair' });
+    expect(sent[0]?.key).toBeTruthy();
+  });
+});
+
+describe('a typed thought the server refused', () => {
+  it('is sent again under a new key once edited, and under a new key even unchanged', async () => {
+    const user = userEvent.setup();
+    const keys: (string | null)[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/v1/captures/text')) {
+        keys.push(new Headers(init?.headers).get('Idempotency-Key'));
+        if (keys.length < 3) {
+          return new Response(
+            JSON.stringify({ type: 'about:blank', title: 'Bad Request', status: 400, detail: 'text is required' }),
+            { status: 400, headers: { 'content-type': 'application/problem+json' } },
+          );
+        }
+        return new Response(
+          JSON.stringify({ capture: { id: 'srv-typed', status: 'transcribed', created_at: new Date().toISOString(), version: 1 } }),
+          { status: 202, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify({ items: TEST_NOTES }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    mount('/capture', testApiContext(fetchImpl));
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    await user.click(screen.getByRole('button', { name: 'Type instead' }));
+    const field = await screen.findByRole('textbox', { name: 'Your thought' });
+    await user.type(field, 'Call the roofer');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+
+    // The same words again: the refusal is stored against its key, so a new one.
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => {
+      expect(keys).toHaveLength(2);
+    });
+    // Edited: a different body, a different key.
+    await user.type(field, ' about the ridge');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(/^Home$/)).toBeInTheDocument();
+    expect(keys).toHaveLength(3);
+    expect(new Set(keys).size).toBe(3);
+  });
+});
+
+describe('a note the chooser made and nothing went into', () => {
+  function server() {
+    const calls: string[] = [];
+    let captures: unknown[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? 'GET';
+      calls.push(`${method} ${url.pathname}`);
+      const json = (body: unknown, status = 200) =>
+        new Response(status === 204 ? null : JSON.stringify(body), {
+          status,
+          headers: { 'content-type': 'application/json' },
+        });
+      if (url.pathname.endsWith('/v1/notes') && method === 'POST') {
+        return json({ ...TEST_NOTES[0], id: 'tax-2026', title: 'Tax 2026', version: 1 }, 201);
+      }
+      if (url.pathname.endsWith('/v1/notes/tax-2026') && method === 'GET') {
+        return json({ ...TEST_NOTES[0], id: 'tax-2026', title: 'Tax 2026', body: '', captures });
+      }
+      if (method === 'DELETE') return json(null, 204);
+      return json({ items: TEST_NOTES });
+    };
+    return {
+      calls,
+      fetchImpl,
+      fill: () => {
+        captures = [{ id: 'c1' }];
+      },
+    };
+  }
+
+  async function makeNote(user: ReturnType<typeof userEvent.setup>) {
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    await user.click(screen.getByRole('button', { name: 'Chintan decides' }));
+    await user.type(await screen.findByRole('searchbox', { name: /find a note/i }), 'Tax 2026');
+    await user.click(screen.getByRole('button', { name: 'New note “Tax 2026”' }));
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.noteId).toBe('tax-2026');
+    });
+  }
+
+  it('is discarded when another target is picked', async () => {
+    const user = userEvent.setup();
+    const api = server();
+    mount('/capture', testApiContext(api.fetchImpl));
+    await makeNote(user);
+    await user.click(screen.getByRole('button', { name: /into tax 2026/i }));
+    await user.click(await screen.findByRole('button', { name: 'Chintan decides' }));
+    await waitFor(() => {
+      expect(api.calls).toContain('DELETE /v1/notes/tax-2026/permanent');
+    });
+    expect(api.calls).toContain('DELETE /v1/notes/tax-2026');
+  });
+
+  it('is discarded when the take is cancelled, and kept once something is in it', async () => {
+    const user = userEvent.setup();
+    const api = server();
+    const { unmount } = mount('/capture', testApiContext(api.fetchImpl));
+    await makeNote(user);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(api.calls).toContain('DELETE /v1/notes/tax-2026/permanent');
+    });
+    unmount();
+
+    const kept = server();
+    kept.fill();
+    useCaptureStore.setState({ model: INITIAL_CAPTURE });
+    const second = mount('/capture', testApiContext(kept.fetchImpl));
+    await makeNote(user);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(kept.calls).toContain('GET /v1/notes/tax-2026');
+    });
+    second.unmount();
+    expect(kept.calls.filter((call) => call.startsWith('DELETE'))).toEqual([]);
   });
 });

@@ -501,6 +501,32 @@ describe('the note screen is shaped for reading', () => {
     expect(headings[0]).toHaveTextContent('Note title');
   });
 
+  it('takes Enter in the title on to the text: the body, or a checklist’s Add an item', async () => {
+    const user = userEvent.setup();
+    const shopping: StoredNote = { ...ROOF, id: 'shopping', kind: 'checklist', title: 'Shopping', body: '- [ ] Milk' };
+    const api = server([ROOF, shopping]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    const title = await screen.findByRole('textbox', { name: 'Note title' });
+    await waitFor(() => {
+      expect(title).toHaveValue('Roof repair');
+    });
+    await user.click(title);
+    // Safari's IME ends a composition with an Enter of keyCode 229: not ours.
+    fireEvent.keyDown(title, { key: 'Enter', keyCode: 229 });
+    expect(title).toHaveFocus();
+    await user.keyboard('{End} works{Enter}Ellis');
+    expect(title).toHaveValue('Roof repair works');
+    expect(screen.getByRole('textbox', { name: 'Note body' })).toHaveFocus();
+
+    cleanup();
+    mount(api.fetchImpl, '/notes/shopping');
+    const listTitle = await screen.findByRole('textbox', { name: 'Note title' });
+    await screen.findByRole('textbox', { name: 'Item 1' });
+    await user.click(listTitle);
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('textbox', { name: 'Add an item' })).toHaveFocus();
+  });
+
   it('grows the body with its text rather than scrolling inside a fixed box', async () => {
     /*
      * QA D18: twelve fixed rows with an inner scrollbar — a long note scrolled
@@ -1329,6 +1355,34 @@ describe('find in this note', () => {
       expect(screen.getByRole('textbox', { name: 'Note body' })).toHaveValue(LONG.body);
     });
   }
+
+  it('opens on the word a search on Home carried in, marked, without taking the keyboard', async () => {
+    const api = server([LONG]);
+    // Pushed from Home, as a tap on a hit does: a deep link at the history's
+    // first entry is rebuilt over Home by the back guard, without its state.
+    window.history.replaceState({ idx: 1 }, '');
+    render(
+      <TestProviders api={testApiContext(api.fetchImpl)} queryClient={providerLikeClient()}>
+        <RouterProvider
+          router={createMemoryRouter(routes, {
+            initialEntries: ['/', { pathname: '/notes/roof-repair', state: { find: 'tiles' } }],
+            initialIndex: 1,
+          })}
+        />
+      </TestProviders>,
+    );
+    const input = await screen.findByRole('searchbox', { name: 'Find in note' });
+    expect(input).toHaveValue('tiles');
+    expect(input).not.toHaveFocus();
+    const mirror = await screen.findByRole('region', { name: /note body, read-only while finding/i });
+    expect(Array.from(mirror.querySelectorAll('mark')).map((mark) => mark.textContent)).toEqual([
+      'tiles',
+      'tiles',
+      'tiles',
+    ]);
+    expect(screen.getByText('1 of 3')).toBeInTheDocument();
+    window.history.replaceState(null, '');
+  });
 
   it('mirrors the body with the matches marked, and hands back the textarea with the caret on the match', async () => {
     const user = userEvent.setup();

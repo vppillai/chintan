@@ -60,6 +60,15 @@ untyped, no body, no recording — is discarded when its screen is left
 archives and purges it, no confirm, no toast), so Back from an idle + leaves
 no "New note" row behind. One left to record into is kept (`note-screen.md`).
 
+## The field
+
+One field, two modes (`LibraryField.tsx`): a search that filters on every
+keystroke, and Ask, a question sent on Enter (`ask.md`). The switch is
+inside the field's end, a sparkle and the word "Ask"; in Ask mode the same
+place is a × named "Back to search". A glyph alone, with "Back to search"
+only as a hover title, left Ask unfound and gave a phone no visible way
+out. The search's rules are `search.md`.
+
 ## Filing, above the list
 
 Between the field and the first day sits the filing section
