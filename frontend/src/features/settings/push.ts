@@ -151,16 +151,29 @@ export function pushSubscribeBody(subscription: PushSubscription): PushSubscribe
  * `pushManager.subscribe` hands back the subscription already held, so a
  * second POST of a dead endpoint would be pruned again on the next send.
  * It is dropped, and a fresh one is asked for and registered.
+ *
+ * The list is read here, not handed in: "not listed" must come from a list
+ * the server just gave. A failed read throws before anything is dropped —
+ * an empty list standing in for a failed one would unsubscribe a working
+ * subscription, and offline nothing would replace it. The read and what
+ * follows hold a lock (Web Locks, where the browser has them), so the card
+ * and the launch check, or two tabs, cannot each drop the other's fresh
+ * subscription as unlisted.
  */
 export async function enrolThisBrowser(
   publicKey: string,
-  enrolledIds: readonly string[],
+  enrolledIds: () => Promise<readonly string[]>,
   register: (subscription: PushSubscription) => Promise<unknown>,
 ): Promise<PushSubscription> {
-  const held = await currentPushSubscription();
-  if (held && enrolledIds.includes(await pushSubscriptionId(held.endpoint))) return held;
-  if (held) await held.unsubscribe();
-  const fresh = await subscribeThisBrowser(publicKey);
-  await register(fresh);
-  return fresh;
+  const enrol = async (): Promise<PushSubscription> => {
+    const ids = await enrolledIds();
+    const held = await currentPushSubscription();
+    if (held && ids.includes(await pushSubscriptionId(held.endpoint))) return held;
+    if (held) await held.unsubscribe();
+    const fresh = await subscribeThisBrowser(publicKey);
+    await register(fresh);
+    return fresh;
+  };
+  const locks = (globalThis.navigator as Navigator | undefined)?.locks;
+  return locks ? locks.request('chintan-push-enrol', enrol) : enrol();
 }

@@ -10,7 +10,13 @@ import { TestProviders, testApiContext } from '@/test/providers.tsx';
 import { usePushResync } from '@/pwa/usePushResync.ts';
 
 import { NotificationsCard } from './NotificationsCard.tsx';
-import { PUSH_WANTED_KEY, applicationServerKey, browserLabel, pushSubscriptionId } from './push.ts';
+import {
+  PUSH_WANTED_KEY,
+  applicationServerKey,
+  browserLabel,
+  enrolThisBrowser,
+  pushSubscriptionId,
+} from './push.ts';
 
 const ENDPOINT = 'https://web.push.apple.com/send/this-browser';
 /** A subscription the push service has called gone (the worker pruned its row on a 410). */
@@ -82,7 +88,9 @@ function json(body: unknown, status = 200): Response {
 }
 
 /** A stub API: the key (or its 404), the list, a POST that adds a row, a DELETE that drops it. */
-function mount(options: { configured?: boolean; enrolled?: PushSubscriptionWire[]; resync?: boolean } = {}) {
+function mount(
+  options: { configured?: boolean; enrolled?: PushSubscriptionWire[]; resync?: boolean; listFails?: boolean } = {},
+) {
   let items = [...(options.enrolled ?? [])];
   const calls: { method: string; path: string; body?: unknown }[] = [];
   const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
@@ -121,7 +129,11 @@ function mount(options: { configured?: boolean; enrolled?: PushSubscriptionWire[
       items = items.filter((item) => item.id !== id);
       return new Response(null, { status: 204 });
     }
-    if (url.pathname === '/v1/push/subscriptions') return json({ items });
+    if (url.pathname === '/v1/push/subscriptions') {
+      return options.listFails
+        ? json({ type: 'about:blank', title: 'Forbidden', status: 403, detail: 'forbidden' }, 403)
+        : json({ items });
+    }
     return json({ items: [] });
   });
   render(
@@ -319,6 +331,47 @@ describe('the notifications card on You', () => {
     });
     expect(localStorage.getItem(PUSH_WANTED_KEY)).toBeNull();
     expect(screen.getByRole('region', { name: 'Notifications' })).not.toHaveTextContent(/not reaching/i);
+  });
+});
+
+describe('a list the server did not give', () => {
+  it('holds the switch and never says nothing is enrolled when the list read fails', async () => {
+    const held = fakeSubscription();
+    localStorage.setItem(PUSH_WANTED_KEY, '1');
+    installPushApis({ permission: 'granted', grant: 'granted', existing: held });
+    mount({ listFails: true });
+    const card = await screen.findByRole('region', { name: 'Notifications' });
+    await waitFor(() => {
+      expect(card).toHaveTextContent(/couldn.t check which devices are enrolled/i);
+    });
+    expect(screen.getByRole('switch', { name: /notify me when a recording files/i })).toBeDisabled();
+    expect(card).not.toHaveTextContent(/no device is enrolled yet/i);
+    expect(card).not.toHaveTextContent(/not reaching this device/i);
+    expect(held.unsubscribe).not.toHaveBeenCalled();
+  });
+
+  it('enrols nothing and drops nothing when the list read inside the lock fails', async () => {
+    const held = fakeSubscription();
+    const apis = installPushApis({ permission: 'granted', existing: held });
+    const register = vi.fn(async () => undefined);
+    await expect(
+      enrolThisBrowser(pushKey.public_key, () => Promise.reject(new Error('403')), register),
+    ).rejects.toThrow('403');
+    expect(held.unsubscribe).not.toHaveBeenCalled();
+    expect(apis.subscribe).not.toHaveBeenCalled();
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it('does not drop a held subscription on launch when the list read fails', async () => {
+    const held = fakeSubscription();
+    installPushApis({ permission: 'granted', existing: held });
+    const { calls } = mount({ listFails: true, resync: true });
+    await waitFor(() => {
+      expect(calls.some((call) => call.path === '/v1/push/subscriptions')).toBe(true);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(held.unsubscribe).not.toHaveBeenCalled();
+    expect(calls.some((call) => call.method === 'POST')).toBe(false);
   });
 });
 

@@ -150,7 +150,12 @@ row the worker pruned reads off, which is the truth. Turning on runs
 server does not list is unsubscribed before a fresh one is asked for,
 because `pushManager.subscribe` returns the one already held, and
 re-registering an endpoint the push service has called gone would be pruned
-again on the next send. On remembers itself on the device
+again on the next send. "Not listed" comes only from a list the server has
+just given: `enrolThisBrowser` reads it itself, under a Web Lock
+(`chintan-push-enrol`) so the card, the launch check and a second tab cannot
+drop each other's fresh subscription, and a failed read drops nothing. The
+switch stays held while the list cannot be read, with "Couldn't check which
+devices are enrolled." and a Try again, and the foot counts nothing. On remembers itself on the device
 (`chintan.push.wanted` in `localStorage`) and off forgets it; a browser that
 was turned on and is not enrolled — it remembers on, or holds a
 subscription the server lacks — reads off with the hint "Not reaching this

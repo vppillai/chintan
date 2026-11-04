@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 
+import { useApi } from '@/api/ApiProvider.tsx';
 import { usePushKey, usePushSubscriptions, useSubscribePush } from '@/api/queries.ts';
 import {
   currentPushSubscription,
@@ -30,24 +31,24 @@ export function usePushResync(enabled: boolean): void {
   const key = usePushKey(eligible);
   const subscriptions = usePushSubscriptions(eligible && Boolean(key.data));
   const { mutateAsync: register } = useSubscribePush();
+  const api = useApi();
   const tried = useRef(false);
 
   useEffect(() => {
     const publicKey = key.data?.public_key;
-    const items = subscriptions.data?.items;
-    if (tried.current || !publicKey || !items) return;
+    if (tried.current || !publicKey || !subscriptions.isSuccess) return;
     tried.current = true;
     void (async () => {
       const held = await currentPushSubscription();
       if (!held && !pushWanted()) return;
       await enrolThisBrowser(
         publicKey,
-        items.map((item) => item.id),
+        async () => (await api.listPushSubscriptions()).items.map((item) => item.id),
         (fresh) => register(pushSubscribeBody(fresh)),
       );
       setPushWanted(true);
     })().catch(() => {
       // The card reads "Not reaching this device" and its switch retries.
     });
-  }, [key.data, subscriptions.data, register]);
+  }, [key.data, subscriptions.isSuccess, register, api]);
 }

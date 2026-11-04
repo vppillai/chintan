@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 
+import { useApi } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
 import { usePushKey, usePushSubscriptions, useSubscribePush, useUnsubscribePush } from '@/api/queries.ts';
 import { config } from '@/config/env.ts';
@@ -51,6 +52,7 @@ export function NotificationsCard() {
   const subscriptions = usePushSubscriptions(configured && support === 'supported');
   const subscribe = useSubscribePush();
   const unsubscribe = useUnsubscribePush();
+  const api = useApi();
   const labelId = useId();
 
   /** This browser's subscription and its server id; `undefined` until read. */
@@ -80,10 +82,13 @@ export function NotificationsCard() {
 
   const enrolled = subscriptions.data?.items ?? [];
   const on = local !== null && local !== undefined && localId !== null && enrolled.some((item) => item.id === localId);
-  const ready = local !== undefined && !subscriptions.isLoading;
+  // Only a list the server gave says what is enrolled; a failed read is not
+  // "nothing enrolled", and turning on against it would drop a working
+  // subscription as unlisted.
+  const ready = local !== undefined && subscriptions.isSuccess;
   // Wanted here and not listed there: the push service or the browser
   // dropped it. Not before both reads are in, or every load flashes it.
-  const lost = ready && !on && subscriptions.isSuccess && (pushWanted() || (local !== null && local !== undefined));
+  const lost = ready && !on && (pushWanted() || (local !== null && local !== undefined));
 
   const turnOn = async (): Promise<void> => {
     if (!key.data) return;
@@ -92,7 +97,7 @@ export function NotificationsCard() {
     if (granted !== 'granted') return;
     const subscription = await enrolThisBrowser(
       key.data.public_key,
-      enrolled.map((item) => item.id),
+      async () => (await api.listPushSubscriptions()).items.map((item) => item.id),
       (fresh) => subscribe.mutateAsync(pushSubscribeBody(fresh)),
     );
     setPushWanted(true);
@@ -134,7 +139,7 @@ export function NotificationsCard() {
       title="Notifications"
       lead="A note on this device when a recording has been filed, even with the app closed."
       foot={
-        configured && support === 'supported' ? (
+        configured && support === 'supported' && subscriptions.isSuccess ? (
           <p>
             {enrolled.length === 0
               ? 'No device is enrolled yet. '
@@ -202,6 +207,20 @@ export function NotificationsCard() {
               </span>
             </button>
           </SettingsRow>
+          {subscriptions.isError && (
+            <p className="you-card__note" role="alert">
+              Couldn&rsquo;t check which devices are enrolled.{' '}
+              <button
+                type="button"
+                className="text-link"
+                onClick={() => {
+                  void subscriptions.refetch();
+                }}
+              >
+                Try again
+              </button>
+            </p>
+          )}
           {problem && (
             <p className="you-card__note" role="alert">
               {problem}
