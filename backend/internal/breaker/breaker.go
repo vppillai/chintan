@@ -118,10 +118,15 @@ func (b *Breaker) Do(ctx context.Context, est Estimate, fn func(context.Context)
 	if err != nil {
 		return Result{}, fmt.Errorf("breaker: reserve: %w", err)
 	}
+	// The release and the reconcile run whatever happened to ctx: the
+	// provider error that most often needs releasing is the stage deadline
+	// running out, and an Add on that ctx failed and left the estimate on
+	// the day's counter, a spurious spend_capped later in the day.
+	settle := context.WithoutCancel(ctx)
 
 	if b.capMicro > 0 && total > b.capMicro {
 		// Release immediately: a rejected call must not hold budget.
-		if _, rerr := b.counter.Add(ctx, day, -estimated); rerr != nil {
+		if _, rerr := b.counter.Add(settle, day, -estimated); rerr != nil {
 			obs.Log(ctx).Error("failed to release spend reservation after cap rejection",
 				slog.String("error", rerr.Error()),
 				slog.Int64("reserved_micros", estimated))
@@ -144,7 +149,7 @@ func (b *Breaker) Do(ctx context.Context, est Estimate, fn func(context.Context)
 	elapsed := b.now().Sub(started)
 
 	if callErr != nil {
-		if _, rerr := b.counter.Add(ctx, day, -estimated); rerr != nil {
+		if _, rerr := b.counter.Add(settle, day, -estimated); rerr != nil {
 			obs.Log(ctx).Error("failed to release spend reservation after provider error",
 				slog.String("error", rerr.Error()),
 				slog.Int64("reserved_micros", estimated))
@@ -161,7 +166,7 @@ func (b *Breaker) Do(ctx context.Context, est Estimate, fn func(context.Context)
 	}
 	actual := b.prices.Cost(est.Provider, est.Model, actualUsage)
 	if delta := actual - estimated; delta != 0 {
-		if _, rerr := b.counter.Add(ctx, day, delta); rerr != nil {
+		if _, rerr := b.counter.Add(settle, day, delta); rerr != nil {
 			obs.Log(ctx).Error("failed to reconcile spend reservation",
 				slog.String("error", rerr.Error()),
 				slog.Int64("delta_micros", delta))
