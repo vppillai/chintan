@@ -46,11 +46,13 @@ type stubInvoker struct {
 	calls []string
 	// regenerateErr, when set, fails every regenerate-note hand-off.
 	regenerateErr error
+	// captureErr, when set, fails every capture hand-off.
+	captureErr error
 }
 
 func (w *stubInvoker) InvokeCapture(_ context.Context, tenantID, captureID, reason string) error {
 	w.calls = append(w.calls, tenantID+"/"+captureID+"/"+reason)
-	return nil
+	return w.captureErr
 }
 
 func (w *stubInvoker) InvokeCleanNote(_ context.Context, tenantID, noteID string, mode model.NoteCleanMode, _ string) error {
@@ -662,6 +664,21 @@ func TestAnUploadThatNeverLandedIsKeptWhileItsLinkLives(t *testing.T) {
 		}
 	})
 
+	t.Run("minute 36, failed by the reaper, no object: retry says so", func(t *testing.T) {
+		svc, store, _, worker := seed(t, 36)
+		row, _ := store.GetCapture(context.Background(), "user1", "c_1")
+		row.Status, row.Error = model.StatusFailed, "The recording never finished uploading."
+		if _, err := store.PutCapture(context.Background(), row); err != nil {
+			t.Fatalf("PutCapture: %v", err)
+		}
+		if _, err := svc.RetryCapture(context.Background(), "user1", "c_1"); !errors.Is(err, ErrCaptureNeverUploaded) {
+			t.Fatalf("retry err = %v, want ErrCaptureNeverUploaded", err)
+		}
+		if len(worker.calls) != 0 {
+			t.Fatalf("the worker was handed audio that does not exist: %v", worker.calls)
+		}
+	})
+
 	t.Run("minute 20, object landed: retried as any stuck capture", func(t *testing.T) {
 		svc, _, objects, worker := seed(t, 20)
 		if err := objects.Put(context.Background(), audioKey, []byte("audio"), "audio/webm"); err != nil {
@@ -674,4 +691,34 @@ func TestAnUploadThatNeverLandedIsKeptWhileItsLinkLives(t *testing.T) {
 			t.Fatalf("worker calls = %v, want one retry", worker.calls)
 		}
 	})
+}
+
+// A failed hand-off rolls the row back, so the person's next tap is a retry
+// and not fifteen minutes of "already in progress" with nothing running.
+func TestAFailedWorkerHandOffRollsTheCaptureBack(t *testing.T) {
+	ctx := context.Background()
+	store, objects, worker := dynamofake.NewStore(), memory.NewObjects(), &stubInvoker{captureErr: errors.New("throttled")}
+	now := time.Date(2026, 9, 30, 9, 0, 0, 0, time.UTC)
+	svc := NewCaptureService(store, objects).WithInvoker(worker).WithClock(func() time.Time { return now })
+	const audioKey = "tenants/user1/captures/c_1/audio.webm"
+	if err := objects.Put(ctx, audioKey, []byte("audio"), "audio/webm"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutCapture(ctx, model.CaptureIndex{
+		ID: "c_1", UserID: "user1", NoteID: "n1", Status: model.StatusFailed, Error: "x", AudioKey: audioKey,
+		CreatedAt: model.FormatTime(now.Add(-time.Hour)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RetryCapture(ctx, "user1", "c_1"); err == nil {
+		t.Fatal("RetryCapture succeeded with the hand-off failing")
+	}
+	row, _ := store.GetCapture(ctx, "user1", "c_1")
+	if row.Status != model.StatusFailed || row.LastProgressAt != "" {
+		t.Fatalf("after a failed hand-off the row reads %s at %q; want it rolled back to failed", row.Status, row.LastProgressAt)
+	}
+	worker.captureErr = nil
+	if _, err := svc.RetryCapture(ctx, "user1", "c_1"); err != nil {
+		t.Fatalf("the next Retry: %v; want it handed to the worker", err)
+	}
 }

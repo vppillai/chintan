@@ -346,8 +346,8 @@ type NoteIndex struct {
 	// AppendingCapture and AppendingAt say a capture's paragraph is on its way
 	// into the body: the worker stamps them, together with a version bump,
 	// after it takes the append claim and before it writes the body
-	// (repository.Store.StampNoteAppend), and clears them when the index
-	// refresh that follows the write lands or the claim is handed back. While
+	// (repository.Store.StampNoteAppend), and clears them once the capture is
+	// marked appended or the claim is handed back. While
 	// the stamp is younger than repository.AppendClaimLease, PATCH refuses a
 	// body write with 409 `append_in_progress` (service.UpdateNote): the
 	// version alone cannot witness a body write the worker has made but not yet

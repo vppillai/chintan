@@ -117,7 +117,7 @@ export const notesPage: Page<NoteWire> = {
       ],
       "title": "Kitchen rebuild",
       "updated_at": "2026-01-01T00:00:00.000000000Z",
-      "version": 3
+      "version": 2
     },
     {
       "aliases": [],
@@ -166,7 +166,7 @@ export const notesPageWithSearchText: Page<NoteWire> = {
       ],
       "title": "Kitchen rebuild",
       "updated_at": "2026-01-01T00:00:00.000000000Z",
-      "version": 3
+      "version": 2
     },
     {
       "aliases": [],
@@ -240,7 +240,7 @@ export const noteDetail: NoteDetailWire = {
   ],
   "title": "Kitchen rebuild",
   "updated_at": "2026-01-01T00:00:00.000000000Z",
-  "version": 3
+  "version": 2
 };
 
 /** POST /v1/notes/pins → 200. The listed notes in the order sent, pin_rank rewritten as position × 1000; one request per drag. No cursor. */
@@ -286,7 +286,7 @@ export const notePinsReordered: Page<NoteWire> = {
       ],
       "title": "Kitchen rebuild",
       "updated_at": "2026-01-01T00:00:00.000000000Z",
-      "version": 4
+      "version": 3
     }
   ]
 };
@@ -316,7 +316,7 @@ export const noteDetailCleaned: NoteDetailWire = {
   "tags": [],
   "title": "Roof repair",
   "updated_at": "2026-01-01T00:00:00.000000000Z",
-  "version": 4
+  "version": 3
 };
 
 /** GET /v1/notes/{noteId} → 200 for a checklist. kind is checklist and body is one task-list item per line (`- [ ] open`, `- [x] done`). */
@@ -339,7 +339,7 @@ export const noteDetailChecklist: NoteDetailWire = {
   "tags": [],
   "title": "Packing",
   "updated_at": "2026-01-01T00:00:00.000000000Z",
-  "version": 2
+  "version": 1
 };
 
 /** GET /v1/notes?kind=checklist → 200. Only the checklists, filtered before the page is cut like tag: up to `limit` matches, and cursor set only when more matches exist. */
@@ -361,7 +361,7 @@ export const notesPageChecklists: Page<NoteWire> = {
       "tags": [],
       "title": "Packing",
       "updated_at": "2026-01-01T00:00:00.000000000Z",
-      "version": 2
+      "version": 1
     }
   ]
 };
@@ -391,7 +391,7 @@ export const noteDetailChecklistCleaned: NoteDetailWire = {
   "tags": [],
   "title": "Packing",
   "updated_at": "2026-01-01T00:00:00.000000000Z",
-  "version": 3
+  "version": 2
 };
 
 /** POST /v1/notes/{noteId}/clean → 202. The worker regenerates the view asynchronously; poll GET /v1/notes/{noteId} for a newer generated_at or an error. */

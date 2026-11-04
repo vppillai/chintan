@@ -226,7 +226,9 @@ type Store interface {
 	// rather than silently discarding the other writer. The stamp is pinned
 	// because StampCleanRequest sets it without moving the version, so the
 	// version alone cannot tell a whole-row write that it is about to put the
-	// stamp back from a copy read before the tap.
+	// stamp back from a copy read before the tap. A copy that carries an
+	// append stamp is pinned to it the same way, since ClearNoteAppend does
+	// not move the version either.
 	PutNote(ctx context.Context, tenantID string, n model.NoteIndex) (model.NoteIndex, error)
 	// StampNoteAppend records on the note row, conditionally on expectedVersion,
 	// that captureID's paragraph is about to be written into the body: it bumps
@@ -241,8 +243,8 @@ type Store interface {
 	// ClearNoteAppend removes the stamp StampNoteAppend left, but only while it
 	// still names captureID; a stamp another capture has since written stands.
 	// The version does not move: nothing about the body changed. It is for the
-	// append that hands its claim back without writing; an append that writes
-	// clears the stamp with the index refresh's PutNote.
+	// append that hands its claim back without writing, and for the one that
+	// wrote, once the capture is marked appended.
 	ClearNoteAppend(ctx context.Context, tenantID, noteID, captureID string) error
 	// StampCleanRequest records on the note row, conditionally on
 	// expectedVersion, that a clean-note run in mode was handed to the worker

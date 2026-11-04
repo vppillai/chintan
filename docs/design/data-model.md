@@ -197,8 +197,11 @@ tenants/<tenant>/captures/<captureId>/peaks.json      the waveform the browser c
 tenants/<tenant>/exports/<exportId>/{export.json,job.json}
 ```
 
-The capture row's `*_key` attributes name these objects exactly; a cascade
-delete removes those keys and never lists a prefix. Audio is written by
+The capture row's `*_key` attributes name these objects; a cascade delete
+removes those keys and every key derivable from the capture id
+(`keys.CaptureDerived`: a Transcribe again clears the transcript keys until
+the new ones land), and never lists a prefix. `chintanctl reconcile` counts
+a derived key as its capture's, not as unreferenced. Audio is written by
 the presigned PUT with `chintan-artifact=capture-audio` and
 `chintan-retention=<tier>`, and the worker adds `chintan-processed=true`
 only after transcription succeeds (`MarkProcessed` reads the tags back and

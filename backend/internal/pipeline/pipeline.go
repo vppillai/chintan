@@ -335,6 +335,9 @@ func (p *Pipeline) runCapture(ctx context.Context, ref CaptureRef) (model.Captur
 
 	if service.CaptureIsTerminal(capture.Status) {
 		log.Info("capture already finished; nothing to do", slog.String("status", string(capture.Status)))
+		if capture.Status == model.StatusAppended {
+			p.clearStampOf(ctx, capture) // its attempt may have died before the clear (finishAppend)
+		}
 		return capture, nil
 	}
 	if audioBytes > 0 && capture.AudioBytes == 0 {

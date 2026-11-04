@@ -62,7 +62,7 @@ func CaptureStuck(c model.CaptureIndex, now time.Time) bool {
 // still accepted, and a long recording on a slow phone takes minutes to send.
 const uploadLandMargin = 5 * time.Minute
 
-// uploadMayStillLand reports whether an `uploaded` capture is young enough
+// UploadMayStillLand reports whether an `uploaded` capture is young enough
 // that the PUT issued with it could still arrive: its link is good for
 // uploadTTL from the row's creation. Until then an absent object is an upload
 // in progress, not one that never finished, and the row must neither be
@@ -70,7 +70,7 @@ const uploadLandMargin = 5 * time.Minute
 // the worker would remove the object as an orphan, losing the recording
 // without a word — nor declared never uploaded. A row with no readable
 // creation time is treated as old, as CaptureStuck does.
-func uploadMayStillLand(c model.CaptureIndex, now time.Time) bool {
+func UploadMayStillLand(c model.CaptureIndex, now time.Time) bool {
 	created, err := model.ParseTime(c.CreatedAt)
 	if err != nil {
 		return false

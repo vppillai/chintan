@@ -71,3 +71,32 @@ func TestMoveCaptureBetweenChecklistsMovesExactlyItsItem(t *testing.T) {
 		t.Errorf("the person sees %q", got)
 	}
 }
+
+// After an Items-tab save the marker stands bare and the lines a recording
+// spoke cannot be told from lines the person typed with the same words — the
+// first append's merge may have deduplicated against a typed "Milk". Delete
+// and move therefore cut the bare marker only and never take a line by its
+// words: a typed item must survive both.
+func TestDeleteAndMoveOfABareMarkerNeverTakeThePersonsOwnItem(t *testing.T) {
+	for _, move := range []bool{false, true} {
+		h := newEditHarness(t)
+		note := h.checklist("u1", "Groceries", "- [ ] Milk\n- [x] eggs\n"+CaptureMarker("c_1"))
+		other := h.checklist("u1", "Other", "- [ ] bread")
+		c := h.appended("u1", note.ID, "c_1", t1000)
+		if err := h.objects.Put(h.ctx, c.CleanKey, []byte("milk\neggs"), "text/plain"); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		if move {
+			_, _, err = h.captures.MoveCapture(h.ctx, "u1", "c_1", other.ID)
+		} else {
+			err = h.captures.DeleteCapture(h.ctx, "u1", "c_1")
+		}
+		if err != nil {
+			t.Fatalf("move=%v: %v", move, err)
+		}
+		if got := h.body(note); got != "- [ ] Milk\n- [x] eggs" {
+			t.Fatalf("move=%v: body = %q, want the person's lines untouched and the marker gone", move, got)
+		}
+	}
+}

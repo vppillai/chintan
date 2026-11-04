@@ -483,15 +483,25 @@ func (s *DynamoStore) PutNote(ctx context.Context, tenantID string, note model.N
 		delete(item, "ttl")
 	}
 
+	condition := "(" + versionCondition(expected) + ") AND " +
+		"(attribute_not_exists(cleaned_requested_at) OR cleaned_requested_at = :stamp)"
+	values := map[string]types.AttributeValue{
+		":expected": numAttr(expected),
+		":stamp":    strAttr(note.CleanedRequestedAt),
+	}
+	if note.AppendingCapture != "" && expected > 0 {
+		// ClearNoteAppend does not move the version either, so a copy read
+		// while the append stamp stood would otherwise put it back after the
+		// worker cleared it, and body saves would wait out the lease for an
+		// append that has finished.
+		condition += " AND appending_capture = :appending"
+		values[":appending"] = strAttr(note.AppendingCapture)
+	}
 	_, err = s.client.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: aws.String(s.tableName),
-		Item:      item,
-		ConditionExpression: aws.String("(" + versionCondition(expected) + ") AND " +
-			"(attribute_not_exists(cleaned_requested_at) OR cleaned_requested_at = :stamp)"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":expected": numAttr(expected),
-			":stamp":    strAttr(note.CleanedRequestedAt),
-		},
+		TableName:                 aws.String(s.tableName),
+		Item:                      item,
+		ConditionExpression:       aws.String(condition),
+		ExpressionAttributeValues: values,
 	})
 	if err != nil {
 		if isConditionalCheckFailed(err) {

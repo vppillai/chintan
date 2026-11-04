@@ -70,12 +70,19 @@ race made deterministic.
    recording into a note is a second stamper of that note (`moveInto`):
    it stamps the target before copying the paragraph in, clears the stamp with
    the target's refresh, and refuses the move rather than stamp over a worker's.
-2. **Clear after indexing.** `RefreshNoteIndex` (`ClearAppendStampFor`) clears
-   the two attributes in the same `PutNote` that publishes the paragraph's
-   snippet and search text,
-   so the row's version is once more a witness of the body. An append that
+2. **Clear after completing.** The worker's `RefreshNoteIndex` publishes the
+   paragraph's snippet and search text and bumps the version, so the row's
+   version is once more a witness of the body; the stamp stays until
+   `CompleteCaptureAppend` has marked the capture appended, and then
+   `ClearNoteAppend` removes it, conditional on the stamp still naming the
+   capture; a retry or redelivery that finds the capture already appended
+   clears it too, for the attempt that died between the two. Cleared any earlier, a completion that failed left the paragraph
+   open to a save while the capture was unfinished: the edit moved the words
+   off the marker, the retry did not recognise its own paragraph, and the
+   takeover after the lease wrote the dictation twice. A move clears its
+   stamp with the target's refresh (`ClearAppendStampFor`). An append that
    hands its claim back without writing clears the stamp with
-   `ClearNoteAppend`, conditional on the stamp still naming it.
+   `ClearNoteAppend` too.
 3. **Refuse the save.** `UpdateNote` refuses a body write with
    `ErrAppendInProgress` while `appending_capture` is set and `appending_at` is
    younger than `AppendClaimLease` — checked **before** the version, because

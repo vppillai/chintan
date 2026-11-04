@@ -356,3 +356,32 @@ func TestPutNoteAdmitsARowWrittenBeforeTheStampWasPromoted(t *testing.T) {
 		t.Fatalf("PutNote on a pre-promotion row: %v", err)
 	}
 }
+
+// ClearNoteAppend does not move the version, so a whole-row write from a copy
+// read while the stamp stood must not put the stamp back: body saves would
+// then wait out the lease for an append that has finished.
+func TestPutNoteFromACopyWithAClearedAppendStampIsAConflict(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	seeded, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{ID: "n1", Title: "T", UpdatedAt: model.Now()})
+	if err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
+	if _, err := store.StampNoteAppend(ctx, "tenant-a", "n1", "cap1", seeded.Version, time.Now()); err != nil {
+		t.Fatalf("StampNoteAppend: %v", err)
+	}
+	copyWithStamp, err := store.GetNote(ctx, "tenant-a", "n1")
+	if err != nil {
+		t.Fatalf("GetNote: %v", err)
+	}
+	if err := store.ClearNoteAppend(ctx, "tenant-a", "n1", "cap1"); err != nil {
+		t.Fatalf("ClearNoteAppend: %v", err)
+	}
+	copyWithStamp.Title = "renamed"
+	if _, err := store.PutNote(ctx, "tenant-a", copyWithStamp); !errors.Is(err, repository.ErrVersionConflict) {
+		t.Fatalf("PutNote from a copy carrying a cleared stamp: err = %v, want ErrVersionConflict", err)
+	}
+	if got, _ := store.GetNote(ctx, "tenant-a", "n1"); got.AppendingCapture != "" {
+		t.Fatalf("the cleared stamp %q came back", got.AppendingCapture)
+	}
+}

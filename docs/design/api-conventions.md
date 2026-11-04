@@ -132,7 +132,10 @@ whichever is later. The client waits for the server's instant instead of
 keeping its own copy of the two durations; a retry before it is 409
 `ErrCaptureInFlight` either way. It is null on a finished capture
 (`TestCaptureRetryAfterIsTheInstantCaptureStuckFirstHolds`, the
-`captureInFlight` fixture).
+`captureInFlight` fixture). A Retry, Transcribe again or target choice whose
+hand-off to the worker fails writes the row back as it was, so the next tap
+is not refused for that window with nothing running
+(`TestAFailedWorkerHandOffRollsTheCaptureBack`).
 
 The instant is on the server's clock, and so is every timestamp the API
 writes, while the phone's may be minutes off. The gateway exposes the `Date`

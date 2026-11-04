@@ -158,6 +158,13 @@ func (s *NotesService) CreateNote(ctx context.Context, userID, title string, ali
 
 // CreateNoteWithTags creates a note carrying tags.
 func (s *NotesService) CreateNoteWithTags(ctx context.Context, userID, title string, aliases, tags []string) (model.NoteIndex, error) {
+	return s.CreateNoteWithBody(ctx, userID, title, aliases, tags, "", "")
+}
+
+// CreateNoteWithBody creates a note with its kind and first body in the one
+// write (POST /v1/notes). Created empty and then edited, a failed edit left
+// an empty plain note behind, and the client's retry made a second.
+func (s *NotesService) CreateNoteWithBody(ctx context.Context, userID, title string, aliases, tags []string, kind, body string) (model.NoteIndex, error) {
 	title = routing.SanitizeTitle(title)
 	if title == "" {
 		return model.NoteIndex{}, ErrEmptyNoteTitle
@@ -174,7 +181,7 @@ func (s *NotesService) CreateNoteWithTags(ctx context.Context, userID, title str
 	// surfaces to the user as an unexplained 409 on a note they just made.
 	noteID := fmt.Sprintf("note_%016x_%s",
 		uint64(time.Now().UTC().UnixNano()), hex.EncodeToString(noteIDBytes))
-	return s.createNote(ctx, userID, model.NoteIndex{ID: noteID, Title: title, Aliases: aliases, Tags: normalizeTags(tags)})
+	return s.createNote(ctx, userID, model.NoteIndex{ID: noteID, Title: title, Aliases: aliases, Tags: normalizeTags(tags), Kind: kind}, body)
 }
 
 // CreateNoteOnce creates spec — its ID, Title, Kind and Language — unless a
@@ -196,7 +203,7 @@ func (s *NotesService) CreateNoteOnce(ctx context.Context, userID string, spec m
 	if spec.Title == "" {
 		return model.NoteIndex{}, ErrEmptyNoteTitle
 	}
-	note, err := s.createNote(ctx, userID, model.NoteIndex{ID: spec.ID, Title: spec.Title, Tags: normalizeTags(nil), Kind: spec.Kind, Language: spec.Language})
+	note, err := s.createNote(ctx, userID, model.NoteIndex{ID: spec.ID, Title: spec.Title, Tags: normalizeTags(nil), Kind: spec.Kind, Language: spec.Language}, "")
 	if errors.Is(err, repository.ErrVersionConflict) {
 		// Two deliveries of one capture raced past the read; the row is
 		// written with version 0 expected, so exactly one of them made it.
@@ -205,10 +212,10 @@ func (s *NotesService) CreateNoteOnce(ctx context.Context, userID string, spec m
 	return note, err
 }
 
-// createNote writes the empty body, the meta mirror and the row for note,
-// whose ID and Title are set. The row is a version-0 PutNote, which fails
-// with ErrVersionConflict when the id is taken.
-func (s *NotesService) createNote(ctx context.Context, userID string, note model.NoteIndex) (model.NoteIndex, error) {
+// createNote writes the body, the meta mirror and the row for note, whose ID
+// and Title are set. The row is a version-0 PutNote, which fails with
+// ErrVersionConflict when the id is taken.
+func (s *NotesService) createNote(ctx context.Context, userID string, note model.NoteIndex, body string) (model.NoteIndex, error) {
 	noteID, title := note.ID, note.Title
 	aliases := note.Aliases
 
@@ -234,8 +241,12 @@ func (s *NotesService) createNote(ctx context.Context, userID string, note model
 	note.S3MarkdownKey = markdownKey
 	note.S3MetaKey = metaKey
 
-	// Create initial empty markdown file
-	err = s.objects.Put(ctx, markdownKey, []byte(""), "text/markdown")
+	// A client's body never carries capture markers: a typed one would
+	// claim the lines under it for a recording that does not exist here.
+	body = StripCaptureMarkers(body)
+	note.Snippet = Snippet(body)
+	note.SearchText = SearchText(body)
+	err = s.objects.Put(ctx, markdownKey, []byte(body), "text/markdown")
 	if err != nil {
 		return model.NoteIndex{}, fmt.Errorf("failed to create markdown file: %w", err)
 	}
@@ -245,6 +256,7 @@ func (s *NotesService) createNote(ctx context.Context, userID string, note model
 		"title":      title,
 		"aliases":    aliases,
 		"tags":       note.Tags,
+		"kind":       note.Kind,
 		"created_at": note.CreatedAt,
 		"updated_at": note.UpdatedAt,
 	}
@@ -664,6 +676,13 @@ func (s *NotesService) applyNoteUpdates(ctx context.Context, userID string, note
 // repository.ErrVersionConflict: that is the same 409 the version check
 // answers, and the client reconciles it the same way.
 func (s *NotesService) writeNoteBody(ctx context.Context, note *model.NoteIndex, storedBody []byte, etag, body string) error {
+	// The snippet (first ~500 chars) and the search text are the two
+	// derivations of the body the index row carries. Derived before the
+	// unchanged-body return: a save whose body write landed and whose row
+	// write did not is repeated with the same body, and that repeat is the
+	// row's only chance to catch up, or search and Ask read the old text.
+	note.Snippet = Snippet(body)
+	note.SearchText = SearchText(body)
 	carried := CarryCaptureMarkers(string(storedBody), body)
 	if carried == string(storedBody) {
 		return nil
@@ -680,10 +699,6 @@ func (s *NotesService) writeNoteBody(ctx context.Context, note *model.NoteIndex,
 		return fmt.Errorf("failed to update markdown: %w", err)
 	}
 
-	// The snippet (first ~500 chars) and the search text are the two
-	// derivations of the body the index row carries.
-	note.Snippet = Snippet(body)
-	note.SearchText = SearchText(body)
 	// The cleaned view was generated from the body that just changed — unless
 	// the change was to adopt the view itself ("Use this list"): a body equal
 	// to CleanedBody, trailing whitespace aside, IS the view, so it is current

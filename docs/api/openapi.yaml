@@ -2840,3 +2840,9 @@ components:
         url: { type: string, format: uri, nullable: true }
         expires_at: { type: string, format: date-time, nullable: true }
         bytes: { type: integer, nullable: true }
+        truncated:
+          type: boolean
+          description: >-
+            The file stops at a bound — 2,000 notes on a shelf, 500
+            recordings on a note or unfiled — and is not the whole account.
+            Absent when the file is complete.

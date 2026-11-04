@@ -52,6 +52,7 @@ type NoteCascade interface {
 // Store is the slice of repository.Store the sweep reads and writes.
 type Store interface {
 	ExpiredNotes(ctx context.Context, asOf int64) ([]repository.TenantNote, error)
+	GetNote(ctx context.Context, tenantID, noteID string) (model.NoteIndex, error)
 	DeleteNote(ctx context.Context, tenantID, noteID string) error
 }
 
@@ -105,7 +106,7 @@ func (s *Sweeper) Sweep(ctx context.Context) (Report, error) {
 
 	for _, tn := range expired {
 		noteCtx := obs.WithTenant(ctx, tn.TenantID)
-		if err := s.purge(noteCtx, tn); err != nil {
+		if err := s.purge(noteCtx, tn, asOf); err != nil {
 			report.Failed++
 			obs.Log(noteCtx).Error("could not purge an expired note; the next sweep will retry it",
 				slog.String("note_id", tn.Note.ID),
@@ -136,8 +137,27 @@ func (s *Sweeper) Sweep(ctx context.Context) (Report, error) {
 // Objects first, row second, always. The row is the only record of which
 // objects the note owns; deleting it first would make a failure between the two
 // steps permanent, which is the leak this package exists to close.
-func (s *Sweeper) purge(ctx context.Context, tn repository.TenantNote) error {
-	if err := s.notes.PurgeNoteArtifacts(ctx, tn.TenantID, tn.Note.ID, tn.Note); err != nil {
+//
+// The scan is a snapshot, and a restore that landed after it — a stale trash
+// list tapped as the deadline passed — would lose its body and recordings to
+// a cascade run on what the scan saw. So the row is read again first and the
+// note left alone unless it is still archived and still past its deadline;
+// service.RestoreNote refuses a note past its deadline, so nothing restores
+// it after this read.
+func (s *Sweeper) purge(ctx context.Context, tn repository.TenantNote, asOf int64) error {
+	current, err := s.store.GetNote(ctx, tn.TenantID, tn.Note.ID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("purge: expired note %s: %w", tn.Note.ID, err)
+	}
+	if current.DeletedAt == "" || current.PurgeAfterEpoch == 0 || current.PurgeAfterEpoch >= asOf {
+		obs.Log(ctx).Info("expired note was restored since the scan; leaving it",
+			slog.String("note_id", tn.Note.ID))
+		return nil
+	}
+	if err := s.notes.PurgeNoteArtifacts(ctx, tn.TenantID, tn.Note.ID, current); err != nil {
 		return fmt.Errorf("purge: expired note %s: %w", tn.Note.ID, err)
 	}
 	if err := s.store.DeleteNote(ctx, tn.TenantID, tn.Note.ID); err != nil && !errors.Is(err, repository.ErrNotFound) {
