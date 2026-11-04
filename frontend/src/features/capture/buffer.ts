@@ -99,7 +99,10 @@ export async function recordedHereIds(): Promise<Set<string>> {
  * Read on startup: a tab killed mid-upload leaves audio here, and this is what
  * lets the app offer to resend it rather than losing it.
  */
-export async function unconfirmedCaptures(): Promise<StoredCapture[]> {
+export async function unconfirmedCaptures(
+  /** The capture store's own recording, never dropped from under it. */
+  active: string | null = null,
+): Promise<StoredCapture[]> {
   const db = await openChintanDB();
   const unsent = (await listCaptureRecords()).filter((record) => record.uploadedAt === null);
   const kept: StoredCapture[] = [];
@@ -113,7 +116,7 @@ export async function unconfirmedCaptures(): Promise<StoredCapture[]> {
      * first chunk, and is only left unoffered.
      */
     if ((await db.countFromIndex('captureChunks', 'byLocalId', record.localId)) === 0) {
-      if (Date.now() - record.createdAt > EMPTY_RECORD_GRACE_MS) {
+      if (record.localId !== active && Date.now() - record.createdAt > EMPTY_RECORD_GRACE_MS) {
         await db.delete('captures', record.localId);
       }
       continue;

@@ -65,7 +65,7 @@ async function mount(
 ): Promise<void> {
   const queryClient = testQueryClient();
   if (settled) {
-    await queryClient.prefetchQuery({ queryKey: queryKeys.unsentCaptures(), queryFn: unconfirmedCaptures });
+    await queryClient.prefetchQuery({ queryKey: queryKeys.unsentCaptures(), queryFn: () => unconfirmedCaptures() });
   }
   render(
     <TestProviders api={testApiContext(fetchImpl)} queryClient={queryClient}>

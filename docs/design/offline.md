@@ -139,7 +139,9 @@ either choice clears the entry (`clearQueuedEdit`). A direct save made online
 while an entry is still pending sends the held fields under its own
 (`queuedEditFor` carries the body), since it clears the entry once it lands:
 the reopened note's copy already reads as the queued text, so the save's own
-diff alone would drop a field queued offline.
+diff alone would drop a field queued offline. It forgets the entry only
+under the key it carried (`clearQueuedEdit`), so a keystroke queued while it
+was on the wire is kept.
 
 `useOfflineQueue` models the drain as a query with `networkMode: 'always'`,
 `refetchOnReconnect`, `refetchOnWindowFocus` and a 60 s `refetchInterval`

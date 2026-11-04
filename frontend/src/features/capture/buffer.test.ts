@@ -163,7 +163,12 @@ describe('audio is pruned only after the server confirms', () => {
     await saveCaptureRecord({ ...empty, localId: 'cap-unindexed' });
     await appendChunk('cap-unindexed', 0, chunk('audio'));
 
-    expect((await unconfirmedCaptures()).map((record) => record.localId)).toEqual(['cap-unindexed']);
+    // The store's own recording keeps its record, however long it has waited.
+    await saveCaptureRecord({ ...empty, localId: 'cap-live' });
+    expect((await unconfirmedCaptures('cap-live')).map((record) => record.localId)).toEqual([
+      'cap-unindexed',
+    ]);
+    expect(await readCaptureRecord('cap-live')).toBeDefined();
     expect(await readCaptureRecord('cap-empty')).toBeUndefined();
   });
 

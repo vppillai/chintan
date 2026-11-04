@@ -242,12 +242,17 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
    * polls slowly and only reacts to reconnect and focus, so without this it
    * went on saying "waiting to sync" over an edit the server had.
    */
-  const forgetQueued = useCallback(async () => {
-    if (!note) return;
-    await clearQueuedEdit(note.id).catch(() => {});
-    queryClient.setQueryData(queryKeys.queuedEdit(note.id), null);
-    void queryClient.invalidateQueries({ queryKey: queryKeys.offlineQueue() });
-  }, [note, queryClient]);
+  const forgetQueued = useCallback(
+    async (key?: string) => {
+      if (!note) return;
+      const gone = await clearQueuedEdit(note.id, key).catch(() => false);
+      // A newer entry kept: read it back rather than claim nothing is owed.
+      if (gone) queryClient.setQueryData(queryKeys.queuedEdit(note.id), null);
+      else void queryClient.invalidateQueries({ queryKey: queryKeys.queuedEdit(note.id) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.offlineQueue() });
+    },
+    [note, queryClient],
+  );
 
   useEffect(() => {
     if (!note) return;
@@ -305,6 +310,8 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
      * typed online sent the body alone and dropped the title.
      */
     const body = { ...(queued.data?.pending ? queued.data.body : null), ...patchFor(current) };
+    // The entry this save supersedes, by key; see `forgetQueued`.
+    const heldKey = queued.data?.key;
     commit({ type: 'saveStart' });
 
     try {
@@ -313,7 +320,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
       // this note — a retired entry included, once Keep my edits re-sent it.
       // Only when something is (or may be) held: a plain autosave must not
       // invalidate the offline banner's query for nothing.
-      if (queued.data !== null) await forgetQueued();
+      if (queued.data !== null) await forgetQueued(heldKey);
       /*
        * What the server now holds, written into the caches this screen reads
        * from next time. The response is a list row — no body — so the text is
@@ -360,7 +367,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
            */
           const held = await queuedEditBody(note.id);
           const queuedBody = { ...held, ...body };
-          await enqueueReplacing({
+          const entry = await enqueueReplacing({
             id: queuedEditId(note.id),
             kind: 'updateNote',
             payload: { noteId: note.id, body: queuedBody },
@@ -377,7 +384,13 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
           // Seeded rather than invalidated: between the write and a refetch the
           // query would still answer "nothing queued", and the screen would
           // read "Saved" for an edit the server has never seen.
-          const outstanding: QueuedEdit = { pending: true, dead: false, error: null, body: queuedBody };
+          const outstanding: QueuedEdit = {
+            pending: true,
+            dead: false,
+            error: null,
+            body: queuedBody,
+            key: entry.idempotencyKey,
+          };
           queryClient.setQueryData(queryKeys.queuedEdit(note.id), outstanding);
           // The banner counts what is waiting, and nothing else tells it the
           // depth changed: its query polls slowly and only reacts to reconnect
