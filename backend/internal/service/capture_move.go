@@ -149,20 +149,32 @@ func (s *CaptureService) movableCapture(ctx context.Context, userID, captureID s
 	return current, nil
 }
 
+// moveSource is the body key of the note current moves out of, "" when that
+// note was purged from under it (no paragraph to carry; the row still
+// moves), and the recording's items when it is a checklist's (cutRecording).
+func (s *CaptureService) moveSource(ctx context.Context, userID string, current model.CaptureIndex) (string, []string, error) {
+	source, err := s.store.GetNote(ctx, userID, current.NoteID)
+	switch {
+	case errors.Is(err, repository.ErrNotFound):
+		return "", nil, nil
+	case err != nil:
+		return "", nil, fmt.Errorf("failed to get source note: %w", err)
+	}
+	items, err := s.recordingItems(ctx, source, current)
+	if err != nil {
+		return "", nil, fmt.Errorf("%w: %w", ErrMoveIncomplete, err)
+	}
+	return source.S3MarkdownKey, items, nil
+}
+
 // moveInto is the move itself: current's paragraph out of its note and into
 // the active target, then both indexes and the row.
 func (s *CaptureService) moveInto(ctx context.Context, userID string, current model.CaptureIndex, target model.NoteIndex) (*model.CaptureIndex, error) {
 	captureID, targetNoteID := current.ID, target.ID
 	sourceID := current.NoteID
-	sourceKey := ""
-	switch source, err := s.store.GetNote(ctx, userID, sourceID); {
-	case errors.Is(err, repository.ErrNotFound):
-		// The source was purged from under the capture. There is no paragraph
-		// to carry; the row still moves.
-	case err != nil:
-		return nil, fmt.Errorf("failed to get source note: %w", err)
-	default:
-		sourceKey = source.S3MarkdownKey
+	sourceKey, items, err := s.moveSource(ctx, userID, current)
+	if err != nil {
+		return nil, err
 	}
 
 	// Everything the insert needs is gathered before anything is written, so a
@@ -180,7 +192,7 @@ func (s *CaptureService) moveInto(ctx context.Context, userID string, current mo
 		if err != nil && !errors.Is(err, repository.ErrNotFound) {
 			return nil, fmt.Errorf("%w: failed to read the source body: %w", ErrMoveIncomplete, err)
 		}
-		_, text, found = CutCaptureParagraph(string(body), captureID)
+		_, text, found = cutRecording(string(body), captureID, items)
 	}
 
 	// The target carries the append stamp from before its body write until
@@ -230,7 +242,7 @@ func (s *CaptureService) moveInto(ctx context.Context, userID string, current mo
 		// away with the only copy of the new words in the source.
 		edited := false
 		_, err = RewriteNoteBody(ctx, s.objects, sourceKey, func(body string) (string, bool) {
-			rest, cut, changed := cutUnedited(body, captureID, text)
+			rest, cut, changed := cutUnedited(body, captureID, text, items)
 			edited = edited || changed
 			return rest, cut
 		})
@@ -309,8 +321,8 @@ func (s *CaptureService) moveInto(ctx context.Context, userID string, current mo
 // the target. cut is whether the body changed; edited reports a paragraph
 // whose words moved in between, which is left where it is, since cutting it
 // would take the only copy of the new words out of the source.
-func cutUnedited(body, captureID, text string) (rest string, cut, edited bool) {
-	rest, now, ok := CutCaptureParagraph(body, captureID)
+func cutUnedited(body, captureID, text string, items []string) (rest string, cut, edited bool) {
+	rest, now, ok := cutRecording(body, captureID, items)
 	if ok && now != text {
 		return body, false, true
 	}

@@ -7,15 +7,15 @@ import "testing"
 // marker changes nothing.
 func TestCutUneditedCutsOnlyTheParagraphAsCopied(t *testing.T) {
 	body := InsertCaptureParagraph("typed first", "c1", "the dictated words", func(string) bool { return false })
-	rest, cut, edited := cutUnedited(body, "c1", "the dictated words")
+	rest, cut, edited := cutUnedited(body, "c1", "the dictated words", nil)
 	if !cut || edited || rest != "typed first" {
 		t.Errorf("as copied: rest %q, cut %v, edited %v", rest, cut, edited)
 	}
-	rest, cut, edited = cutUnedited(body, "c1", "the words as copied earlier")
+	rest, cut, edited = cutUnedited(body, "c1", "the words as copied earlier", nil)
 	if cut || !edited || rest != body {
 		t.Errorf("edited since: rest %q, cut %v, edited %v", rest, cut, edited)
 	}
-	rest, cut, edited = cutUnedited("typed first", "c1", "the dictated words")
+	rest, cut, edited = cutUnedited("typed first", "c1", "the dictated words", nil)
 	if cut || edited || rest != "typed first" {
 		t.Errorf("no marker: rest %q, cut %v, edited %v", rest, cut, edited)
 	}

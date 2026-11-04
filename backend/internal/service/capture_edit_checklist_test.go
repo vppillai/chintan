@@ -71,3 +71,46 @@ func TestMoveCaptureBetweenChecklistsMovesExactlyItsItem(t *testing.T) {
 		t.Errorf("the person sees %q", got)
 	}
 }
+
+// After a save from the Items tab every marker stands bare at the end of the
+// list, so cutting along the marker took nothing: delete and move left the
+// recording's items behind. They go by the recording's words now, from its
+// clean artefact, each once, ticks kept.
+func (h *editHarness) itemsTabSaved(userID string) model.NoteIndex {
+	h.t.Helper()
+	body := "- [x] passport\n- [ ] typed\n- [ ] charger\n" + CaptureMarker("c_1") + "\n" + CaptureMarker("c_2")
+	note := h.checklist(userID, "Packing", body)
+	for id, words := range map[string]string{"c_1": "Passport", "c_2": "charger"} {
+		c := h.appended(userID, note.ID, id, map[string]string{"c_1": t1000, "c_2": t1100}[id])
+		if err := h.objects.Put(h.ctx, c.CleanKey, []byte(words), "text/plain"); err != nil {
+			h.t.Fatalf("Put clean: %v", err)
+		}
+	}
+	return note
+}
+
+func TestDeleteCaptureFromAChecklistWithABareMarkerRemovesItsItemsByWords(t *testing.T) {
+	h := newEditHarness(t)
+	note := h.itemsTabSaved("u1")
+	if err := h.captures.DeleteCapture(h.ctx, "u1", "c_1"); err != nil {
+		t.Fatalf("DeleteCapture: %v", err)
+	}
+	if got, want := h.body(note), "- [ ] typed\n- [ ] charger\n"+CaptureMarker("c_2"); got != want {
+		t.Errorf("after deleting c_1: %q, want %q", got, want)
+	}
+}
+
+func TestMoveCaptureFromAChecklistWithABareMarkerMovesItsItemsByWords(t *testing.T) {
+	h := newEditHarness(t)
+	source := h.itemsTabSaved("u1")
+	target := h.checklist("u1", "Groceries", "- [ ] milk")
+	if _, moved, err := h.captures.MoveCapture(h.ctx, "u1", "c_1", target.ID); err != nil || !moved {
+		t.Fatalf("MoveCapture = (%v, %v)", moved, err)
+	}
+	if got, want := h.body(source), "- [ ] typed\n- [ ] charger\n"+CaptureMarker("c_2"); got != want {
+		t.Errorf("source = %q, want %q", got, want)
+	}
+	if got, want := h.body(target), "- [ ] milk\n\n"+CaptureMarker("c_1")+"\n- [x] passport"; got != want {
+		t.Errorf("target = %q, want %q", got, want)
+	}
+}
