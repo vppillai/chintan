@@ -39,7 +39,10 @@ retry (`inbox.md`).
    (`settled`: below 500, not 409, not 429): a 5xx, a conflict or the spend
    cap are answers the same request would not get tomorrow, and a recorded
    429 would pin "Resend tomorrow" to the cap for a day. Anything else, and a handler panic, releases the claim
-   (`AbandonIdempotent`, in a `defer`).
+   (`AbandonIdempotent`, in a `defer`). A settled response whose record
+   could not be written keeps the claim instead: the work is done, and a
+   released claim let a retry do it twice; the retry meets 409 for the
+   lease. Both writes run on a context the caller's hang-up cannot cancel.
 4. A recorded answer is honoured for `IdemTTL` (24 h); a bare claim only for
    `IdemClaimLease` (60 s), the backstop for a Lambda killed mid-request
    that no `defer` can reach — the API function's timeout is 29 s. The

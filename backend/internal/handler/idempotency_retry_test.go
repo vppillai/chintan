@@ -146,3 +146,44 @@ func TestAReplayedProblemKeepsItsContentType(t *testing.T) {
 		t.Fatalf("replay body differs:\n first=%s\nsecond=%s", first.Body.String(), second.Body.String())
 	}
 }
+
+// failCompleteOnce makes the first CompleteIdempotent fail after the handler
+// has done its work.
+type failCompleteOnce struct {
+	repository.Store
+	mu     sync.Mutex
+	failed bool
+}
+
+func (s *failCompleteOnce) CompleteIdempotent(ctx context.Context, tenantID, key string, status int, contentType string, body []byte) error {
+	s.mu.Lock()
+	first := !s.failed
+	s.failed = true
+	s.mu.Unlock()
+	if first {
+		return errors.New("induced record failure")
+	}
+	return s.Store.CompleteIdempotent(ctx, tenantID, key, status, contentType, body)
+}
+
+// The note was created; only recording the response failed. Releasing the
+// claim then let a retry with the same key create it a second time.
+func TestARetryAfterAFailedRecordDoesNotRedoTheWork(t *testing.T) {
+	h := newHarness(t, func(deps *handler.Deps, h *harness) {
+		deps.Store = &failCompleteOnce{Store: h.store}
+	})
+	body := map[string]any{"title": "Once"}
+	if first := h.do(t, http.MethodPost, "/v1/notes", "user1", body, [2]string{"Idempotency-Key", testKey}); first.Code != http.StatusCreated {
+		t.Fatalf("first: status = %d, want 201", first.Code)
+	}
+	h.do(t, http.MethodPost, "/v1/notes", "user1", body, [2]string{"Idempotency-Key", testKey})
+	count := 0
+	for _, n := range listNotes(t, h, "user1", "/v1/notes") {
+		if n.Title == "Once" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("the note was created %d times, want 1", count)
+	}
+}
