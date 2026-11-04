@@ -336,9 +336,7 @@ func (p *Pipeline) runCapture(ctx context.Context, ref CaptureRef) (model.Captur
 	if service.CaptureIsTerminal(capture.Status) {
 		log.Info("capture already finished; nothing to do", slog.String("status", string(capture.Status)))
 		if capture.Status == model.StatusAppended {
-			// The attempt that appended it may have died between the
-			// completion and its clear of the note's stamp (finishAppend).
-			p.clearStampOf(ctx, capture)
+			p.clearStampOf(ctx, capture) // its attempt may have died before the clear (finishAppend)
 		}
 		return capture, nil
 	}
