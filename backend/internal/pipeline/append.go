@@ -121,7 +121,8 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 	// it had, and the paragraph just dictated was gone with nothing left to
 	// retry it (review 2026-09-05, S1). The stamp bumps the version now and
 	// names the capture, so service.UpdateNote refuses a body write for as long
-	// as the append can still be in flight, and the index refresh clears it.
+	// as the append can still be in flight, and finishAppend clears it once the
+	// capture is marked appended.
 	//
 	// The row's version has usually moved since run() read it — the stages
 	// before this one take seconds — so a lost race re-reads and stamps again.
@@ -306,14 +307,13 @@ const defaultAppendStampPoll = 200 * time.Millisecond
 // attempt that died here.
 func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex, token string, autoClean bool) (model.CaptureIndex, error) {
 	// The worker's refresh is the editor's (service.RefreshNoteIndex) on the
-	// worker's clock, clearing this capture's stamp, and refusing to index a
-	// body it could not read — a paragraph was just written, so a failed read
-	// is a fault to retry, not an empty note.
+	// worker's clock, refusing to index a body it could not read — a
+	// paragraph was just written, so a failed read is a fault to retry, not
+	// an empty note.
 	refreshed, err := service.RefreshNoteIndex(ctx, p.cfg.Store, p.cfg.Objects, tenantID, note.ID, service.RefreshOptions{
-		Now:                 p.now,
-		ClearAppendStampFor: capture.ID,
-		RequireBody:         true,
-		Attempts:            maxIndexRefreshAttempts,
+		Now:         p.now,
+		RequireBody: true,
+		Attempts:    maxIndexRefreshAttempts,
 	})
 	if err != nil {
 		return *capture, fmt.Errorf("pipeline: refresh note index: %w", err)
@@ -324,6 +324,19 @@ func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *m
 		return *capture, fmt.Errorf("pipeline: complete capture append: %w", err)
 	}
 	*capture = appended
+
+	// The stamp goes only now. Cleared with the refresh, a completion that
+	// failed left the paragraph open to an editor save while the capture was
+	// still unfinished: the edit moved the words off the marker, the retry no
+	// longer recognised its own paragraph, and the takeover after the lease
+	// wrote the dictation a second time. Held until here, the save waits
+	// (409 append_in_progress) and the retry finds the body as written.
+	// Best effort, like releaseAppendClaim: a stamp left behind ages out.
+	if err := p.cfg.Store.ClearNoteAppend(ctx, tenantID, note.ID, capture.ID); err != nil {
+		obs.Log(ctx).Warn("could not clear the note's append stamp after the capture was appended; editor saves wait for it to age out",
+			slog.String("note_id", note.ID),
+			slog.String("error", err.Error()))
+	}
 
 	// Only now, with the capture marked appended: the cleaned view follows the
 	// body, and the body is settled.
