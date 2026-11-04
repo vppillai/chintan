@@ -22,7 +22,7 @@ then seven cards, in the order `SettingsScreen.test.tsx` holds them to:
 | Recording & transcription | `LanguageSelect` for `default_language` (auto-detect explained, with the one-line Malayalam advice beneath it) and `Keep recordings for`, a `<select>` over `RETENTION_TIERS = [0, 7, 30, 90, 365]`, the tiers the server stores (`retention.md`). |
 | Appearance | A three-way `Segmented` control, Ink & Paper / Nocturne / System, each with a swatch; applied on the device at once (`useTheme`) and saved like the rest. |
 | Passkeys (`PasskeyCard.tsx`) | The hand-off to the managed login's passkey page and its result (`auth.md`). |
-| Notifications (`NotificationsCard.tsx`) | The one Web Push switch and the four sentences for when it cannot be offered (`push.md`). |
+| Notifications (`NotificationsCard.tsx`) | The one Web Push switch, its "Not reaching this device. Turn on again." hint for a browser that was turned on and is not enrolled, and the four sentences for when it cannot be offered (`push.md`). |
 | Devices & shortcuts (`DevicesCard.tsx`) | Inbox keys: the list, the mint form and the connect recipes (curl, iPhone or Apple Watch Shortcuts, Android HTTP Shortcuts). Folded by default behind a summary that counts keys and flags one expiring soon; `#devices` (`DEVICES_ANCHOR`, the bare `devices`), which About links to, opens it (`inbox.md`). |
 | Your data (`ExportCard.tsx`) | One `DownloadButton`: everything as one JSON file. |
 | About & support | `Usage this month` carrying the month's figure (`formatDollars`) and opening `/usage`; `About <app>`; `Source on GitHub`; and the Version row (`VersionFootnote`). |

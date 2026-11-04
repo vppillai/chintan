@@ -1,18 +1,20 @@
 import { useEffect, useId, useState } from 'react';
 
+import { useApi } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
 import { usePushKey, usePushSubscriptions, useSubscribePush, useUnsubscribePush } from '@/api/queries.ts';
-import type { PushSubscribeWire } from '@/api/schema.ts';
 import { config } from '@/config/env.ts';
 
 import { SettingsCard, SettingsRow } from './SettingsCard.tsx';
 import {
-  browserLabel,
   currentPushSubscription,
+  enrolThisBrowser,
   notificationPermission,
+  pushSubscribeBody,
   pushSubscriptionId,
   pushSupport,
-  subscribeThisBrowser,
+  pushWanted,
+  setPushWanted,
 } from './push.ts';
 
 /** The one sentence for anything that did not go through; the server's own words when it has them. */
@@ -31,7 +33,11 @@ function failureText(error: unknown): string {
  * instance's key and registers the subscription; off unsubscribes and
  * removes it. The switch reads on only when this browser holds a
  * subscription AND the server lists it: a row the worker pruned after a 410
- * reads off, which is the truth.
+ * reads off, which is the truth — and when this browser was turned on and
+ * has not been turned off, the hint says it is not reaching this device, so
+ * a dropped subscription is not mistaken for a choice. The shell re-enrols
+ * such a browser on launch (`usePushResync`); the hint is what is left when
+ * that could not happen, such as permission withdrawn by the browser.
  *
  * Four states say why the switch is not there. Not set up on this instance
  * (the key answers 404) comes first, because on an instance without a key
@@ -46,6 +52,7 @@ export function NotificationsCard() {
   const subscriptions = usePushSubscriptions(configured && support === 'supported');
   const subscribe = useSubscribePush();
   const unsubscribe = useUnsubscribePush();
+  const api = useApi();
   const labelId = useId();
 
   /** This browser's subscription and its server id; `undefined` until read. */
@@ -75,22 +82,25 @@ export function NotificationsCard() {
 
   const enrolled = subscriptions.data?.items ?? [];
   const on = local !== null && local !== undefined && localId !== null && enrolled.some((item) => item.id === localId);
-  const ready = local !== undefined && !subscriptions.isLoading;
+  // Only a list the server gave says what is enrolled; a failed read is not
+  // "nothing enrolled", and turning on against it would drop a working
+  // subscription as unlisted.
+  const ready = local !== undefined && subscriptions.isSuccess;
+  // Wanted here and not listed there: the push service or the browser
+  // dropped it. Not before both reads are in, or every load flashes it.
+  const lost = ready && !on && (pushWanted() || (local !== null && local !== undefined));
 
   const turnOn = async (): Promise<void> => {
     if (!key.data) return;
     const granted = await Notification.requestPermission();
     setPermission(granted);
     if (granted !== 'granted') return;
-    const subscription = await subscribeThisBrowser(key.data.public_key);
-    const json = subscription.toJSON();
-    const body: PushSubscribeWire = {
-      endpoint: subscription.endpoint,
-      expirationTime: subscription.expirationTime,
-      keys: { p256dh: json.keys?.['p256dh'] ?? '', auth: json.keys?.['auth'] ?? '' },
-      label: browserLabel(),
-    };
-    await subscribe.mutateAsync(body);
+    const subscription = await enrolThisBrowser(
+      key.data.public_key,
+      async () => (await api.listPushSubscriptions()).items.map((item) => item.id),
+      (fresh) => subscribe.mutateAsync(pushSubscribeBody(fresh)),
+    );
+    setPushWanted(true);
     setLocal(subscription);
     setLocalId(await pushSubscriptionId(subscription.endpoint));
   };
@@ -107,6 +117,7 @@ export function NotificationsCard() {
       }
     }
     if (local) await local.unsubscribe();
+    setPushWanted(false);
     setLocal(null);
     setLocalId(null);
   };
@@ -128,7 +139,7 @@ export function NotificationsCard() {
       title="Notifications"
       lead="A note on this device when a recording has been filed, even with the app closed."
       foot={
-        configured && support === 'supported' ? (
+        configured && support === 'supported' && subscriptions.isSuccess ? (
           <p>
             {enrolled.length === 0
               ? 'No device is enrolled yet. '
@@ -175,7 +186,9 @@ export function NotificationsCard() {
             hint={
               permission === 'denied'
                 ? 'Blocked in the browser settings. Allow notifications for this site there, then turn this on.'
-                : 'Also when one needs a note chosen, or did not finish'
+                : lost
+                  ? 'Not reaching this device. Turn on again.'
+                  : 'Also when one needs a note chosen, or did not finish'
             }
             labelId={labelId}
           >
@@ -194,6 +207,20 @@ export function NotificationsCard() {
               </span>
             </button>
           </SettingsRow>
+          {subscriptions.isError && (
+            <p className="you-card__note" role="alert">
+              Couldn&rsquo;t check which devices are enrolled.{' '}
+              <button
+                type="button"
+                className="text-link"
+                onClick={() => {
+                  void subscriptions.refetch();
+                }}
+              >
+                Try again
+              </button>
+            </p>
+          )}
           {problem && (
             <p className="you-card__note" role="alert">
               {problem}

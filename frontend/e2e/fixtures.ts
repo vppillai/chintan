@@ -1,4 +1,5 @@
 import { test as base, type Page, type Route } from '@playwright/test';
+import { createHash } from 'node:crypto';
 
 import type {
   CaptureCreatedWire,
@@ -11,6 +12,8 @@ import type {
   Page as PageWire,
   PresignedDownloadWire,
   ProblemWire,
+  PushSubscribeWire,
+  PushSubscriptionWire,
   RecordingUrlsWire,
   SearchHitWire,
   SettingsWire,
@@ -60,6 +63,12 @@ export interface ApiState {
   auth: AuthState;
   /** What `PUT /v1/settings` last stored, as `GET` returns it. */
   settings: SettingsWire;
+  /** The instance's VAPID public key, or null for the contract's 404 (no pair yet). */
+  pushKey: string | null;
+  /** The tenant's push subscriptions, as `GET /v1/push/subscriptions` lists them. */
+  pushSubscriptions: PushSubscriptionWire[];
+  /** Every `POST /v1/push/subscriptions` body, in order. */
+  pushPosts: PushSubscribeWire[];
 }
 
 /**
@@ -224,6 +233,9 @@ export function freshState(): ApiState {
       default_language: 'en',
       daily_spend_cap_micros: 0,
     },
+    pushKey: null,
+    pushSubscriptions: [],
+    pushPosts: [],
     offline: false,
     dropNoteGets: 0,
     conflictOnce: false,
@@ -926,14 +938,40 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
     }
 
     // ---- Web Push ------------------------------------------------------
-    // The instance under test has no VAPID pair, as a fresh deploy does not
-    // until the owner makes one: the key is the contract's 404 and the
-    // Notifications card says so.
+    // By default the instance under test has no VAPID pair, as a fresh
+    // deploy does not until the owner makes one: the key is the contract's
+    // 404 and the Notifications card says so. A spec that sets `pushKey`
+    // gets the key and a subscription list it can watch being written.
     if (path === '/v1/push/key') {
+      if (state.pushKey) {
+        await json(route, { public_key: state.pushKey });
+        return;
+      }
       await problem(route, 404, {
         title: 'Not found',
         detail: 'notifications are not configured on this instance',
       });
+      return;
+    }
+    if (path === '/v1/push/subscriptions') {
+      if (method === 'POST') {
+        const body = request.postDataJSON() as PushSubscribeWire;
+        state.pushPosts.push(body);
+        const created: PushSubscriptionWire = {
+          // The server's id: the first sixteen hex characters of the
+          // endpoint's SHA-256, which the browser computes for its own row.
+          id: createHash('sha256').update(body.endpoint).digest('hex').slice(0, 16),
+          endpoint_host: new URL(body.endpoint).host,
+          label: body.label ?? '',
+          created_at: new Date().toISOString(),
+          last_success_at: null,
+          failures: 0,
+        };
+        state.pushSubscriptions.push(created);
+        await json(route, created, 201);
+        return;
+      }
+      await json(route, { items: state.pushSubscriptions } satisfies PageWire<PushSubscriptionWire>);
       return;
     }
 
