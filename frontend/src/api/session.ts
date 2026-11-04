@@ -134,8 +134,12 @@ export class Session {
       .catch((error: unknown) => {
         // A refresh that fails because the network is down must NOT sign the
         // user out — they are offline, not unauthenticated, and clearing the
-        // session here would lose the queued mutations with it.
-        if (error instanceof ApiError && error.isOffline) throw error;
+        // session here would lose the queued mutations with it. Nor one the
+        // token endpoint could not answer — a 5xx, a 429, a timeout: Cognito
+        // having a bad minute is not Cognito refusing the refresh token, and
+        // clearing on it unmounted every open editor mid-draft. Only a refusal
+        // (`invalid_grant`, read as 401) ends the session.
+        if (error instanceof ApiError && (error.isOffline || error.isRetryable)) throw error;
         // Already cleared — by sign-out, or by an earlier failure. Clearing
         // again would bump the generation under a newer refresh.
         if (generation !== this.generation) throw error;

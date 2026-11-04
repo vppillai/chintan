@@ -160,3 +160,25 @@ describe('a token endpoint that never answers', () => {
     }
   });
 });
+
+describe('a token endpoint having a bad minute', () => {
+  it.each([500, 502, 503, 429])('keeps the session on a %i, to be asked again later', async (status) => {
+    const refresher: TokenRefresher = {
+      refresh: () => Promise.reject(new ApiError({ kind: 'http', status, title: 'Upstream' })),
+    };
+    const session = new Session(createMemoryTokenStore(tokens()), refresher);
+
+    await expect(session.refresh()).rejects.toBeInstanceOf(ApiError);
+    expect(session.isAuthenticated()).toBe(true);
+  });
+
+  it('ends the session when the refresh token is refused', async () => {
+    const refresher: TokenRefresher = {
+      refresh: () => Promise.reject(new ApiError({ kind: 'http', status: 401, title: 'Expired' })),
+    };
+    const session = new Session(createMemoryTokenStore(tokens()), refresher);
+
+    await expect(session.refresh()).rejects.toBeInstanceOf(ApiError);
+    expect(session.isAuthenticated()).toBe(false);
+  });
+});
