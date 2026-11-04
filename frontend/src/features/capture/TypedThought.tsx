@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
@@ -34,10 +34,24 @@ export function TypedThought({
   const fieldId = useId();
   const [noteId, setNoteId] = useState(initialNoteId);
   const [text, setText] = useState('');
-  // One key per thought: a retry after a lost answer is the same capture.
-  const [key] = useState(() => crypto.randomUUID());
+  /*
+   * One key per request body: a retry after a lost answer is the same
+   * capture, but an edited thought, another note, or a request the server
+   * has already refused (a 4xx is stored against its key and replayed) is a
+   * new one — reusing the key would replay the refusal or be refused as a
+   * different request on the same key.
+   */
+  const sent = useRef<{ body: string; key: string } | null>(null);
   const send = useMutation({
-    mutationFn: () => api.captureText({ text: text.trim(), note_id: noteId }, key),
+    mutationFn: () => {
+      const body = { text: text.trim(), note_id: noteId };
+      const signature = JSON.stringify(body);
+      if (sent.current?.body !== signature) sent.current = { body: signature, key: crypto.randomUUID() };
+      return api.captureText(body, sent.current.key);
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500) sent.current = null;
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['captures'] });
       onDone(noteId);

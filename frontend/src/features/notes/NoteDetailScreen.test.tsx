@@ -511,6 +511,9 @@ describe('the note screen is shaped for reading', () => {
       expect(title).toHaveValue('Roof repair');
     });
     await user.click(title);
+    // Safari's IME ends a composition with an Enter of keyCode 229: not ours.
+    fireEvent.keyDown(title, { key: 'Enter', keyCode: 229 });
+    expect(title).toHaveFocus();
     await user.keyboard('{End} works{Enter}Ellis');
     expect(title).toHaveValue('Roof repair works');
     expect(screen.getByRole('textbox', { name: 'Note body' })).toHaveFocus();

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useId, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
@@ -13,7 +13,6 @@ import { LocalUploadItem } from '@/features/capture/FilingRow.tsx';
 import type { CaptureModel } from '@/features/capture/machine.ts';
 
 import { downloadFormat, needsConversion, withExtension } from './downloadFormat.ts';
-import { MoveSheet } from './MoveSheet.tsx';
 import type { TranscriptView } from './TranscriptPanel.tsx';
 import { RecordingRow } from './recordings/RecordingRow.tsx';
 import {
@@ -26,6 +25,10 @@ import {
   type Notice,
 } from './recordings/labels.ts';
 import { useRetranscribeCapture } from './recordings/useRetranscribeCapture.ts';
+
+// Its own chunk: the sheet is opened from a menu, and the launch carries a
+// fixed budget of bytes (check-bundle).
+const MoveSheet = lazy(() => import('./MoveSheet.tsx').then((module) => ({ default: module.MoveSheet })));
 
 type DownloadProgress = { phase: 'idle' } | { phase: 'working'; done: number; total: number };
 
@@ -502,19 +505,23 @@ export function Recordings({
         }}
       />
 
-      <MoveSheet
-        open={pending?.kind === 'move'}
-        count={pending?.ids.length ?? 0}
-        excludeNoteId={note.id}
-        pending={moveCaptures.isPending}
-        error={pending?.kind === 'move' && notice?.tone === 'error' ? notice.text : null}
-        onCancel={() => {
-          setPending(null);
-        }}
-        onChoose={(target, title) => {
-          runMove(pending?.ids ?? [], target, title);
-        }}
-      />
+      {pending?.kind === 'move' && (
+        <Suspense fallback={null}>
+          <MoveSheet
+            open={pending?.kind === 'move'}
+            count={pending?.ids.length ?? 0}
+            excludeNoteId={note.id}
+            pending={moveCaptures.isPending}
+            error={pending?.kind === 'move' && notice?.tone === 'error' ? notice.text : null}
+            onCancel={() => {
+              setPending(null);
+            }}
+            onChoose={(target, title) => {
+              runMove(pending?.ids ?? [], target, title);
+            }}
+          />
+        </Suspense>
+      )}
     </>
   );
 }

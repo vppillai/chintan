@@ -1,14 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
-import { queryKeys, useCreateNote, useNotes } from '@/api/queries.ts';
+import { queryKeys, useArchiveNote, useDeleteNoteForever, useNotes } from '@/api/queries.ts';
 import type { NoteWire, SettingsWire } from '@/api/schema.ts';
-import { openItemsText, parseChecklist } from '@/features/notes/checklist.ts';
-import { formatRowTime } from '@/features/notes/groups.ts';
 import { AUTO_LANGUAGE, LANGUAGES, languageName } from '@/features/settings/languages.ts';
-import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNote, useCachedNotes } from '@/offline/useNotesCache.ts';
+
+import { useCaptureStore } from './store.ts';
 
 /**
  * Where this recording will be filed, shown and changeable before you speak.
@@ -40,6 +39,11 @@ import { useCachedNote, useCachedNotes } from '@/offline/useNotesCache.ts';
 /** Enough to find a note made this week before anything is typed. */
 const RECENT_LIMIT = 20;
 
+// The sheet is a chunk of its own: most recordings never open it.
+const TargetChooserSheet = lazy(() =>
+  import('./TargetChooserSheet.tsx').then((module) => ({ default: module.TargetChooserSheet })),
+);
+
 export interface TargetChooserProps {
   noteId: string | null;
   onChoose: (noteId: string | null) => void;
@@ -58,7 +62,7 @@ export interface TargetChooserProps {
 }
 
 /** The pill and the first option when no note is chosen: the router decides where it goes. */
-const DEFAULT_TARGET_LABEL = 'Chintan decides';
+export const DEFAULT_TARGET_LABEL = 'Chintan decides';
 
 export function TargetChooser({
   noteId,
@@ -68,7 +72,6 @@ export function TargetChooser({
 }: TargetChooserProps) {
   const [open, setOpen] = useState(false);
   const listId = useId();
-  const searchId = useId();
   const api = useApi();
   const rootRef = useRef<HTMLDivElement>(null);
   const pillRef = useRef<HTMLButtonElement>(null);
@@ -121,35 +124,50 @@ export function TargetChooser({
   );
   const recent = useMemo(() => notes.slice(0, RECENT_LIMIT), [notes]);
 
-  const [query, setQuery] = useState('');
-  const term = query.trim();
-  const online = useOnline();
-  const create = useCreateNote();
-  const [createFailed, setCreateFailed] = useState(false);
+  /*
+   * The note "New note “…”" made, until it is kept. Picking another target,
+   * or leaving without sending anything into it, leaves a note that is only
+   * a title; it is discarded then, as the note screen discards an untouched
+   * placeholder (archive, then purge) — but only once the server says it is
+   * still empty with no capture, so a recording or a typed thought already
+   * on its way into it keeps it.
+   */
+  const [made, setMade] = useState<NoteWire | null>(null);
+  const madeId = useRef<string | null>(null);
+  const archiveNote = useArchiveNote();
+  const deleteForever = useDeleteNoteForever();
+  const discardIfUntouched = useRef((id: string) => {
+    void api.getNote(id).then(
+      (note) => {
+        if (note.body.trim() !== '' || (note.captures?.length ?? 0) > 0) return;
+        void archiveNote.mutateAsync(id).then(() => deleteForever.mutate(id), () => undefined);
+      },
+      () => undefined,
+    );
+  });
+  useEffect(
+    () => () => {
+      const id = madeId.current;
+      if (!id) return;
+      // A take still aimed at it — recording, or sent and uploading — keeps it.
+      const { model } = useCaptureStore.getState();
+      if (model.noteId === id && model.state !== 'idle') return;
+      discardIfUntouched.current(id);
+    },
+    [],
+  );
   /** Every note the device holds or the server has listed, newest first, for the field. */
   const everything = useMemo(() => {
     const byId = new Map<string, NoteWire>();
-    for (const note of [...notes, ...(cached.data ?? [])]) if (!byId.has(note.id)) byId.set(note.id, note);
+    for (const note of [...notes, ...(cached.data ?? [])]) {
+      if (!byId.has(note.id)) byId.set(note.id, note);
+    }
     return [...byId.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
   }, [notes, cached.data]);
-  const found = useMemo(() => {
-    const folded = term.toLowerCase();
-    if (!folded) return recent;
-    return everything.filter(
-      (note) =>
-        note.title.toLowerCase().includes(folded) ||
-        (note.aliases ?? []).some((alias) => alias.toLowerCase().includes(folded)) ||
-        (note.tags ?? []).some((tag) => tag.toLowerCase().includes(folded)),
-    );
-  }, [term, recent, everything]);
-  // Offered while the name is not already a note's title: two "Roof"s is
-  // the routing mistake this exists to avoid.
-  const offerNew = term !== '' && !everything.some((note) => note.title.toLowerCase() === term.toLowerCase());
-
   const chosen = noteId
     ? (everything.find((note) => note.id === noteId) ??
       opened.data ??
-      (create.data?.id === noteId ? create.data : undefined))
+      (made?.id === noteId ? made : undefined))
     : undefined;
   /*
    * No target means the router chooses, and it may well file into a note
@@ -159,27 +177,6 @@ export function TargetChooser({
    */
   const title = noteId === null ? DEFAULT_TARGET_LABEL : (chosen?.title ?? 'This note');
   const language = transcriptionLanguage(noteId, chosen, settings.data);
-
-  const choose = (id: string | null): void => {
-    onChoose(id);
-    setOpen(false);
-    setQuery('');
-  };
-
-  const startNote = (): void => {
-    setCreateFailed(false);
-    create.mutate(
-      { title: term, kind: 'note' },
-      {
-        onSuccess: (created) => {
-          choose(created.id);
-        },
-        onError: () => {
-          setCreateFailed(true);
-        },
-      },
-    );
-  };
 
   return (
     <div ref={rootRef} className="target-chooser">
@@ -208,121 +205,33 @@ export function TargetChooser({
       </button>
 
       {open && (
-        <div
-          id={listId}
-          className="target-chooser__sheet"
-          role="group"
-          aria-label="Where this recording goes"
-        >
-          <label className="visually-hidden" htmlFor={searchId}>
-            Find a note, or name a new one
-          </label>
-          <input
-            id={searchId}
-            className="move-sheet__search"
-            type="search"
-            value={query}
-            placeholder="Find or name a note"
-            autoComplete="off"
-            maxLength={200}
-            onChange={(event) => {
-              setCreateFailed(false);
-              setQuery(event.target.value);
+        <Suspense fallback={null}>
+          <TargetChooserSheet
+            id={listId}
+            noteId={noteId}
+            everything={everything}
+            recent={recent}
+            paused={served.fetchStatus === 'paused'}
+            onChoose={(id, created) => {
+              const previous = madeId.current;
+              if (previous && previous !== id) {
+                madeId.current = null;
+                discardIfUntouched.current(previous);
+              }
+              if (created) {
+                setMade(created);
+                madeId.current = created.id;
+              }
+              onChoose(id);
+              setOpen(false);
             }}
           />
-          <ul className="target-chooser__list" role="list">
-            {offerNew && online && (
-              <li>
-                <button
-                  type="button"
-                  className="target-chooser__option"
-                  disabled={create.isPending}
-                  onClick={startNote}
-                >
-                  New note &ldquo;{term}&rdquo;
-                </button>
-              </li>
-            )}
-            <li>
-              <button
-                type="button"
-                className="target-chooser__option"
-                aria-pressed={noteId === null}
-                onClick={() => {
-                  choose(null);
-                }}
-              >
-                {DEFAULT_TARGET_LABEL}
-              </button>
-            </li>
-            {found.map((note) => (
-              <li key={note.id}>
-                <button
-                  type="button"
-                  className="target-chooser__option"
-                  aria-pressed={note.id === noteId}
-                  onClick={() => {
-                    choose(note.id);
-                  }}
-                >
-                  <span className="target-chooser__option-title">{note.title}</span>
-                  {/* Part of the name on purpose: two "Roof repair"s are as
-                      alike to a screen reader as to the eye. */}
-                  <span className="target-chooser__option-meta">{optionMeta(note)}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-          {offerNew && !online && (
-            <p className="target-chooser__empty">New note needs a connection.</p>
-          )}
-          {createFailed && (
-            <p className="target-chooser__empty" role="alert">
-              The note could not be created. Try again.
-            </p>
-          )}
-          {term === '' && recent.length === 0 && (
-            <p className="target-chooser__empty">
-              {served.fetchStatus === 'paused'
-                ? 'No notes are on this device yet. The router will file it once you reconnect.'
-                : 'No notes yet — this will start the first one.'}
-            </p>
-          )}
-        </div>
+        </Suspense>
       )}
 
       {language && <p className="target-chooser__language">{language}</p>}
     </div>
   );
-}
-
-/**
- * What tells two notes with the same title apart: when it was last touched
- * and how it begins, cut at forty characters so the row stays one line.
- *
- * Characters as a reader counts them, not code points. In Malayalam, Tamil or
- * Hindi the fortieth code point is a vowel sign or a virama as often as a
- * letter, and a cut there strands the sign — a dotted circle on screen, a
- * broken syllable in the option's name — or takes it off its consonant. The
- * cut is marked, because the name is read where the CSS ellipsis is not.
- */
-const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-const META_SNIPPET_GRAPHEMES = 40;
-
-export function optionMeta(note: NoteWire): string {
-  const when = formatRowTime(note.updated_at);
-  // A checklist's snippet is its raw `- [ ]` lines; the row and the Move
-  // sheet show the open items as words (QA 2026-09-21, finding 9).
-  const text =
-    note.kind === 'checklist'
-      ? openItemsText(parseChecklist(note.snippet ?? ''))
-      : (note.snippet ?? '');
-  const graphemes = Array.from(GRAPHEMES.segment(text.trim()), (s) => s.segment);
-  const snippet =
-    graphemes.length > META_SNIPPET_GRAPHEMES
-      ? `${graphemes.slice(0, META_SNIPPET_GRAPHEMES).join('')}…`
-      : graphemes.join('');
-  return [when, snippet].filter(Boolean).join(' · ');
 }
 
 /**

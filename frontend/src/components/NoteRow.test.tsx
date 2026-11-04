@@ -315,6 +315,23 @@ describe('a search hit', () => {
     expect(marks).toEqual(['Ridge', 'slipped']);
   });
 
+  it('draws words inside another word once, the text unchanged', () => {
+    // "kit" and "hen" both lie inside "kitchen"; comparing with the previous
+    // match rather than the last kept one drew "kitchenhen".
+    render(
+      <TestProviders api={testApiContext(vi.fn<typeof fetch>())}>
+        <MemoryRouter>
+          <NoteRow note={ACTIVE} excerpt="Fix the kitchen tap" highlight="kitchen kit hen" />
+        </MemoryRouter>
+      </TestProviders>,
+    );
+    const snippet = document.querySelector('.note-row__snippet');
+    expect(snippet?.textContent).toBe('Fix the kitchen tap');
+    expect(Array.from(document.querySelectorAll('mark.search-hit')).map((mark) => mark.textContent)).toEqual([
+      'kitchen',
+    ]);
+  });
+
   it('opens the note with Find on the first word searched for', async () => {
     const user = userEvent.setup();
     let arrived: unknown = null;
@@ -334,5 +351,15 @@ describe('a search hit', () => {
     );
     await user.click(screen.getByRole('button', { name: /roof repair/i }));
     expect(arrived).toEqual({ find: 'tiles' });
+  });
+});
+
+describe('a hit only the server found', () => {
+  it('offers no Pin or Colour…, which would be sent on a version the row never had', async () => {
+    const user = userEvent.setup();
+    mount({ ...ACTIVE, version: 0, updated_at: '' });
+    await user.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.getByRole('menuitem', { name: 'Pin' })).toBeDisabled();
+    expect(screen.getByRole('menuitem', { name: 'Colour…' })).toBeDisabled();
   });
 });

@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
@@ -12,7 +12,6 @@ import {
 } from '@/api/queries.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
-import { MoveSheet } from '@/features/notes/MoveSheet.tsx';
 import { formatDurationShort } from '@/features/notes/groups.ts';
 import { failureText } from '@/features/notes/recordings/labels.ts';
 import { useMinuteNow } from '@/hooks/useMinuteNow.ts';
@@ -27,6 +26,11 @@ import { canRetryUpload, type CaptureModel } from './machine.ts';
 import { useCaptureStore } from './store.ts';
 import { isTargeted, loadTargeted } from './targeted.ts';
 import { awaitsConnection } from './useResendOnReconnect.ts';
+
+// Its own chunk, loaded when a receipt's "Wrong note?" is pressed.
+const MoveSheet = lazy(() =>
+  import('@/features/notes/MoveSheet.tsx').then((module) => ({ default: module.MoveSheet })),
+);
 
 // The row's parts live under `filing/`; the screens that draw a part of the
 // row on their own — a note's Recordings tab, the note screen — keep
@@ -298,32 +302,36 @@ export function FilingRow() {
         )}
       </div>
     </section>
-    <MoveSheet
-      open={misfiled !== null}
-      count={misfiled?.captureIds.length ?? 0}
-      excludeNoteId={misfiled?.noteId ?? ''}
-      pending={move.isPending}
-      error={moveError}
-      onCancel={() => {
-        setMisfiled(null);
-      }}
-      onChoose={(target) => {
-        if (!misfiled) return;
-        setMoveError(null);
-        move.mutate(
-          { noteId: misfiled.noteId, target, captureIds: misfiled.captureIds },
-          {
-            onSuccess: (result) => {
-              if (result.failed.length > 0) setMoveError('Not every recording moved. Try again.');
-              else setMisfiled(null);
-            },
-            onError: (error) => {
-              setMoveError(failureText(error));
-            },
-          },
-        );
-      }}
-    />
+    {misfiled !== null && (
+      <Suspense fallback={null}>
+        <MoveSheet
+          open={misfiled !== null}
+          count={misfiled?.captureIds.length ?? 0}
+          excludeNoteId={misfiled?.noteId ?? ''}
+          pending={move.isPending}
+          error={moveError}
+          onCancel={() => {
+            setMisfiled(null);
+          }}
+          onChoose={(target) => {
+            if (!misfiled) return;
+            setMoveError(null);
+            move.mutate(
+              { noteId: misfiled.noteId, target, captureIds: misfiled.captureIds },
+              {
+                onSuccess: (result) => {
+                  if (result.failed.length > 0) setMoveError('Not every recording moved. Try again.');
+                  else setMisfiled(null);
+                },
+                onError: (error) => {
+                  setMoveError(failureText(error));
+                },
+              },
+            );
+          }}
+        />
+      </Suspense>
+    )}
     </>
   );
 }

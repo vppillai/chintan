@@ -87,7 +87,12 @@ every note the device holds whose title, alias or tag has it, not only the
 recent twenty, and when no note has that title the first option is "New note
 “⟨typed⟩”", which makes the note (`POST /v1/notes`) and aims the recording
 at it. Offline the field only finds ("New note needs a connection."). A note
-made this way and then not recorded into stays, named as typed. A retarget is written to the
+made this way is discarded — archived, then purged, as an untouched
+placeholder is — when another target is picked or the screen is left with
+nothing aimed into it, once the server says it is still empty with no
+capture; a take recording or uploading into it, or a capture already filed,
+keeps it. The sheet (`TargetChooserSheet.tsx`) and the `MoveSheet`s are
+chunks of their own, loaded when opened. A retarget is written to the
 capture record so a recording resumed after a reload goes where it was last
 aimed.
 

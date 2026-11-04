@@ -431,7 +431,9 @@ export function NoteDetailScreen() {
           // A title is one line: Enter goes on to the text — the body, or a
           // checklist's "Add an item" — rather than doing nothing, which
           // ran "Groceries", "Milk" and "Eggs" together into the title.
-          if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+          // Safari ends a composition with an Enter whose isComposing is
+          // false but whose keyCode is 229; that Enter is the IME's, not ours.
+          if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return;
           const next =
             document.getElementById('note-body') ??
             document.querySelector<HTMLElement>('.note-tabpanel [aria-label="Add an item"]');

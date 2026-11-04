@@ -11,7 +11,7 @@ import { CaptureScreen, captureReturnPath } from './CaptureScreen.tsx';
 import { DISCARD_CONFIRM_AFTER_MS, INITIAL_CAPTURE } from './machine.ts';
 import type { RecorderDeps } from './recorder.ts';
 import { useCaptureStore } from './store.ts';
-import { optionMeta } from './TargetChooser.tsx';
+import { optionMeta } from './TargetChooserSheet.tsx';
 
 /* ---------------------------------------------------------------------------
    A recorder that produces one chunk and nothing else. jsdom has no media
@@ -739,7 +739,8 @@ describe('the screen says which language the recording will be transcribed in', 
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /into roof repair/i }));
-    await user.click(screen.getByRole('button', { name: 'Chintan decides' }));
+    // The sheet is a lazy chunk: its options land a tick after the pill.
+    await user.click(await screen.findByRole('button', { name: 'Chintan decides' }));
     expect(await screen.findByText('Language detected per recording')).toBeInTheDocument();
 
     // A note that inherits the default says the default.
@@ -1057,5 +1058,134 @@ describe('a thought typed instead of said', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]?.body).toEqual({ text: 'Ellis can start on the fourteenth.', note_id: 'roof-repair' });
     expect(sent[0]?.key).toBeTruthy();
+  });
+});
+
+describe('a typed thought the server refused', () => {
+  it('is sent again under a new key once edited, and under a new key even unchanged', async () => {
+    const user = userEvent.setup();
+    const keys: (string | null)[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/v1/captures/text')) {
+        keys.push(new Headers(init?.headers).get('Idempotency-Key'));
+        if (keys.length < 3) {
+          return new Response(
+            JSON.stringify({ type: 'about:blank', title: 'Bad Request', status: 400, detail: 'text is required' }),
+            { status: 400, headers: { 'content-type': 'application/problem+json' } },
+          );
+        }
+        return new Response(
+          JSON.stringify({ capture: { id: 'srv-typed', status: 'transcribed', created_at: new Date().toISOString(), version: 1 } }),
+          { status: 202, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify({ items: TEST_NOTES }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    mount('/capture', testApiContext(fetchImpl));
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    await user.click(screen.getByRole('button', { name: 'Type instead' }));
+    const field = await screen.findByRole('textbox', { name: 'Your thought' });
+    await user.type(field, 'Call the roofer');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+
+    // The same words again: the refusal is stored against its key, so a new one.
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => {
+      expect(keys).toHaveLength(2);
+    });
+    // Edited: a different body, a different key.
+    await user.type(field, ' about the ridge');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(/^Home$/)).toBeInTheDocument();
+    expect(keys).toHaveLength(3);
+    expect(new Set(keys).size).toBe(3);
+  });
+});
+
+describe('a note the chooser made and nothing went into', () => {
+  function server() {
+    const calls: string[] = [];
+    let captures: unknown[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? 'GET';
+      calls.push(`${method} ${url.pathname}`);
+      const json = (body: unknown, status = 200) =>
+        new Response(status === 204 ? null : JSON.stringify(body), {
+          status,
+          headers: { 'content-type': 'application/json' },
+        });
+      if (url.pathname.endsWith('/v1/notes') && method === 'POST') {
+        return json({ ...TEST_NOTES[0], id: 'tax-2026', title: 'Tax 2026', version: 1 }, 201);
+      }
+      if (url.pathname.endsWith('/v1/notes/tax-2026') && method === 'GET') {
+        return json({ ...TEST_NOTES[0], id: 'tax-2026', title: 'Tax 2026', body: '', captures });
+      }
+      if (method === 'DELETE') return json(null, 204);
+      return json({ items: TEST_NOTES });
+    };
+    return {
+      calls,
+      fetchImpl,
+      fill: () => {
+        captures = [{ id: 'c1' }];
+      },
+    };
+  }
+
+  async function makeNote(user: ReturnType<typeof userEvent.setup>) {
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    await user.click(screen.getByRole('button', { name: 'Chintan decides' }));
+    await user.type(await screen.findByRole('searchbox', { name: /find a note/i }), 'Tax 2026');
+    await user.click(screen.getByRole('button', { name: 'New note “Tax 2026”' }));
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.noteId).toBe('tax-2026');
+    });
+  }
+
+  it('is discarded when another target is picked', async () => {
+    const user = userEvent.setup();
+    const api = server();
+    mount('/capture', testApiContext(api.fetchImpl));
+    await makeNote(user);
+    await user.click(screen.getByRole('button', { name: /into tax 2026/i }));
+    await user.click(await screen.findByRole('button', { name: 'Chintan decides' }));
+    await waitFor(() => {
+      expect(api.calls).toContain('DELETE /v1/notes/tax-2026/permanent');
+    });
+    expect(api.calls).toContain('DELETE /v1/notes/tax-2026');
+  });
+
+  it('is discarded when the take is cancelled, and kept once something is in it', async () => {
+    const user = userEvent.setup();
+    const api = server();
+    const { unmount } = mount('/capture', testApiContext(api.fetchImpl));
+    await makeNote(user);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(api.calls).toContain('DELETE /v1/notes/tax-2026/permanent');
+    });
+    unmount();
+
+    const kept = server();
+    kept.fill();
+    useCaptureStore.setState({ model: INITIAL_CAPTURE });
+    const second = mount('/capture', testApiContext(kept.fetchImpl));
+    await makeNote(user);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(kept.calls).toContain('GET /v1/notes/tax-2026');
+    });
+    second.unmount();
+    expect(kept.calls.filter((call) => call.startsWith('DELETE'))).toEqual([]);
   });
 });
