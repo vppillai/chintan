@@ -3,10 +3,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
-import { queryKeys, refreshAppendedNote, useRetryCapture, usePendingCaptures } from '@/api/queries.ts';
+import {
+  queryKeys,
+  refreshAppendedNote,
+  useMoveCaptures,
+  useRetryCapture,
+  usePendingCaptures,
+} from '@/api/queries.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
+import { MoveSheet } from '@/features/notes/MoveSheet.tsx';
 import { formatDurationShort } from '@/features/notes/groups.ts';
+import { failureText } from '@/features/notes/recordings/labels.ts';
 import { useMinuteNow } from '@/hooks/useMinuteNow.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNotes } from '@/offline/useNotesCache.ts';
@@ -90,6 +98,18 @@ export function FilingRow() {
     }
     focusPastDismissed();
     setDismissed(dismissCaptures(group.captureIds, dismissed));
+  };
+  /*
+   * "Wrong note?" on a receipt: the Move sheet the Recordings tab uses, for
+   * every capture the receipt names, out of the note it names. The poll then
+   * draws the receipt under the note they went to.
+   */
+  const move = useMoveCaptures();
+  const [misfiled, setMisfiled] = useState<ReceiptGroup | null>(null);
+  const [moveError, setMoveError] = useState<string | null>(null);
+  const startMove = (group: ReceiptGroup): void => {
+    setMoveError(null);
+    setMisfiled(group);
   };
   const openGroup = (group: ReceiptGroup): void => {
     // The row says the note has just been written to, so the copy the app
@@ -198,6 +218,9 @@ export function FilingRow() {
       onDismiss={() => {
         dismissGroup(group);
       }}
+      onMove={() => {
+        startMove(group);
+      }}
     />
   );
 
@@ -275,6 +298,32 @@ export function FilingRow() {
         )}
       </div>
     </section>
+    <MoveSheet
+      open={misfiled !== null}
+      count={misfiled?.captureIds.length ?? 0}
+      excludeNoteId={misfiled?.noteId ?? ''}
+      pending={move.isPending}
+      error={moveError}
+      onCancel={() => {
+        setMisfiled(null);
+      }}
+      onChoose={(target) => {
+        if (!misfiled) return;
+        setMoveError(null);
+        move.mutate(
+          { noteId: misfiled.noteId, target, captureIds: misfiled.captureIds },
+          {
+            onSuccess: (result) => {
+              if (result.failed.length > 0) setMoveError('Not every recording moved. Try again.');
+              else setMisfiled(null);
+            },
+            onError: (error) => {
+              setMoveError(failureText(error));
+            },
+          },
+        );
+      }}
+    />
     </>
   );
 }
