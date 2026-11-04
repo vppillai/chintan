@@ -52,6 +52,13 @@ func TestATranscriptionTimeoutLeavesTheCaptureRetryable(t *testing.T) {
 	if got := rec.Values["Stage"]; got != "transcribe" {
 		t.Errorf("ProviderTimedOut Stage = %v, want transcribe", got)
 	}
+	// Not a failure: Lambda retries it, and the retry below files it. Counted
+	// here, a single stall paged through capture-failures (threshold one)
+	// for a capture that then filed itself; the attempts that run out reach
+	// capture-dlq.
+	if hasMetric(records, "CaptureStageFailures") {
+		t.Fatal("a retryable stall counted CaptureStageFailures")
+	}
 
 	// The retry.
 	final, _, err = runCapturingMetrics(t, h, capture.ID)

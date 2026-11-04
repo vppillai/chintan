@@ -2381,7 +2381,7 @@ Resources:
     Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-capture-dlq'
-      AlarmDescription: A worker invocation exhausted its retries and its failure record is in the dead-letter queue — a capture (retry it from the app) or a scheduled or queued worker task (sweep-expired, aws-cost, storage-snapshot, clean-note, ask; the record names it).
+      AlarmDescription: A worker invocation exhausted its retries and its failure record is in the dead-letter queue — a capture (retry it from the app) or a scheduled or queued worker task (sweep-expired, aws-cost, storage-snapshot, reconcile-stuck, clean-note, ask, regenerate-note; the record names it).
       Namespace: AWS/SQS
       MetricName: ApproximateNumberOfMessagesVisible
       Dimensions:
