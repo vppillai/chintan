@@ -137,13 +137,15 @@ export function TargetChooser({
   const archiveNote = useArchiveNote();
   const deleteForever = useDeleteNoteForever();
   const discardIfUntouched = useRef((id: string) => {
-    void api.getNote(id).then(
-      (note) => {
+    // Anything but a clear "empty, no capture" — a failed read, an answer of
+    // another shape — keeps the note.
+    void api
+      .getNote(id)
+      .then((note) => {
         if (note.body.trim() !== '' || (note.captures?.length ?? 0) > 0) return;
         void archiveNote.mutateAsync(id).then(() => deleteForever.mutate(id), () => undefined);
-      },
-      () => undefined,
-    );
+      })
+      .catch(() => undefined);
   });
   useEffect(
     () => () => {

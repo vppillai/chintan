@@ -810,6 +810,13 @@ describe('the target chooser', () => {
     }));
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = new URL(String(input));
+      if (url.pathname.endsWith('/v1/notes/tax-2026')) {
+        // The discard's check when the screen goes: a note with a capture in it.
+        return new Response(
+          JSON.stringify({ ...TEST_NOTES[0], id: 'tax-2026', title: 'Tax 2026', body: '', captures: [{ id: 'c1' }] }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
       if (url.pathname.endsWith('/v1/notes') && init?.method === 'POST') {
         const body = JSON.parse(String(init.body)) as { title: string };
         created.push(body);
