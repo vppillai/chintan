@@ -100,6 +100,7 @@ export interface AskTurn {
 export const NOT_SENT_MESSAGE = 'That question did not reach the server. Try again.';
 export const LOST_MESSAGE = 'The answer could not be fetched. Try again.';
 export const TIMEOUT_MESSAGE = 'This is taking too long.';
+export const OFFLINE_MESSAGE = 'Ask needs a connection.';
 
 export function newTurn(key: string, question: string, now: number = Date.now()): AskTurn {
   return {
@@ -143,19 +144,37 @@ export function nameSources(answer: string, sources: readonly AskSourceWire[]): 
   });
 }
 
-/** The turn with the server's row folded in — pending, answered or failed. */
+/**
+ * The turn with the server's row folded in — pending, answered or failed.
+ *
+ * A 2xx whose body is not a row — a captive portal's page, a proxy, a deploy
+ * between two shapes — fails the turn rather than being folded in: read as a
+ * row it threw inside the thread's state update, and the turn, saved as still
+ * asking, was re-sent and re-thrown on every mount of Home for five minutes.
+ */
 export function applyRow(turn: AskTurn, row: AskWire): AskTurn {
+  if (!isRow(row)) return failTurn(turn, LOST_MESSAGE);
   return {
     ...turn,
     askId: row.id,
     status: row.status,
     // Named here, once, so the thread on screen, the history sent back and
     // Save as note all read the title rather than the id.
-    answer: row.answer === null ? null : nameSources(row.answer, row.sources),
+    answer: typeof row.answer === 'string' ? nameSources(row.answer, row.sources) : null,
     grounded: row.grounded,
     sources: row.sources,
     error: row.status === 'failed' ? (row.error ?? LOST_MESSAGE) : null,
   };
+}
+
+function isRow(row: unknown): row is AskWire {
+  if (typeof row !== 'object' || row === null) return false;
+  const candidate = row as Partial<AskWire>;
+  return (
+    typeof candidate.id === 'string' &&
+    typeof candidate.status === 'string' &&
+    Array.isArray(candidate.sources)
+  );
 }
 
 /** The turn as failed on this side, with one of the fixed sentences. */

@@ -117,6 +117,17 @@ describe('a turn takes the server’s row', () => {
     expect(failTurn(turn, NOT_SENT_MESSAGE)).toMatchObject({ status: 'failed', error: NOT_SENT_MESSAGE });
   });
 
+  it('fails the turn on a 2xx that is not a row, rather than throwing', () => {
+    // A captive portal's page, a proxy, a deploy between two shapes.
+    const turn = newTurn('k1', 'q');
+    for (const body of [{ items: [] }, null, { ...askPending, sources: undefined }]) {
+      expect(applyRow(turn, body as unknown as AskWire)).toMatchObject({
+        status: 'failed',
+        error: LOST_MESSAGE,
+      });
+    }
+  });
+
   it('is answered, not failed, when the notes do not say', () => {
     const turn = applyRow(newTurn('k1', 'what colour is my car?'), askNotInNotes);
     expect(turn).toMatchObject({ status: 'answered', grounded: false, sources: [] });

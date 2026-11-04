@@ -1001,7 +1001,11 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       return;
     }
 
-    await json(route, { items: [] });
+    // An endpoint no stub answers is a 404, as the real API says of a route it
+    // does not have. A blanket `{"items":[]}` read as an empty page to a list
+    // and as a malformed row to everything else, so a screen fed the wrong
+    // shape passed instead of failing where it could be seen.
+    await problem(route, 404, { title: 'Not found' });
   });
 
   /*
