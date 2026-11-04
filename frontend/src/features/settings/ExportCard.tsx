@@ -1,10 +1,17 @@
 import { useApi } from '@/api/ApiProvider.tsx';
 import { newIdempotencyKey } from '@/api/client.ts';
 import type { ChintanApi } from '@/api/endpoints.ts';
+import { useId, useState } from 'react';
+
 import { DownloadButton } from '@/components/DownloadButton.tsx';
 import { config } from '@/config/env.ts';
+import {
+  downloadFormat,
+  setDownloadFormat,
+  type DownloadFormat,
+} from '@/features/notes/downloadFormat.ts';
 
-import { SettingsCard } from './SettingsCard.tsx';
+import { SettingsCard, SettingsRow } from './SettingsCard.tsx';
 
 /**
  * How often a running export is asked about. The job is one walk of the
@@ -78,6 +85,8 @@ export function exportFilename(now: Date = new Date()): string {
  */
 export function ExportCard() {
   const api = useApi();
+  const formatId = useId();
+  const [format, setFormat] = useState<DownloadFormat>(downloadFormat);
   return (
     <SettingsCard
       title="Your data"
@@ -91,6 +100,28 @@ export function ExportCard() {
         blob={() => exportBlob(api)}
         filename={() => exportFilename()}
       />
+      {/*
+        This device's choice, not a saved setting: what opens a file is the
+        device's player or the app it is shared to (`downloadFormat.ts`).
+      */}
+      <SettingsRow label="Recording downloads" labelFor={formatId}>
+        <select
+          id={formatId}
+          className="settings-select"
+          value={format}
+          onChange={(event) => {
+            const next = event.target.value === 'mp4' ? 'mp4' : 'original';
+            setDownloadFormat(next);
+            setFormat(next);
+          }}
+        >
+          <option value="original">As recorded (WebM)</option>
+          <option value="mp4">MP4</option>
+        </select>
+      </SettingsRow>
+      <p className="you-card__note">
+        On this device. MP4 is converted here before it is saved, and plays almost anywhere.
+      </p>
     </SettingsCard>
   );
 }

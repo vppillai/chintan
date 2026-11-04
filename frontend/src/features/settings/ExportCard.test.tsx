@@ -108,3 +108,28 @@ describe('exporting the notes', () => {
     expect(screen.getByRole('button', { name: 'Preparing your file…' })).toBeDisabled();
   });
 });
+
+describe('the recording download format', () => {
+  it('is As recorded by default and remembers MP4 on this device', async () => {
+    const user = userEvent.setup();
+    localStorage.clear();
+    const { unmount } = render(
+      <TestProviders api={testApiContext(vi.fn<typeof fetch>())}>
+        <ExportCard />
+      </TestProviders>,
+    );
+    const select = screen.getByRole('combobox', { name: 'Recording downloads' });
+    expect(select).toHaveValue('original');
+    await user.selectOptions(select, 'MP4');
+    expect(localStorage.getItem('chintan.downloadFormat')).toBe('mp4');
+    unmount();
+
+    render(
+      <TestProviders api={testApiContext(vi.fn<typeof fetch>())}>
+        <ExportCard />
+      </TestProviders>,
+    );
+    expect(screen.getByRole('combobox', { name: 'Recording downloads' })).toHaveValue('mp4');
+    localStorage.clear();
+  });
+});

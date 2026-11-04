@@ -24,10 +24,11 @@ then seven cards, in the order `SettingsScreen.test.tsx` holds them to:
 | Passkeys (`PasskeyCard.tsx`) | The hand-off to the managed login's passkey page and its result (`auth.md`). |
 | Notifications (`NotificationsCard.tsx`) | The one Web Push switch, its "Not reaching this device. Turn on again." hint for a browser that was turned on and is not enrolled, and the four sentences for when it cannot be offered (`push.md`). |
 | Devices & shortcuts (`DevicesCard.tsx`) | Inbox keys: the list, the mint form and the connect recipes (curl, iPhone or Apple Watch Shortcuts, Android HTTP Shortcuts). Folded by default behind a summary that counts keys and flags one expiring soon; `#devices` (`DEVICES_ANCHOR`, the bare `devices`), which About links to, opens it (`inbox.md`). |
-| Your data (`ExportCard.tsx`) | One `DownloadButton`: everything as one JSON file. |
+| Your data (`ExportCard.tsx`) | One `DownloadButton`: everything as one JSON file. Then Recording downloads, As recorded (WebM) or MP4: kept on this device in `localStorage` (`chintan.downloadFormat`), not in the settings record, because it is about what this device can open; the Recordings tab reads it at each download (note-screen.md, "The Recordings tab"). |
 | About & support | `Usage this month` carrying the month's figure (`formatDollars`) and opening `/usage`; `About <app>`; `Source on GitHub`; and the Version row (`VersionFootnote`). |
 
-Every control saves itself the moment it changes: a change is a whole
+Every control saves itself the moment it changes — Recording downloads to
+the device, everything else to the server: a server change is a whole
 `PUT /v1/settings` (`useSaveSettings`) built on the stored record, so
 nothing is saved before that record has loaded, and what renders after the
 PUT is what the server stored, not what the device sent — the server rounds

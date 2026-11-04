@@ -450,6 +450,19 @@ are one zip built on the device (`zipRecordings.ts`: the manifest from `GET
 not deflated via `fflate`). What an action did is said on the notice line
 under the rows.
 
+A download — one file or the zip — is in the format chosen on You →
+Your data (`downloadFormat.ts`, per device in `localStorage`): as recorded
+(WebM from a browser, M4A or MP3 from a shortcut), or MP4. MP4 is made on
+the device by `toMp4.ts`, a chunk of its own loaded only at that tap:
+`decodeAudioData` reads the recording at 48 kHz, WebCodecs' `AudioEncoder`
+writes AAC-LC, and a small ISO BMFF writer puts it in an `.m4a` (`moov`
+before `mdat`). A browser with no AAC encoder (Firefox, open-source
+Chromium) gets Opus in the same container as `.mp4`; one with no
+`AudioEncoder` at all is told so on the notice line. An M4A or MP4 already
+in the bucket is saved untouched. The server does not transcode: that would
+mean an ffmpeg layer in the worker and a second object per recording, for a
+conversion every browser the app supports can do itself.
+
 ### Transcribe again
 
 "Transcribe again in ⟨language⟩" (`retranscribeLabel`; "Transcribe again
