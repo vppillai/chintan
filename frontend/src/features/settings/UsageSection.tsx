@@ -233,63 +233,67 @@ function Usage({ usage }: { usage: UsageWire }) {
       )}
 
       {hasFacts && (
-        <dl className="usage__facts" role="group" aria-label="This month">
-          {requests !== undefined && (
-            <div className="usage__fact">
-              <dt className="usage__fact-label">API requests</dt>
-              <dd className="usage__fact-figures">
-                <span className="numeric">{formatRequests(requests)}</span>
-                {/* Every authenticated request is counted, and most of them are
-                    the app polling for a capture or an answer — said here, or
-                    the figure reads as how much the person did. */}
-                {' · '}every call the app made, polling included
-              </dd>
-            </div>
-          )}
-          {storage && (
-            <>
+        // The group is a wrapper: a role on the <dl> itself takes its list
+        // semantics away, and its <dt>/<dd> are then in no list (axe `dlitem`).
+        <div role="group" aria-label="This month">
+          <dl className="usage__facts">
+            {requests !== undefined && (
               <div className="usage__fact">
-                <dt className="usage__fact-label">Recordings stored</dt>
+                <dt className="usage__fact-label">API requests</dt>
                 <dd className="usage__fact-figures">
-                  <span className="numeric">{formatCount(storage.recordings, 'recording')}</span>
-                  {' · '}
-                  <span className="numeric">{formatAudioMinutes(storage.audio_seconds)}</span>
-                  {' · '}
-                  <span className="numeric">{formatMegabytes(storage.audio_bytes)}</span>
-                  {storage.approximate && ' · approx.'}
+                  <span className="numeric">{formatRequests(requests)}</span>
+                  {/* Every authenticated request is counted, and most of them are
+                      the app polling for a capture or an answer — said here, or
+                      the figure reads as how much the person did. */}
+                  {' · '}every call the app made, polling included
                 </dd>
               </div>
-              <div className="usage__fact">
-                <dt className="usage__fact-label">Notes</dt>
-                <dd className="usage__fact-figures">
-                  <span className="numeric">{formatCount(storage.notes, 'note')}</span>
-                  {storage.approximate && ' · approx.'}
-                </dd>
-              </div>
-              {storage.byte_days !== undefined && (
-                /*
-                 * The two rows above are the footprint now; this one is the
-                 * footprint over the month, which is what storage is billed
-                 * by and which survives deleting everything on the 30th. The
-                 * price is this screen's estimate, not the backend's figure.
-                 */
+            )}
+            {storage && (
+              <>
                 <div className="usage__fact">
-                  <dt className="usage__fact-label">Stored this month</dt>
+                  <dt className="usage__fact-label">Recordings stored</dt>
                   <dd className="usage__fact-figures">
-                    <span className="numeric">{formatGigabyteDays(storage.byte_days)}</span>{' '}
-                    <span className="usage__month">
-                      (
-                      <span className="numeric">
-                        {formatEstimatedDollars(estimateStorageMicros(storage.byte_days, usage.month))}
-                      </span>{' '}
-                      at S3 standard {`$${String(S3_STANDARD_USD_PER_GB_MONTH)}`}/GB-month)
-                    </span>
+                    <span className="numeric">{formatCount(storage.recordings, 'recording')}</span>
+                    {' · '}
+                    <span className="numeric">{formatAudioMinutes(storage.audio_seconds)}</span>
+                    {' · '}
+                    <span className="numeric">{formatMegabytes(storage.audio_bytes)}</span>
+                    {storage.approximate && ' · approx.'}
                   </dd>
                 </div>
-              )}
-            </>
-          )}
-        </dl>
+                <div className="usage__fact">
+                  <dt className="usage__fact-label">Notes</dt>
+                  <dd className="usage__fact-figures">
+                    <span className="numeric">{formatCount(storage.notes, 'note')}</span>
+                    {storage.approximate && ' · approx.'}
+                  </dd>
+                </div>
+                {storage.byte_days !== undefined && (
+                  /*
+                   * The two rows above are the footprint now; this one is the
+                   * footprint over the month, which is what storage is billed
+                   * by and which survives deleting everything on the 30th. The
+                   * price is this screen's estimate, not the backend's figure.
+                   */
+                  <div className="usage__fact">
+                    <dt className="usage__fact-label">Stored this month</dt>
+                    <dd className="usage__fact-figures">
+                      <span className="numeric">{formatGigabyteDays(storage.byte_days)}</span>{' '}
+                      <span className="usage__month">
+                        (
+                        <span className="numeric">
+                          {formatEstimatedDollars(estimateStorageMicros(storage.byte_days, usage.month))}
+                        </span>{' '}
+                        at S3 standard {`$${String(S3_STANDARD_USD_PER_GB_MONTH)}`}/GB-month)
+                      </span>
+                    </dd>
+                  </div>
+                )}
+              </>
+            )}
+          </dl>
+        </div>
       )}
     </div>
   );

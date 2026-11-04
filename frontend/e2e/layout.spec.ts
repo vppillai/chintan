@@ -927,3 +927,23 @@ test('every control meets the 44px touch target on the narrowest phone', async (
 
   expect(undersized, 'controls smaller than --layout-touch-target-min').toEqual([]);
 });
+
+/*
+ * A failed save is the one autosave state the person must act on. Its Try
+ * again was an 11 px underlined word, 16 px tall, beside an 11 px sentence.
+ */
+test('a failed save says so at reading size, with a 44px Try again', async ({ page, api }) => {
+  api.rejectPatch = { status: 422, detail: 'The note could not be saved.' };
+  await page.setViewportSize({ width: 360, height: 780 });
+  await page.goto('/notes/roof-repair');
+  await page.getByRole('textbox', { name: 'Note body' }).fill('Ridge tiles, again.');
+  const retry = page.getByRole('button', { name: 'Try again' });
+  await expect(retry).toBeVisible();
+  const box = await retry.boundingBox();
+  expect(box?.height ?? 0).toBeGreaterThanOrEqual(43.5);
+  expect(box?.width ?? 0).toBeGreaterThanOrEqual(43.5);
+  const size = await page
+    .locator('.save-indicator')
+    .evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
+  expect(size).toBeGreaterThanOrEqual(13);
+});

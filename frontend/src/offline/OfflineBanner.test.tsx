@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { queryKeys } from '@/api/queries.ts';
 import { TEST_NOTES, TestProviders, testQueryClient } from '@/test/providers.tsx';
 
+import { cacheNoteList } from './notesCache.ts';
 import { OfflineBanner } from './OfflineBanner.tsx';
 
 function goOffline(): void {
@@ -49,6 +50,19 @@ describe('the offline banner only claims data that is really there', () => {
 
     render(
       <TestProviders queryClient={queryClient}>
+        <OfflineBanner />
+      </TestProviders>,
+    );
+
+    expect(await screen.findByText(/showing saved notes/i)).toBeInTheDocument();
+  });
+
+  it('counts the notes saved on the device, on a screen that has read none of them', async () => {
+    // Home said "showing saved notes"; You, a tap later, said nothing was saved.
+    await cacheNoteList(TEST_NOTES);
+    goOffline();
+    render(
+      <TestProviders queryClient={testQueryClient()}>
         <OfflineBanner />
       </TestProviders>,
     );

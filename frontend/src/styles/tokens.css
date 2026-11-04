@@ -230,6 +230,12 @@
      live/record lime and read as highlighted, so that theme says it in ink
      (QA 2026-09-21, finding 8). */
   --color-destructive: var(--color-accent-strong);
+  /* A destructive control's fill — Delete, Delete forever, a swipe's Delete
+     — and the text on it. Here the accent; Nocturne's own coral, so Delete
+     is never the record lime. */
+  --color-destructive-fill: var(--color-accent);
+  --color-destructive-pressed: var(--color-accent-strong);
+  --color-on-destructive: var(--color-on-accent);
 
   /* A filing notice (F9): a tray pressed into the page, the opposite of the
      raised note cards under it. Aliases, so the contrast table above holds:
@@ -297,8 +303,10 @@
      muted             8.45       7.72        7.03      4.5 (AA)     pass
      faint             5.54       5.06        4.61      4.5 (AA)     pass
      accent           14.64      13.37       12.18      4.5 (AA)     pass
+     destructive       8.21       7.50        6.83      4.5 (AA)     pass
      line-strong       3.64       3.33        3.03      3.0 (1.4.11) pass
      ground on accent 14.64          —           —      4.5 (AA)     pass
+     ground on destructive 8.21      —           —      4.5 (AA)     pass
 
      token          on ground-deep                        requirement  verdict
      ------------------------------------------------------------------------
@@ -320,6 +328,11 @@
 
    The Nocturne accent clears AA as text on every ground, so `accent-strong`
    is simply the accent — the token exists for parity, not for a second hue.
+
+   `destructive` (#F28B82) is a pastel coral, the one hue here that is
+   neither the record lime nor a grey: a menu's Delete, a failed filing's
+   glyph and the fill of a destructive button. On the note tints it is at
+   least 6.84:1. Ink & Paper says the same thing with its burnt orange.
    ========================================================================== */
 
 [data-theme='nocturne'] {
@@ -340,7 +353,10 @@
   --color-accent-strong: #b8f135;
   --color-on-accent: #0a0c0b;
   --color-accent-soft: rgb(184 241 53 / 14%);
-  --color-destructive: var(--color-ink);
+  --color-destructive: #f28b82;
+  --color-destructive-fill: var(--color-destructive);
+  --color-destructive-pressed: var(--color-destructive);
+  --color-on-destructive: var(--color-ground);
   --color-notice: var(--color-surface);
   --color-notice-line: var(--color-line);
   --color-notice-glyph: var(--color-muted);
@@ -402,7 +418,10 @@
     --color-accent-strong: #b8f135;
     --color-on-accent: #0a0c0b;
     --color-accent-soft: rgb(184 241 53 / 14%);
-    --color-destructive: var(--color-ink);
+    --color-destructive: #f28b82;
+    --color-destructive-fill: var(--color-destructive);
+    --color-destructive-pressed: var(--color-destructive);
+    --color-on-destructive: var(--color-ground);
     --color-notice: var(--color-surface);
     --color-notice-line: var(--color-line);
     --color-notice-glyph: var(--color-muted);

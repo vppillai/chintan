@@ -36,7 +36,9 @@ a retention number down to a tier, and the screen shows the rounded value.
 There is no Save button and nothing is ever unsaved. The status line beside
 the title says only what is happening — loading, Saving…, a Saved tick for
 `SAVED_TICK_MS` (2.5 s), or a failure with Try again — and reserves no
-space while it has nothing to say. The daily spend cap is never named here,
+space while it has nothing to say. Offline with nothing loaded (settings are
+not kept on the device) it says "Offline — your settings load when you
+reconnect." rather than loading forever. The daily spend cap is never named here,
 even when the instance has one (`usage-accounting.md`).
 
 ## About
