@@ -673,6 +673,13 @@ func (s *NotesService) applyNoteUpdates(ctx context.Context, userID string, note
 // repository.ErrVersionConflict: that is the same 409 the version check
 // answers, and the client reconciles it the same way.
 func (s *NotesService) writeNoteBody(ctx context.Context, note *model.NoteIndex, storedBody []byte, etag, body string) error {
+	// The snippet (first ~500 chars) and the search text are the two
+	// derivations of the body the index row carries. Derived before the
+	// unchanged-body return: a save whose body write landed and whose row
+	// write did not is repeated with the same body, and that repeat is the
+	// row's only chance to catch up, or search and Ask read the old text.
+	note.Snippet = Snippet(body)
+	note.SearchText = SearchText(body)
 	carried := CarryCaptureMarkers(string(storedBody), body)
 	if carried == string(storedBody) {
 		return nil
@@ -689,10 +696,6 @@ func (s *NotesService) writeNoteBody(ctx context.Context, note *model.NoteIndex,
 		return fmt.Errorf("failed to update markdown: %w", err)
 	}
 
-	// The snippet (first ~500 chars) and the search text are the two
-	// derivations of the body the index row carries.
-	note.Snippet = Snippet(body)
-	note.SearchText = SearchText(body)
 	// The cleaned view was generated from the body that just changed — unless
 	// the change was to adopt the view itself ("Use this list"): a body equal
 	// to CleanedBody, trailing whitespace aside, IS the view, so it is current
