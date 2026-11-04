@@ -15,6 +15,7 @@ export const queryKeys = {
   captures: (query: CaptureListQuery = {}) => ['captures', query] as const,
   capture: (captureId: string) => ['capture', captureId] as const,
   pendingCaptures: () => ['captures', 'progress-card'] as const,
+  waitingCaptures: () => ['captures', 'waiting'] as const,
   search: (q: string) => ['search', q] as const,
   tags: () => ['tags'] as const,
   settings: () => ['settings'] as const,

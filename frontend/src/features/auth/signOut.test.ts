@@ -6,7 +6,7 @@ import { Session } from '@/api/session.ts';
 import { createMemoryTokenStore, type TokenSet } from '@/api/tokens.ts';
 import { COST_NOTE_KEY } from '@/features/ask/costNote.ts';
 import { THREAD_KEY } from '@/features/ask/thread.ts';
-import { saveCaptureRecord } from '@/features/capture/buffer.ts';
+import { appendChunk, saveCaptureRecord } from '@/features/capture/buffer.ts';
 import { DISMISSED_KEY } from '@/features/capture/dismissed.ts';
 import { TARGETED_KEY } from '@/features/capture/targeted.ts';
 import { noteTabStorageKey } from '@/features/notes/NoteTabs.tsx';
@@ -221,6 +221,7 @@ describe('unsent work is counted before anything is destroyed', () => {
       uploadedAt: null,
       peaks: null,
     });
+    await appendChunk('cap-1', 0, new Blob(['audio']));
 
     const work = await readUnsentWork();
     expect(work.captures).toBe(1);

@@ -387,10 +387,14 @@ on the wire with nobody watching, so it gets a receipt like any routed one.
 ### The poll
 
 A recording is appended by the worker, not by the client that is watching,
-so the app asks. `usePendingCaptures` makes one request,
+so the app asks. Each tick of `usePendingCaptures` is one request,
 `GET /v1/captures?status=all&limit=20` (`CAPTURE_LIST_LIMIT`), filtered on
 the client by `isFilingRelevant` rather than four server-side filters in
-parallel. Its cadence is `capturePollInterval`, a ladder keyed on how long
+parallel. When that page has a cursor — more than twenty captures —
+`status=failed` and `status=needs_target` are asked as well, on mount, focus
+and an invalidation of `captures` but not on the poll's ticks (neither status
+moves on its own), so a capture waiting on the user is never paged out of
+Home by newer ones; one of the two failing costs only its own rows. Its cadence is `capturePollInterval`, a ladder keyed on how long
 ago anything moving last made progress (`last_progress_at`, else
 `created_at`); the youngest progress decides, so one capture still moving
 keeps the poll brisk however long another has been stuck beside it:

@@ -3,7 +3,9 @@ import { createHash } from 'node:crypto';
 
 import type {
   CaptureCreatedWire,
+  CaptureTargetWire,
   CaptureWire,
+  DeviceWire,
   NoteCleanQueuedWire,
   NoteCleanedWire,
   NoteColor,
@@ -531,6 +533,23 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       return;
     }
 
+    // A capture waiting on the user, sent where they chose: back into the
+    // pipeline's append stage with its target set, as the real server does.
+    const targetMatch = /^\/v1\/captures\/([^/]+)\/target$/.exec(path);
+    if (targetMatch && method === 'POST') {
+      const capture = state.captures.find((item) => item.id === targetMatch[1]);
+      if (!capture) {
+        await problem(route, 404, { title: 'Not found' });
+        return;
+      }
+      const body = (request.postDataJSON() ?? {}) as CaptureTargetWire;
+      capture.note_id = 'note_id' in body ? body.note_id : null;
+      capture.status = 'appending';
+      capture.last_progress_at = new Date().toISOString();
+      await json(route, withRetryAfter(capture) satisfies CaptureWire);
+      return;
+    }
+
     /*
      * Transcribe again (contract 2026-09-21, T7): a settled recording goes
      * back to `transcribing` and the pipeline runs from its audio; one still
@@ -939,6 +958,13 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       return;
     }
 
+    // ---- Devices -------------------------------------------------------
+    // No inbox devices on the instance under test; You's Devices card says so.
+    if (path === '/v1/devices' && method === 'GET') {
+      await json(route, { items: [] } satisfies { items: DeviceWire[] });
+      return;
+    }
+
     // ---- Web Push ------------------------------------------------------
     // By default the instance under test has no VAPID pair, as a fresh
     // deploy does not until the owner makes one: the key is the contract's
@@ -1001,7 +1027,11 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       return;
     }
 
-    await json(route, { items: [] });
+    // An endpoint no stub answers is a 404, as the real API says of a route it
+    // does not have. A blanket `{"items":[]}` read as an empty page to a list
+    // and as a malformed row to everything else, so a screen fed the wrong
+    // shape passed instead of failing where it could be seen.
+    await problem(route, 404, { title: 'Not found' });
   });
 
   /*
