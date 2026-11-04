@@ -261,25 +261,15 @@ func RefreshNoteIndex(ctx context.Context, store repository.Store, objects repos
 // captureObjectKeys lists every object a capture may own, whether or not the
 // row records it.
 //
-// The peaks key is derived rather than trusted: the worker clears
-// CaptureIndex.PeaksKey when the client had not uploaded peaks by the time the
-// pipeline finished (pipeline.verifyPeaks), and a late upload would otherwise
-// outlive its capture. Deleting a key that names nothing is a no-op, so the
-// derived key is always unlinked.
+// Every key derivable from the id is unlinked too (keys.CaptureDerived), not
+// only the ones the row names: the worker clears CaptureIndex.PeaksKey when
+// the client had not uploaded peaks by the time the pipeline finished
+// (pipeline.verifyPeaks), and a Transcribe again clears the transcript keys
+// until the new ones are written, so a delete in between left the objects
+// behind. Deleting a key that names nothing is a no-op.
 func captureObjectKeys(userID string, c model.CaptureIndex) []string {
-	peaksKey := c.PeaksKey
-	if peaksKey == "" {
-		if derived, err := keys.CapturePeaks(userID, c.ID); err == nil {
-			peaksKey = derived
-		}
-	}
-	// The copy of the clean artefact a checklist re-append keeps until it
-	// lands (pipeline.extractItems); derived too, since no row field names it.
-	var previousKey string
-	if derived, err := keys.CaptureCleanPrevious(userID, c.ID); err == nil {
-		previousKey = derived
-	}
-	return []string{c.AudioKey, c.RawKey, c.RoutedKey, c.CleanKey, c.SegmentsKey, peaksKey, previousKey}
+	return append([]string{c.AudioKey, c.RawKey, c.RoutedKey, c.CleanKey, c.SegmentsKey, c.PeaksKey},
+		keys.CaptureDerived(userID, c.ID)...)
 }
 
 // deleteObjectIfPresent removes a key, treating "already gone" as success so a
