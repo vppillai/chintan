@@ -44,6 +44,12 @@ func TestPatchColorPersistsAndIsNotAnEdit(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("PATCH color=teal: status = %d, want 400", w.Code)
 	}
+	// The empty string is storage's none, not a wire value.
+	w = h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1",
+		map[string]any{"version": saved.Version, "color": ""})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf(`PATCH color="": status = %d, want 400`, w.Code)
+	}
 
 	w = h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1",
 		map[string]any{"version": saved.Version, "color": "none"})

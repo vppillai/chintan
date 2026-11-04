@@ -252,8 +252,10 @@ func (rt *router) updateNote(w http.ResponseWriter, r *http.Request) {
 	if req.Color != nil {
 		// Refused here, as kind is, rather than through fail: the service
 		// checks it too, for a caller that is not this handler.
+		// "" is storage's spelling of none, not the wire's: the document
+		// lists `none`, so "" is refused like any other unknown name.
 		color := storedNoteColor(*req.Color)
-		if !model.ValidNoteColor(color) {
+		if *req.Color == "" || !model.ValidNoteColor(color) {
 			httperr.BadRequest(w, r, service.ErrInvalidNoteColor.Error())
 			return
 		}

@@ -276,7 +276,7 @@ describe('NoteRow colour', () => {
 
     await user.click(screen.getByRole('button', { name: 'More' }));
     await user.click(screen.getByRole('menuitem', { name: 'Colour…' }));
-    const dialog = screen.getByRole('dialog', { name: 'Colour for “Roof repair”' });
+    const dialog = await screen.findByRole('dialog', { name: 'Colour for “Roof repair”' });
     const swatches = within(dialog).getAllByRole('radio');
     expect(swatches.map((swatch) => swatch.getAttribute('aria-label'))).toEqual([
       'No colour', 'Rose', 'Peach', 'Sand', 'Lime', 'Mint', 'Sky', 'Lavender', 'Slate',

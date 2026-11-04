@@ -2,12 +2,8 @@ import { useId, useRef, useState } from 'react';
 
 import { NOTE_COLORS, type NoteColor } from '@/api/schema.ts';
 
+import { colorName } from './colorName.ts';
 import { useModalFocus } from './useModalFocus.ts';
-
-/** The colour's name as the picker and the status line say it. */
-export function colorName(color: NoteColor): string {
-  return color === 'none' ? 'No colour' : color.charAt(0).toUpperCase() + color.slice(1);
-}
 
 /**
  * A note's tint: a row of swatches, "No colour" first. Native radios, so the

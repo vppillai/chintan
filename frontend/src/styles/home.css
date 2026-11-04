@@ -644,7 +644,9 @@
   --note-tint: var(--color-tint-slate);
 }
 
-.note-row[data-color] {
+/* `:where` keeps this at the base rule's weight, so `.note-row:active`
+   still presses a tinted card. */
+:where(.note-row)[data-color] {
   background-color: var(--note-tint);
 }
 

@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { Suspense, lazy, useId, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
@@ -23,7 +23,7 @@ import { describeRecordings, formatRowTime } from '@/features/notes/groups.ts';
 import { describePurge, purgeCountdown } from '@/features/notes/purge.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 
-import { ColorDialog, colorName } from './ColorPicker.tsx';
+import { colorName } from './colorName.ts';
 import { ConfirmDialog } from './ConfirmDialog.tsx';
 import { DeleteConfirm } from './DeleteConfirm.tsx';
 import { announce } from './StatusRegion.tsx';
@@ -31,6 +31,9 @@ import { showDeleted } from './Toast.tsx';
 import { Icon } from './Icon.tsx';
 import { OverflowMenu, type OverflowMenuItem } from './OverflowMenu.tsx';
 import { SwipeRow, type SwipeAction } from './SwipeRow.tsx';
+
+// The picker arrives when Colour… is first opened: no launch needs it.
+const ColorDialog = lazy(() => import('./ColorPicker.tsx').then((m) => ({ default: m.ColorDialog })));
 
 export interface NoteRowProps {
   note: NoteWire;
@@ -282,17 +285,19 @@ export function NoteRow({
       )}
 
       {confirming === 'color' && (
-        <ColorDialog
-          title={note.title}
-          value={tint}
-          onChange={(next) => {
-            color.mutate({ version: note.version, color: next });
-            announce(`Colour: ${colorName(next)}`);
-          }}
-          onClose={() => {
-            setConfirming(null);
-          }}
-        />
+        <Suspense fallback={null}>
+          <ColorDialog
+            title={note.title}
+            value={tint}
+            onChange={(next) => {
+              color.mutate({ version: note.version, color: next });
+              announce(`Colour: ${colorName(next)}`);
+            }}
+            onClose={() => {
+              setConfirming(null);
+            }}
+          />
+        </Suspense>
       )}
 
       <DeleteConfirm
