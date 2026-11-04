@@ -390,7 +390,9 @@ A recording is appended by the worker, not by the client that is watching,
 so the app asks. `usePendingCaptures` makes one request,
 `GET /v1/captures?status=all&limit=20` (`CAPTURE_LIST_LIMIT`), filtered on
 the client by `isFilingRelevant` rather than four server-side filters in
-parallel. Its cadence is `capturePollInterval`, a ladder keyed on how long
+parallel. When that page has a cursor — more than twenty captures — it also
+asks `status=failed` and `status=needs_target`, so a capture waiting on the
+user is never paged out of Home by newer ones. Its cadence is `capturePollInterval`, a ladder keyed on how long
 ago anything moving last made progress (`last_progress_at`, else
 `created_at`); the youngest progress decides, so one capture still moving
 keeps the poll brisk however long another has been stuck beside it:

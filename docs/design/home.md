@@ -58,7 +58,7 @@ and keeps the +. A placeholder left exactly as it was made — the title
 untyped, no body, no recording — is discarded when its screen is left
 (`features/notes/newNote.ts` `isUntouchedPlaceholder`; the note screen
 archives and purges it, no confirm, no toast), so Back from an idle + leaves
-no "New note" row behind.
+no "New note" row behind. One left to record into is kept (`note-screen.md`).
 
 ## Filing, above the list
 

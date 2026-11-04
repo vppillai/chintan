@@ -48,7 +48,11 @@ Top to bottom, inside the shell's one scroll region (`.app__main`):
   on the server until there is a new one. Left untouched — placeholder
   title, empty body, no recording — such a note is discarded as the screen
   unmounts: `useArchiveNote` then `useDeleteNoteForever`, whose own
-  `onSuccess` take it out of the lists and the device's copy.
+  `onSuccess` take it out of the lists and the device's copy. Not when the
+  screen was left to record into it: Record opens `/capture?note=<id>`, and
+  the note's capture row exists only once the recording is sent, so a
+  recording aimed at the note keeps it (decided a task after the unmount,
+  once the capture screen has armed).
 - **Meta line** (`NoteMeta`): "5 Sept · house · 3 rec · 0:17 · Malayalam",
   a real " · " between the facts so a screen reader hears a sentence; the
   language is a button that opens Details with focus on its select, because

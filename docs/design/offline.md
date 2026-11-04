@@ -110,15 +110,24 @@ edit and the next keystroke builds on it.
 **The flush** (`queue.flush`, run by `useOfflineQueue`) walks entries oldest
 first and never overlaps itself: a reconnect and a window focus landing
 together share one pass, because two passes replayed the same PATCH and the
-loser marked a delivered edit dead. It stops at the first offline error.
-A terminal status — `TERMINAL_STATUSES = {400, 403, 404, 409, 413, 422}` —
-retires the entry at the attempt ceiling (`markDead`) rather than deleting
-it; any other failure counts an attempt, and an entry at
-`MAX_ATTEMPTS = 8` is skipped and kept. Kept, not dropped: the editor reads
-the queue back (`queuedEditFor`) to say "did not save, and here is why"
-instead of promising a sync that is not coming. 401 is not terminal (a
-refresh fixes the next flush) and nor is 429 (a rate limit, or the spend
-cap, means not today).
+loser marked a delivered edit dead. It stops at the first offline error
+and counts no attempt for it: the request reached nobody, and a captive
+portal that fails every pass would otherwise retire an edit in eight
+minutes. Every outcome is written in one IndexedDB transaction, and only
+while the stored entry still carries the idempotency key that was sent
+(`settle`): a keystroke queued while the older entry's PATCH was on the wire
+replaces the entry, and is neither deleted by that PATCH landing nor
+overwritten by it failing. A 404 removes the entry — the note is gone, and
+no screen could ever clear it. A 409 `append_in_progress` leaves the entry
+as it is for the next pass: a recording is being filed into the note, and the
+same PATCH is accepted once it lands. A terminal status —
+`TERMINAL_STATUSES = {400, 403, 409, 413, 422}` — retires the entry at the
+attempt ceiling (`markDead`) rather than deleting it; any other failure
+counts an attempt, and an entry at `MAX_ATTEMPTS = 8` is skipped and kept.
+Kept, not dropped: the editor reads the queue back (`queuedEditFor`) to say
+"did not save, and here is why" instead of promising a sync that is not
+coming. 401 is not terminal (a refresh fixes the next flush) and nor is 429
+(a rate limit, or the spend cap, means not today).
 
 **409 is terminal.** The queued PATCH carries the version the note had when
 it loaded, and that never changes, so replaying it is eight guaranteed
@@ -126,15 +135,20 @@ conflicts for an outcome settled at the first. The entry stays; back online,
 the editor reads the held body, fetches the server's copy and shows the
 conflict prompt — Keep my edits, or Use the newer version
 (`append-vs-autosave.md`). Keep sends the held body on the newer version;
-either choice clears the entry (`clearQueuedEdit`).
+either choice clears the entry (`clearQueuedEdit`). A direct save made online
+while an entry is still pending sends the held fields under its own
+(`queuedEditFor` carries the body), since it clears the entry once it lands:
+the reopened note's copy already reads as the queued text, so the save's own
+diff alone would drop a field queued offline.
 
 `useOfflineQueue` models the drain as a query with `networkMode: 'always'`,
 `refetchOnReconnect`, `refetchOnWindowFocus` and a 60 s `refetchInterval`
 for the captive portal that keeps `navigator.onLine` true; offline it only
-counts. After a pass that applied or failed anything it invalidates
+counts. After a pass that applied or failed anything — an entry retired
+before the pass is not a failure of it — it invalidates
 `queued-edit`, `note` and `notes`, so the screen stops saying "will sync"
 over an edit the server has. Tests: `queue.test.ts` ("flush", "flush runs one
-pass at a time", "what counts as terminal"); `e2e/offline.spec.ts` from "an
+pass at a time", "what counts as terminal", "a flush against what changed while it ran", "what a failure costs"); `e2e/offline.spec.ts` from "an
 edit made offline is queued on the device" through "a queued edit refused as
 a conflict can be dropped".
 
@@ -145,7 +159,9 @@ true: "Offline — showing saved notes." or "Offline — nothing is saved on thi
 device yet.", decided by whether any `['notes']` query in the TanStack cache
 holds an item (there is no query persister, so an offline cold start has
 nothing cached before a read lands); and "Waiting to sync N changes." /
-"Syncing N changes." from the queue's depth. Online with an empty queue it
+"Syncing N changes." from the entries still to be sent (`queue.waiting`); a
+retired entry is not waiting, and its note's screen says what became of it.
+Signing out counts every entry (`queue.count`), retired ones included. Online with an empty queue it
 renders nothing. `useOnline` is `navigator.onLine` with the `online`/`offline`
 events, enough to decide whether to attempt a flush; whether a request
 worked is the request's to say. Tests: `OfflineBanner.test.tsx`.
@@ -175,10 +191,13 @@ worked is the request's to say. Tests: `OfflineBanner.test.tsx`.
 - **Capture**: recording works; the bytes are on disk, and a send that
   fails for want of a network is retried once per offline→online transition
   by `useResendOnReconnect` (mounted in the shell), only for a take the user
-  asked to send. The target chooser and the filing row name notes from the
+  asked to send. A record with no audio behind it — a tab killed before the
+  first chunk landed — is not offered back, and is dropped once it is a
+  minute old (`unconfirmedCaptures`). The target chooser and the filing row name notes from the
   cache.
-- **Ask** needs the server; the panel reads the cache only for a source's
-  date and snippet.
+- **Ask** needs the server; a question asked offline fails at once with
+  "Ask needs a connection." rather than waiting on one, and the panel reads
+  the cache only for a source's date and snippet.
 - **You, About, Usage**: the screens draw from the precached shell;
   settings come from the session's prefetch and usage needs the server.
 

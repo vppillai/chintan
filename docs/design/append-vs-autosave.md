@@ -105,7 +105,12 @@ semantics by construction and cannot test them.
 problem shape (`current_version` present) plus `"reason": "append_in_progress"`
 and `Retry-After: 2`. The client repeats the **same** save unchanged after the
 header and does not rebase; once the paragraph is in the body the next answer
-is a plain 409 and the normal conflict prompt is the right outcome. The reason
+is a plain 409 and the normal conflict prompt is the right outcome. Still
+refused after `APPEND_WAIT_LIMIT` waits, the append is stuck behind its lease
+(below), not landed: the save fails with "A recording is still being added to
+this note. Try again in a few minutes." rather than offering Keep my edits
+against a paragraph that never arrived. The offline queue leaves such an entry
+for its next pass, counting no attempt (`offline.md`). The reason
 is a fixed string the frontend matches, like `type` for the spend cap. Fixture:
 `problemAppendInProgress` in `frontend/src/api/__fixtures__/responses.ts`.
 
@@ -120,7 +125,8 @@ words did not.** The sync effect, on a newer `note`, resets a settled editor
 to it, and otherwise rebases the draft onto the new version when the
 server's text is what this editor last saved (`sameText`); the 409 path
 fetches the server's copy and, under the same test, rebases and resends once
-(`rebased`); and `adopt(fresh)` is that rule on demand, for a caller holding
+(`rebased`) — and when that copy cannot be fetched, fails the save for Try
+again rather than building a conflict from a guess; and `adopt(fresh)` is that rule on demand, for a caller holding
 a copy it knows is the server's own. `useApplyTidy` (`useTidyList.ts`) is
 that caller: a child's effect runs before the editor's own sync effect has
 seen the poll that brought the tidy's answer, so without it the answer would
