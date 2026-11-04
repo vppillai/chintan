@@ -651,3 +651,19 @@ func TestARepeatedSaveAfterALostRowWriteRefreshesTheSearchText(t *testing.T) {
 		t.Fatalf("snippet = %q, search text = %q; want them derived from the body", updated.Snippet, updated.SearchText)
 	}
 }
+
+// A created note's body is the client's text, never a capture marker typed or
+// pasted into it, as every save strips them (CarryCaptureMarkers).
+func TestCreatingANoteWithABodyStripsCaptureMarkers(t *testing.T) {
+	ctx := context.Background()
+	objects := memory.NewObjects()
+	notes := service.NewNotesService(dynamofake.NewStore(), objects)
+	note, err := notes.CreateNoteWithBody(ctx, "user1", "Roof", nil, nil, "", service.CaptureMarker("c_x")+"\nthe gutter")
+	if err != nil {
+		t.Fatalf("CreateNoteWithBody: %v", err)
+	}
+	body, _ := objects.Get(ctx, note.S3MarkdownKey)
+	if strings.Contains(string(body), "chintan:capture") {
+		t.Fatalf("the stored body kept a capture marker: %q", body)
+	}
+}

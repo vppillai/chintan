@@ -41,8 +41,11 @@ retry (`inbox.md`).
    429 would pin "Resend tomorrow" to the cap for a day. Anything else, and a handler panic, releases the claim
    (`AbandonIdempotent`, in a `defer`). A settled response whose record
    could not be written keeps the claim instead: the work is done, and a
-   released claim let a retry do it twice; the retry meets 409 for the
-   lease. Both writes run on a context the caller's hang-up cannot cancel.
+   released claim let a retry do it at once a second time. Kept, the claim
+   answers 409 only for its lease (`IdemClaimLease`, 60 s), so a retry after
+   that still redoes the work: this narrows the window to a minute, it does
+   not close it. Both writes run on a context the caller's hang-up cannot
+   cancel, which removes the commonest cause of the failed record.
 4. A recorded answer is honoured for `IdemTTL` (24 h); a bare claim only for
    `IdemClaimLease` (60 s), the backstop for a Lambda killed mid-request
    that no `defer` can reach — the API function's timeout is 29 s. The

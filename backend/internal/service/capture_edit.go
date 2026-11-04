@@ -90,12 +90,8 @@ func (s *CaptureService) DeleteCapture(ctx context.Context, userID, captureID st
 		case err != nil:
 			return fmt.Errorf("failed to get note: %w", err)
 		default:
-			items, err := s.recordingItems(ctx, note, capture)
-			if err != nil {
-				return err
-			}
 			cut, err := RewriteNoteBody(ctx, s.objects, note.S3MarkdownKey, func(body string) (string, bool) {
-				rest, _, found := cutRecording(body, captureID, items)
+				rest, _, found := CutCaptureParagraph(body, captureID)
 				return rest, found
 			})
 			if err != nil {

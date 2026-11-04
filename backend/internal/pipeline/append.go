@@ -187,7 +187,10 @@ func (p *Pipeline) appendClaimRefused(ctx context.Context, tenantID string, capt
 	*capture = current
 	if current.AppendedAt != 0 {
 		// An earlier attempt finished it. This one must not write the
-		// text a second time.
+		// text a second time, but it clears the stamp that attempt may
+		// have left: a completion that landed and reported a fault exits
+		// before its own clear.
+		p.clearStampOf(ctx, current)
 		return current, nil
 	}
 	if current.AppendToken != token {
@@ -308,6 +311,20 @@ func (p *Pipeline) anotherAppendInFlight(note model.NoteIndex, captureID string)
 // Config.AppendStampPoll overrides it.
 const defaultAppendStampPoll = 200 * time.Millisecond
 
+// clearStampOf removes c's append stamp from its note, if it still names c.
+// Best effort, like releaseAppendClaim: a stamp left behind ages out with
+// the lease, during which body saves to the note wait.
+func (p *Pipeline) clearStampOf(ctx context.Context, c model.CaptureIndex) {
+	if c.NoteID == "" {
+		return
+	}
+	if err := p.cfg.Store.ClearNoteAppend(ctx, c.UserID, c.NoteID, c.ID); err != nil {
+		obs.Log(ctx).Warn("could not clear the note's append stamp after the capture was appended; editor saves wait for it to age out",
+			slog.String("note_id", c.NoteID),
+			slog.String("error", err.Error()))
+	}
+}
+
 // finishAppend is the bookkeeping after the text is durably in the note body:
 // the index refresh and the completion of the claim. Both are safe to repeat,
 // which is what lets a retry that finds the marker already written finish an
@@ -338,12 +355,7 @@ func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *m
 	// longer recognised its own paragraph, and the takeover after the lease
 	// wrote the dictation a second time. Held until here, the save waits
 	// (409 append_in_progress) and the retry finds the body as written.
-	// Best effort, like releaseAppendClaim: a stamp left behind ages out.
-	if err := p.cfg.Store.ClearNoteAppend(ctx, tenantID, note.ID, capture.ID); err != nil {
-		obs.Log(ctx).Warn("could not clear the note's append stamp after the capture was appended; editor saves wait for it to age out",
-			slog.String("note_id", note.ID),
-			slog.String("error", err.Error()))
-	}
+	p.clearStampOf(ctx, appended)
 
 	// Only now, with the capture marked appended: the cleaned view follows the
 	// body, and the body is settled.

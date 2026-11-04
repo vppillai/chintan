@@ -74,3 +74,48 @@ func TestAFailedCompletionKeepsTheStampSoAnEditCannotForceASecondAppend(t *testi
 		t.Fatalf("stamp %q left on the note after the capture was appended", note.AppendingCapture)
 	}
 }
+
+// completeLandsButReportsFault lets the first completion land and then
+// reports a fault, as a DynamoDB timeout after the commit does.
+type completeLandsButReportsFault struct {
+	repository.Store
+	mu   sync.Mutex
+	done bool
+}
+
+func (s *completeLandsButReportsFault) CompleteCaptureAppend(ctx context.Context, tenantID, captureID, token string) (model.CaptureIndex, error) {
+	c, err := s.Store.CompleteCaptureAppend(ctx, tenantID, captureID, token)
+	s.mu.Lock()
+	first := !s.done
+	s.done = true
+	s.mu.Unlock()
+	if first && err == nil {
+		return model.CaptureIndex{}, errors.New("induced: completion landed, reply lost")
+	}
+	return c, err
+}
+
+// The capture is appended but the attempt failed before clearing the stamp;
+// the retry finds it finished and must clear the stamp, or body saves to the
+// note wait out the twenty-minute lease.
+func TestARetryOfAnAppendedCaptureClearsTheStampItsAttemptLeft(t *testing.T) {
+	base := memory.NewObjects()
+	f := newAppendFixture(t, base, func(s repository.Store) repository.Store {
+		return &completeLandsButReportsFault{Store: s}
+	})
+	ctx := context.Background()
+	notes := service.NewNotesService(f.store, base).WithClock(f.h.clock.Now)
+	if _, err := f.run(ctx); err == nil {
+		t.Fatal("want the induced fault")
+	}
+	if _, err := f.run(ctx); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	n := mustGetNote(t, f.store, "user1", "note1")
+	if n.AppendingCapture != "" {
+		t.Fatalf("stamp %q left after the retry found the capture appended", n.AppendingCapture)
+	}
+	if _, err := editorSave(ctx, notes, n.Version, "edit"); err != nil {
+		t.Fatalf("editor save after the retry: %v", err)
+	}
+}

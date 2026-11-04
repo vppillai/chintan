@@ -75,7 +75,8 @@ race made deterministic.
    version is once more a witness of the body; the stamp stays until
    `CompleteCaptureAppend` has marked the capture appended, and then
    `ClearNoteAppend` removes it, conditional on the stamp still naming the
-   capture. Cleared any earlier, a completion that failed left the paragraph
+   capture; a retry or redelivery that finds the capture already appended
+   clears it too, for the attempt that died between the two. Cleared any earlier, a completion that failed left the paragraph
    open to a save while the capture was unfinished: the edit moved the words
    off the marker, the retry did not recognise its own paragraph, and the
    takeover after the lease wrote the dictation twice. A move clears its

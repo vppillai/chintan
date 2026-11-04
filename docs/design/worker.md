@@ -227,7 +227,8 @@ only trace. Two things stand between a capture and that.
   not finish. Retry to try again.` (`reconcile.Verdict`).
   A pass starts no run with less than thirteen minutes of its invocation
   left (`reconcile.runBudget`: two transcriptions, a cleanup and an append),
-  and a run its own deadline cut is left for the next pass, not failed
+  and a run its own deadline cut is not failed — the fail's store calls
+  refuse the done context — so the next pass resumes it
   (`TestRunStopsAtItsTimeBudgetAndFailsNothingItCut`).
   `CaptureReaped{Outcome=finished|failed}` counts the two outcomes; the
   `capture-reaped` alarm reads `failed`

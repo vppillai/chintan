@@ -237,7 +237,8 @@ func TestRunFailsAnUploadedCaptureWhoseLinkHasExpired(t *testing.T) {
 }
 
 // A pass with less than runBudget left starts no run, and a run its own
-// deadline cut is left for the next pass rather than marked failed.
+// deadline cut is not marked failed: the fail's own store calls refuse the
+// done context, and the next pass resumes it.
 func TestRunStopsAtItsTimeBudgetAndFailsNothingItCut(t *testing.T) {
 	store := dynamofake.NewStore()
 	seed(t, store, "c1", model.StatusCleaned, now.Add(-time.Hour))

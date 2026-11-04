@@ -235,12 +235,12 @@ moving the recording removes them and nothing else, and a moved recording
 lands in the target in chronological position, its items still ticked. That
 holds until the first save from the Items tab: `serialiseChecklist` writes
 no blank line between recordings, so `CarryCaptureMarkers` finds no
-paragraph boundary to keep a marker at and carries every marker to the end
-(a tick is such a save). Delete and move then find the recording's lines by
-their words, from its clean artefact, each once and ticks kept, and a found
-line with a line they did not take under it stays as a parent someone else
-joined (`service.cutRecording`;
-`TestDeleteCaptureFromAChecklistWithABareMarkerRemovesItsItemsByWords`). A plain
+paragraph boundary to keep a marker at and carries every marker to the end,
+after which delete and move cut the bare marker and leave the lines (a tick
+is such a save). They do not go by words: the first append's merge may have
+folded a spoken item into one the person typed, and a line the person wrote
+is never taken with a recording
+(`TestDeleteAndMoveOfABareMarkerNeverTakeThePersonsOwnItem`). A plain
 note's marker moves the same way once its paragraph is edited; a checklist
 is simply edited far more often than it is dictated into. A tick follows its
 item's words, and line for line only when no words match and the count holds

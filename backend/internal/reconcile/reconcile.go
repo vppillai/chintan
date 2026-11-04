@@ -194,12 +194,6 @@ func (r *Reaper) Run(ctx context.Context) (Report, error) {
 			obs.Count(cctx, "CaptureReaped", map[string]string{"Outcome": "finished"})
 			continue
 		}
-		if ctx.Err() != nil {
-			// The pass's own deadline cut the run, not the capture: it is
-			// the next pass's to resume, not this one's to fail.
-			log.Info("stuck capture's run was cut by the pass's deadline; leaving it to the next pass")
-			break
-		}
 		log.Error("stuck capture did not finish on its second run", slog.String("error", runErr.Error()))
 		failed, err := r.fail(cctx, c.UserID, c.ID, Verdict)
 		if err != nil {

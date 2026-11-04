@@ -241,6 +241,9 @@ func (s *NotesService) createNote(ctx context.Context, userID string, note model
 	note.S3MarkdownKey = markdownKey
 	note.S3MetaKey = metaKey
 
+	// A client's body never carries capture markers: a typed one would
+	// claim the lines under it for a recording that does not exist here.
+	body = StripCaptureMarkers(body)
 	note.Snippet = Snippet(body)
 	note.SearchText = SearchText(body)
 	err = s.objects.Put(ctx, markdownKey, []byte(body), "text/markdown")
