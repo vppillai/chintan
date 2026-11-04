@@ -38,6 +38,7 @@ import { announce } from '@/components/StatusRegion.tsx';
 import { FilingBanner } from '@/features/capture/FilingBanner.tsx';
 import { useLocalUpload } from '@/features/capture/FilingRow.tsx';
 import type { CaptureModel } from '@/features/capture/machine.ts';
+import { useCaptureStore } from '@/features/capture/store.ts';
 import { languageName } from '@/features/settings/languages.ts';
 import { useHorizontalSwipe } from '@/hooks/useHorizontalSwipe.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
@@ -160,7 +161,18 @@ export function NoteDetailScreen() {
     () => () => {
       const id = discardOnLeave.current;
       if (!id) return;
-      void archiveNote.mutateAsync(id).then(() => deleteForever.mutate(id), () => undefined);
+      /*
+       * Not one left to record into: Record from here opens the capture
+       * screen aimed at this note, whose capture row exists only once the
+       * recording is sent. Decided a task later, when the capture screen has
+       * armed its recording (it mounts as this one unmounts); a recording
+       * aimed at the note keeps it.
+       */
+      setTimeout(() => {
+        const { model } = useCaptureStore.getState();
+        if (model.noteId === id && model.state !== 'idle') return;
+        void archiveNote.mutateAsync(id).then(() => deleteForever.mutate(id), () => undefined);
+      }, 0);
     },
     // Once, at unmount; the refs carry the latest answer.
     // eslint-disable-next-line react-hooks/exhaustive-deps

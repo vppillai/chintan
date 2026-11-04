@@ -985,6 +985,25 @@ describe('the note is panels under one strip', () => {
     expect(api.calls.filter((call) => call.startsWith('DELETE'))).toHaveLength(before);
   });
 
+  it('keeps an untouched placeholder the user left to record into', async () => {
+    // Record from a fresh note opens /capture?note=<id>: the screen goes, the
+    // note is still the recording's target, and its capture row does not
+    // exist until the recording is sent.
+    const placeholder: StoredNote = { ...ROOF, id: 'typed-3', title: 'New note', body: '', snippet: '' };
+    const api = server([ROOF, placeholder]);
+    const { router } = mount(api.fetchImpl, '/');
+    await screen.findByRole('heading', { name: /notes/i });
+
+    await act(() => router.navigate('/notes/typed-3', { state: { focusTitle: true } }));
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveValue('New note');
+    });
+    await act(() => router.navigate('/capture?note=typed-3'));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+
+    expect(api.calls.filter((call) => call.startsWith('DELETE'))).toEqual([]);
+  });
+
   it('closes from a drag down on its head, past the threshold or in a flick, and settles back short of it', async () => {
     // A phone's own sheets close this way; the × and Escape stay (above).
     const user = userEvent.setup();
