@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 
+import { GESTURE_SLOP_PX } from './gesture.ts';
+
 /**
  * Pull down at the top of a list to refresh it.
  *
@@ -11,7 +13,8 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
  * the only way to read one that the scroller is not going to act on.
  *
  * The gesture is armed only when the scroll container is at `scrollTop === 0`
- * when the finger lands, and never when the finger lands inside a scroller of
+ * when the finger lands, and claimed only once it has travelled
+ * `GESTURE_SLOP_PX` and more down than sideways, and never when the finger lands inside a scroller of
  * its own — the Details sheet, a transcript — that has something to scroll,
  * nor anywhere on the note's Details/Share sheet:
  * a downward drag there is that scroller's, whatever the page's position, and
@@ -68,6 +71,11 @@ function clientYOf(event: TouchEvent): number | null {
   return touch ? touch.clientY : null;
 }
 
+function clientXOf(event: TouchEvent): number {
+  const touch = event.touches[0] ?? event.changedTouches[0];
+  return touch?.clientX ?? 0;
+}
+
 /**
  * Whether something between the finger and the container scrolls on its own
  * and has room to: a drag that starts there belongs to it, not to the page.
@@ -114,6 +122,7 @@ export function usePullToRefresh(
     const container = scrollContainerOf(indicator);
 
     let startY: number | null = null;
+    let startX = 0;
     let offset = 0;
     let busy = false;
 
@@ -132,6 +141,7 @@ export function usePullToRefresh(
       if (busy || event.touches.length !== 1 || container.scrollTop > 0) return;
       if (insideNestedScroller(event.target, container)) return;
       startY = clientYOf(event);
+      startX = clientXOf(event);
     };
 
     const onTouchMove = (event: TouchEvent): void => {
@@ -144,10 +154,20 @@ export function usePullToRefresh(
       const y = clientYOf(event);
       if (y === null) return;
       const distance = y - startY;
-      if (distance <= 0 && offset === 0) {
-        // Moving up, or sideways: an ordinary scroll. Stand down for this touch.
-        startY = null;
-        return;
+      if (offset === 0) {
+        /*
+         * Not a pull until the finger has gone a slop's worth, and further
+         * down than sideways. The first downward pixel used to claim the
+         * touch, so a swipe along the chips or across a row with a pixel of
+         * drift was cancelled under the finger and pulled the page instead.
+         */
+        const sideways = Math.abs(clientXOf(event) - startX);
+        if (Math.hypot(sideways, distance) < GESTURE_SLOP_PX) return;
+        if (distance <= 0 || sideways >= distance) {
+          // Moving up, or sideways: an ordinary scroll. Stand down for this touch.
+          startY = null;
+          return;
+        }
       }
       if (container.scrollTop > 0) {
         reset();

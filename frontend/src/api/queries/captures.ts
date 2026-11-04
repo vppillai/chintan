@@ -42,7 +42,7 @@ const RECENTLY_SETTLED_MS = 10 * 60 * 1000;
  */
 const FILED_RECEIPT_MS = 24 * 60 * 60 * 1000;
 
-/** Newest-first, and twenty is more than one person records before the first has filed. */
+/** Newest-first; past twenty, the captures waiting on the user are asked for by name. */
 const CAPTURE_LIST_LIMIT = 20;
 
 /**
@@ -139,9 +139,10 @@ export function isFilingRelevant(capture: CaptureWire, now: number = serverNow()
  * ONE request per poll. Firing `pending`, `failed`, `needs_target` and `all`
  * in parallel every four seconds, plus all four again on every window focus,
  * comes to ~120 invocations for a two-minute pipeline, while the user is most
- * likely driving on cellular. The newest twenty captures contain
+ * likely driving on cellular. The newest twenty captures usually contain
  * everything those filters would have returned that is worth showing (see
- * `isFilingRelevant`), so the filtering happens here. Always stale: the
+ * `isFilingRelevant`), so the filtering happens here; past twenty, the
+ * captures waiting on the user are asked for by name (below). Always stale: the
  * library is remounted every time the user comes back to it — including
  * from the capture screen, six hundred milliseconds after a Send — and that
  * mount is one moment a fresh answer is owed. Coming to the foreground is the
@@ -154,7 +155,10 @@ export function usePendingCaptures(enabled = true) {
     queryKey: queryKeys.pendingCaptures(),
     queryFn: async () => {
       const page = await api.listCaptures({ status: 'all', limit: CAPTURE_LIST_LIMIT });
-      return { items: page.items.filter((capture) => isFilingRelevant(capture)) };
+      return {
+        items: page.items.filter((capture) => isFilingRelevant(capture)),
+        more: Boolean(page.cursor),
+      };
     },
     enabled,
     refetchInterval: (query) => capturePollInterval(query.state.data?.items ?? []),
@@ -174,6 +178,38 @@ export function usePendingCaptures(enabled = true) {
     staleTime: 0,
   });
   /*
+   * More than twenty: a capture waiting on the user can sit past the window —
+   * a ring files twenty in an afternoon over the one that failed this
+   * morning — and would leave Home without being acted on. The two filters
+   * that hold such captures are asked as well, but on the moments a fresh
+   * answer is owed (mount, focus, an invalidation of `captures`), not on
+   * every tick of the poll: neither status moves on its own. Settled, not
+   * all-or-nothing, so one failed list costs only its own rows.
+   */
+  const more = query.data?.more ?? false;
+  const waiting = useQuery({
+    queryKey: queryKeys.waitingCaptures(),
+    queryFn: async () => {
+      const lists = await Promise.allSettled([
+        api.listCaptures({ status: 'failed', limit: CAPTURE_LIST_LIMIT }),
+        api.listCaptures({ status: 'needs_target', limit: CAPTURE_LIST_LIMIT }),
+      ]);
+      return lists.flatMap((list) => (list.status === 'fulfilled' ? list.value.items : []));
+    },
+    enabled: enabled && more,
+    refetchOnWindowFocus: 'always',
+    staleTime: 0,
+  });
+  const extra = more ? waiting.data : undefined;
+  const data = useMemo(() => {
+    if (!query.data || !extra) return query.data;
+    const seen = new Set(query.data.items.map((capture) => capture.id));
+    return {
+      ...query.data,
+      items: [...query.data.items, ...extra.filter((capture) => !seen.has(capture.id))],
+    };
+  }, [query.data, extra]);
+  /*
    * What each poll does to the rest of the cache, done when its answer has
    * landed rather than from inside the fetch: a queryFn that writes other
    * queries runs before its own data is in the cache, which is the shape
@@ -192,7 +228,7 @@ export function usePendingCaptures(enabled = true) {
     }
     previous.current = items;
   }, [query.data, queryClient]);
-  return query;
+  return { ...query, data };
 }
 
 /**
@@ -496,7 +532,7 @@ export function useDeleteStuckCapture(): UseMutationResult<void, Error, CaptureW
     mutationFn: (capture: CaptureWire) => api.deleteCapture(capture.id),
     onSuccess: (_result, capture) => {
       queryClient.setQueryData<{ items: CaptureWire[] }>(queryKeys.pendingCaptures(), (current) =>
-        current ? { items: current.items.filter((item) => item.id !== capture.id) } : current,
+        current ? { ...current, items: current.items.filter((item) => item.id !== capture.id) } : current,
       );
       if (capture.note_id) {
         dropCapturesFromNote(queryClient, capture.note_id, [capture.id]);

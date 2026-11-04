@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -419,5 +420,47 @@ func TestExportObjectsCarryTheExpiryTag(t *testing.T) {
 		if got := h.objects.Tags(key)[upload.ArtifactTagKey]; got != exportArtifact {
 			t.Errorf("%s: tag %s = %q, want %q so the lifecycle rule can expire it", name, upload.ArtifactTagKey, got, exportArtifact)
 		}
+	}
+}
+
+// Each shelf is drained to its own bound, so a complete export of 1,001
+// active and 1,000 archived notes is not truncated; a note whose recordings
+// reach their bound is, and the job says so for the app to show.
+func TestExportTruncationIsJudgedPerBound(t *testing.T) {
+	h := newExportHarness(t)
+	ctx := context.Background()
+	for i := range maxExportNotes + 1 {
+		n := model.NoteIndex{ID: fmt.Sprintf("n%04d", i), Title: "t", UpdatedAt: model.Now()}
+		if i%2 == 1 {
+			n.DeletedAt, n.PurgeAfterEpoch = model.Now(), 4102444800
+		}
+		if _, err := h.store.PutNote(ctx, "user1", n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	job, err := h.export.Start(ctx, "user1")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if job.Truncated {
+		t.Fatal("an export within each shelf's bound reads as truncated")
+	}
+	if got := len(h.exportedDocument(t, "user1", job.ID).Notes); got != maxExportNotes+1 {
+		t.Fatalf("exported %d notes, want both shelves' %d", got, maxExportNotes+1)
+	}
+
+	for i := range maxExportCapturesPerNote {
+		if _, err := h.store.PutCapture(ctx, model.CaptureIndex{
+			ID: fmt.Sprintf("c_%04d", i), UserID: "user1", NoteID: "n0000", Status: model.StatusAppended,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	job, err = h.export.Start(ctx, "user1")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if got, err := h.export.Get(ctx, "user1", job.ID); err != nil || !got.Truncated {
+		t.Fatalf("Get = %+v, %v; want truncated once a note's recordings reach their bound", got, err)
 	}
 }

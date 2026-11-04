@@ -142,6 +142,36 @@ describe('audio is pruned only after the server confirms', () => {
     ]);
   });
 
+  it('offers nothing for a tab killed before its first chunk, and drops the empty record', async () => {
+    // The record is written as the microphone opens; the first chunk lands
+    // seconds later. A tab killed between the two left a 0:00 "unsent
+    // recording" whose Send could only fail, offered for good.
+    const empty = {
+      localId: 'cap-empty',
+      serverCaptureId: null,
+      noteId: null,
+      contentType: 'audio/webm',
+      durationMs: 0,
+      bytes: 0,
+      chunkCount: 0,
+      createdAt: Date.now() - 5 * 60_000,
+      uploadedAt: null,
+      peaks: null,
+    };
+    await saveCaptureRecord(empty);
+    // One whose record was never refreshed, but whose audio is on disk: kept.
+    await saveCaptureRecord({ ...empty, localId: 'cap-unindexed' });
+    await appendChunk('cap-unindexed', 0, chunk('audio'));
+
+    // The store's own recording keeps its record, however long it has waited.
+    await saveCaptureRecord({ ...empty, localId: 'cap-live' });
+    expect((await unconfirmedCaptures('cap-live')).map((record) => record.localId)).toEqual([
+      'cap-unindexed',
+    ]);
+    expect(await readCaptureRecord('cap-live')).toBeDefined();
+    expect(await readCaptureRecord('cap-empty')).toBeUndefined();
+  });
+
   it('prunes without needing a capture record', async () => {
     await appendChunk('cap-1', 0, chunk('x'));
     await pruneCapture('cap-1');

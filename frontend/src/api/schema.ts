@@ -152,7 +152,17 @@ export interface NoteWire {
    */
   pinned?: boolean;
   pin_rank?: number | null;
+  /**
+   * The row's tint on Home and the wash on the note's header, by name
+   * (`NOTE_COLORS`); `'none'` is no tint. Optional here only so existing
+   * literals keep compiling; the backend always sends it.
+   */
+  color?: NoteColor;
 }
+
+/** The note tints, by name: tokens.css maps each to a pastel per theme. */
+export const NOTE_COLORS = ['none', 'rose', 'peach', 'sand', 'lime', 'mint', 'sky', 'lavender', 'slate'] as const;
+export type NoteColor = (typeof NOTE_COLORS)[number];
 
 /**
  * `polished` and `structured` are a plain note's cleaned view. `tasks` is the
@@ -253,6 +263,8 @@ export interface NoteUpdateWire {
   cleaned_mode?: NoteCleanMode;
   /** Pin to or unpin from the top of Home. The server assigns the rank. */
   pinned?: boolean;
+  /** The row's tint; not an edit, so `updated_at` stays. */
+  color?: NoteColor;
 }
 
 /** `POST /v1/notes/pins`: the pinned notes in the order they should stand. */
@@ -437,6 +449,17 @@ export interface PresignedUploadWire {
   expires_at: string;
   max_bytes?: number;
   headers?: Record<string, string>;
+}
+
+/** `POST /v1/captures/text`: a typed thought, filed as a recording's transcript would be. */
+export interface CaptureTextWire {
+  text: string;
+  note_id?: string | null;
+}
+
+/** Its 202: the capture, already at `transcribed`. */
+export interface CaptureTextAcceptedWire {
+  capture: CaptureWire;
 }
 
 export interface CaptureCreatedWire {
@@ -746,6 +769,8 @@ export interface ExportJobWire {
   url?: string | null;
   expires_at?: string | null;
   bytes?: number | null;
+  /** The file stops at a bound and is not the whole account. */
+  truncated?: boolean;
 }
 
 /**

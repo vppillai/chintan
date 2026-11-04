@@ -87,7 +87,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   color: var(--color-muted);
 }
 
@@ -96,9 +96,12 @@
   font-weight: var(--font-weight-medium);
 }
 
+/* A real target, not an underlined word: the one control on the line. */
 .save-indicator__retry {
+  min-block-size: var(--layout-touch-target-min);
+  padding-inline: var(--space-2);
   text-decoration: underline;
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   color: var(--color-ink);
 }
 
@@ -187,9 +190,9 @@
 
 /*
  * The archived note's status line and the one error a note action can raise.
- * `--color-accent` is the app's one "consequential" signal and is already
- * carrying the destructive dialog, so the error wears it rather than a red
- * the palette has not defined.
+ * The accent is the app's one "consequential" signal, so the error wears it,
+ * as `accent-strong`: the fill accent is 4.47:1 as text on Ink & Paper's
+ * surface, under AA.
  */
 .note-actions__state {
   font-size: var(--font-size-sm);
@@ -199,7 +202,7 @@
 .note-actions__error {
   margin-block-start: var(--space-2);
   font-size: var(--font-size-sm);
-  color: var(--color-accent);
+  color: var(--color-accent-strong);
 }
 
 /* ==========================================================================

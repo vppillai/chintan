@@ -135,15 +135,16 @@ Parameters:
     AllowedValues: ['true', 'false']
     Description: >
       Create the CloudWatch alarms for this stack. The template declares
-      fifteen (fourteen, plus the spend-cap alarm when a cap is set): API
+      sixteen (fifteen, plus the spend-cap alarm when a cap is set): API
       function errors, a gateway 4xx flood, a gateway 5xx count, refused inbox
       keys, the capture dead-letter queue, a rejected provider key, failed
-      captures, failed push sends, a failed expiry purge, a worker message it
+      captures, failed push sends, a pruned push subscription, a failed
+      expiry purge, a worker message it
       could not read, a clean the API could not hand to the worker, provider
       calls running out of time, a capture a run left in a stage, a stuck
       capture the reconcile task gave up on, and the spend cap. CloudWatch's
       always-free allowance is ten alarm-months for the whole account, so the
-      five above it are billed at $0.10 an alarm-month, and a second
+      six above it are billed at $0.10 an alarm-month, and a second
       environment's copies are billed in full. Set false on an environment whose
       failures are already caught some other way; the deploy's own smoke test
       is what gates staging.
@@ -2565,6 +2566,32 @@ Resources:
       Period: 900
       EvaluationPeriods: 1
       Threshold: 2
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # A subscription the push service called gone (404 or 410) is deleted, and
+  # nothing after it fails: the worker finds fewer subscriptions, or none,
+  # and every later filing is silent, with no failure counted anywhere. One
+  # prune is a device that stopped
+  # hearing; the app re-enrols on its next launch, so the mail is the prompt
+  # to open it there.
+  PushSubscriptionsPrunedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-push-subscription-pruned'
+      AlarmDescription: >-
+        The push service said a browser's notification subscription is gone
+        and the worker deleted it. That device gets no notifications until the
+        app is opened on it, which re-enrols it.
+      Namespace: Chintan
+      MetricName: PushSubscriptionsPruned
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
       AlarmActions:

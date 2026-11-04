@@ -58,12 +58,14 @@ so the store and its repair tool cannot disagree on a name.
 
 A note's promoted attributes are the ones in `noteListProjection` (title,
 aliases, tags, snippet, timestamps, the S3 keys, the archive fields, the
-clean-view fields, the append stamp, `kind`, `pinned_at`, `pin_rank`) plus
+clean-view fields, the append stamp, `kind`, `pinned_at`, `pin_rank`, `color`) plus
 three that are promoted only and never in the blob: `search_text` (up to
 32 KB, read only by search and the offline corpus, search.md),
 `cleaned_body` (up to 200 KB) and `language` (a reserved word, read through
-`#lang`). `kind`, `pinned_at`, `pin_rank` and `language` are written only
-when set, so their absence is the zero value (pins.md). A capture's promoted attributes
+`#lang`). `kind`, `pinned_at`, `pin_rank`, `color` and `language` are written only
+when set, so their absence is the zero value (pins.md). `color` is a name
+from `model.NoteColors`, never a hex: the hex is the frontend's, per theme
+(home.md, "Colour"). A capture's promoted attributes
 are its status, timestamps, the append bookkeeping (`append_token`,
 `append_claimed_at`, `appended_at`), `duration_ms`, `error`, `source`,
 `last_progress_at`, `excerpt`, `created_note`, `gate` and the six object keys
@@ -195,8 +197,11 @@ tenants/<tenant>/captures/<captureId>/peaks.json      the waveform the browser c
 tenants/<tenant>/exports/<exportId>/{export.json,job.json}
 ```
 
-The capture row's `*_key` attributes name these objects exactly; a cascade
-delete removes those keys and never lists a prefix. Audio is written by
+The capture row's `*_key` attributes name these objects; a cascade delete
+removes those keys and every key derivable from the capture id
+(`keys.CaptureDerived`: a Transcribe again clears the transcript keys until
+the new ones land), and never lists a prefix. `chintanctl reconcile` counts
+a derived key as its capture's, not as unreferenced. Audio is written by
 the presigned PUT with `chintan-artifact=capture-audio` and
 `chintan-retention=<tier>`, and the worker adds `chintan-processed=true`
 only after transcription succeeds (`MarkProcessed` reads the tags back and

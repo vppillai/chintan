@@ -47,6 +47,7 @@ export function FindBar({
   inputRef,
   disabled = false,
   hint,
+  focusOnOpen = true,
 }: {
   id: string;
   query: string;
@@ -61,6 +62,11 @@ export function FindBar({
   /** The open panel has nothing to search; the bar stays, greyed, and says why. */
   disabled?: boolean;
   hint?: string | undefined;
+  /**
+   * False when the bar opens with a search carried from Home: the marks are
+   * the point, and a keyboard over half the note is not.
+   */
+  focusOnOpen?: boolean;
 }) {
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
     if (event.key === 'Enter') {
@@ -91,7 +97,7 @@ export function FindBar({
           // The bar was just opened to type into: focus goes to its field, as
           // a dialog's does; the rule is about focus stolen on page load.
           // eslint-disable-next-line jsx-a11y/no-autofocus
-          autoFocus
+          autoFocus={focusOnOpen}
           autoComplete="off"
           spellCheck={false}
           enterKeyHint="search"

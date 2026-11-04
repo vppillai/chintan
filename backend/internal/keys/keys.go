@@ -110,6 +110,26 @@ func CaptureSegments(userID, captureID string) (string, error) {
 	return fmt.Sprintf("tenants/%s/captures/%s/segments.json", userID, captureID), nil
 }
 
+// CaptureDerived is every key a capture can own that follows from its id
+// alone: the transcripts, the clean artefact and its previous copy, the
+// segments and the peaks. A row clears some of these fields while the objects
+// stay — a Transcribe again or a regeneration that has not finished, a
+// transcript with no segments — so a delete that went by the row's fields
+// alone left them behind. Nil for an id the layout refuses.
+func CaptureDerived(userID, captureID string) []string {
+	var out []string
+	for _, derive := range []func(string, string) (string, error){
+		CaptureRaw, CaptureRouted, CaptureClean, CaptureCleanPrevious, CaptureSegments, CapturePeaks,
+	} {
+		key, err := derive(userID, captureID)
+		if err != nil {
+			return nil
+		}
+		out = append(out, key)
+	}
+	return out
+}
+
 // CapturePeaks holds the amplitude envelope the client computes while recording.
 // The browser already has the decoded signal from its AnalyserNode; deriving it
 // server-side would mean shipping an Opus decoder into Lambda.

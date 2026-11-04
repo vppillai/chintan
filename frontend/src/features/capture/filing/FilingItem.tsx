@@ -41,6 +41,8 @@ export type FilingItemProps =
       /** Open the note. */
       onOpen: () => void;
       onDismiss: () => void;
+      /** "Wrong note?": move what the receipt names to another note. */
+      onMove?: (() => void) | undefined;
       /**
        * False for a receipt inside the fold: the section's own live region
        * speaks for the fold, and a status per folded row would speak each
@@ -76,14 +78,14 @@ export function FilingItem(props: FilingItemProps) {
    * controls are on its face.
    */
   if ('receipt' in props) {
-    const { receipt, noteTitle, now, onOpen, onDismiss, live = true } = props;
+    const { receipt, noteTitle, now, onOpen, onDismiss, onMove, live = true } = props;
     return (
       <SwipeRow
         className="filing-swipe"
         label="Receipt actions"
         actions={[{ id: 'dismiss', label: 'Dismiss', icon: 'close', onSelect: onDismiss }]}
       >
-        {receiptBody({ receipt, noteTitle, now, onOpen, onDismiss, live })}
+        {receiptBody({ receipt, noteTitle, now, onOpen, onDismiss, onMove, live })}
       </SwipeRow>
     );
   }
@@ -209,6 +211,7 @@ function receiptBody({
   now,
   onOpen,
   onDismiss,
+  onMove,
   live,
 }: {
   receipt: ReceiptGroup;
@@ -216,6 +219,7 @@ function receiptBody({
   now: number;
   onOpen: () => void;
   onDismiss: () => void;
+  onMove: (() => void) | undefined;
   live: boolean;
 }) {
   const titleId = `filing-title-${receipt.newestId}`;
@@ -243,6 +247,22 @@ function receiptBody({
           )}
         </div>
         {receipt.excerpt && <p className="filing-row__excerpt">{receipt.excerpt}</p>}
+        {/*
+          The router's mistakes are the product's known failure, and the
+          receipt is where one is noticed: the move is here, rather than
+          three screens deep on the note's Recordings tab. Above the row's
+          stretched Open, as the × is.
+        */}
+        {onMove && (
+          <button
+            type="button"
+            className="filing-row__wrong"
+            aria-describedby={titleId}
+            onClick={onMove}
+          >
+            Wrong note?
+          </button>
+        )}
         <button
           type="button"
           className="filing-row__receipt"

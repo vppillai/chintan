@@ -245,3 +245,54 @@ func TestNewRefusesAnIncompleteSweeper(t *testing.T) {
 		t.Error("New accepted a nil cascade")
 	}
 }
+
+// restoreAfterScan restores the note on the row after the scan has listed it,
+// as a stale trash list tapped as the deadline passed would.
+type restoreAfterScan struct {
+	*repository.DynamoStore
+}
+
+func (s restoreAfterScan) ExpiredNotes(ctx context.Context, asOf int64) ([]repository.TenantNote, error) {
+	expired, err := s.DynamoStore.ExpiredNotes(ctx, asOf)
+	for _, tn := range expired {
+		n, _ := s.GetNote(ctx, tn.TenantID, tn.Note.ID)
+		n.DeletedAt, n.PurgeAfter, n.PurgeAfterEpoch = "", "", 0
+		if _, perr := s.PutNote(ctx, tn.TenantID, n); perr != nil {
+			return nil, perr
+		}
+	}
+	return expired, err
+}
+
+// The scan is a snapshot: a note restored after it keeps its body and its
+// recordings, and its row.
+func TestSweepLeavesANoteRestoredAfterTheScan(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	note, keys := f.archivedNote(t, testTenant, "a", f.now.Add(-time.Hour))
+	f.sweeper.store = restoreAfterScan{f.store}
+
+	if _, err := f.sweeper.Sweep(ctx); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if alive := f.alive(keys); len(alive) != len(keys) {
+		t.Fatalf("a restored note lost objects to the sweep: alive %v of %v", alive, keys)
+	}
+	if _, err := f.store.GetNote(ctx, testTenant, note.ID); err != nil {
+		t.Fatalf("the restored note's row is gone: %v", err)
+	}
+}
+
+// Past its deadline the note is the sweep's: a restore answers not found and
+// writes nothing.
+func TestRestorePastTheDeadlineIsRefused(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	note, _ := f.archivedNote(t, testTenant, "a", time.Now().Add(-time.Minute))
+	if _, err := f.notes.RestoreNote(ctx, testTenant, note.ID); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("RestoreNote past the deadline: err = %v, want ErrNotFound", err)
+	}
+	if got, _ := f.store.GetNote(ctx, testTenant, note.ID); got.DeletedAt == "" {
+		t.Fatal("the refused restore restored the note anyway")
+	}
+}

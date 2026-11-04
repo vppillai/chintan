@@ -126,6 +126,15 @@
     }
   },
   {
+    "name": "colorNote",
+    "method": "PATCH",
+    "path": "/v1/notes/contract-note",
+    "body": {
+      "version": 1,
+      "color": "mint"
+    }
+  },
+  {
     "name": "reorderPins",
     "method": "POST",
     "path": "/v1/notes/pins",
@@ -232,6 +241,23 @@
     "path": "/v1/captures",
     "body": {
       "content_type": "audio/mp4"
+    }
+  },
+  {
+    "name": "captureText",
+    "method": "POST",
+    "path": "/v1/captures/text",
+    "body": {
+      "text": "Call the roofer.",
+      "note_id": "contract-note"
+    }
+  },
+  {
+    "name": "captureTextUnrouted",
+    "method": "POST",
+    "path": "/v1/captures/text",
+    "body": {
+      "text": "Call the roofer."
     }
   },
   {

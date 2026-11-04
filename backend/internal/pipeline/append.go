@@ -27,7 +27,7 @@ import (
 // and the capture marked appended. A capture's own run asks for the
 // cleaned view to follow (autoClean); a regeneration does not.
 func (r *captureRun) append(ctx context.Context) error {
-	_, err := r.p.append(ctx, r.tenantID, r.capture, r.note, appendOptions{autoClean: true, previousItems: r.previousItems})
+	_, err := r.p.append(ctx, r.tenantID, r.capture, r.note, appendOptions{autoClean: true, previousItems: r.previousItems, landWithdrawn: true})
 	return err
 }
 
@@ -45,6 +45,13 @@ type appendOptions struct {
 	// in a list that has since been ticked or reordered. Nil for a plain
 	// note, a first append, or a retry that resumed past the extraction.
 	previousItems []string
+	// landWithdrawn writes a checklist recording's new items under its
+	// marker when none of its previous items are left in the list. A
+	// regeneration reads that as the person having removed them, and does
+	// not put them back; a capture's own run is the person's Transcribe
+	// again, often after deleting the mis-scripted lines by hand, and
+	// landing nothing while the capture read appended lost the request.
+	landWithdrawn bool
 }
 
 func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex, opts appendOptions) (model.CaptureIndex, error) {
@@ -121,7 +128,8 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 	// it had, and the paragraph just dictated was gone with nothing left to
 	// retry it (review 2026-09-05, S1). The stamp bumps the version now and
 	// names the capture, so service.UpdateNote refuses a body write for as long
-	// as the append can still be in flight, and the index refresh clears it.
+	// as the append can still be in flight, and finishAppend clears it once the
+	// capture is marked appended.
 	//
 	// The row's version has usually moved since run() read it — the stages
 	// before this one take seconds — so a lost race re-reads and stamps again.
@@ -135,7 +143,7 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 		return *capture, fmt.Errorf("pipeline: stamp note for append: %w", err)
 	}
 
-	if err := p.appendToNote(ctx, note.S3MarkdownKey, capture.ID, cleanedText, opts.previousItems, items); err != nil {
+	if err := p.appendToNote(ctx, note.S3MarkdownKey, capture.ID, cleanedText, opts.previousItems, items, opts.landWithdrawn); err != nil {
 		// Hand the claim back so a transient object-store failure does not park
 		// the capture until the claim lease expires.
 		p.releaseAppendClaim(ctx, capture)
@@ -179,7 +187,10 @@ func (p *Pipeline) appendClaimRefused(ctx context.Context, tenantID string, capt
 	*capture = current
 	if current.AppendedAt != 0 {
 		// An earlier attempt finished it. This one must not write the
-		// text a second time.
+		// text a second time, but it clears the stamp that attempt may
+		// have left: a completion that landed and reported a fault exits
+		// before its own clear.
+		p.clearStampOf(ctx, current)
 		return current, nil
 	}
 	if current.AppendToken != token {
@@ -213,7 +224,7 @@ func (p *Pipeline) appendClaimRefused(ctx context.Context, tenantID string, capt
 	// window of one object read and one write — dead-letters and raises
 	// the alarm, and the user's retry after the lease takes the claim over
 	// and does the append once.
-	if written, err := p.paragraphInNote(ctx, note.S3MarkdownKey, capture.ID, cleanedText, opts.previousItems, items); err != nil {
+	if written, err := p.paragraphInNote(ctx, note.S3MarkdownKey, capture.ID, cleanedText, opts.previousItems, items, opts.landWithdrawn); err != nil {
 		return current, fmt.Errorf("pipeline: check note for interrupted append: %w", err)
 	} else if written {
 		obs.Log(ctx).Info("append claim is held but the capture's paragraph is already in the note; finishing the interrupted attempt",
@@ -300,20 +311,33 @@ func (p *Pipeline) anotherAppendInFlight(note model.NoteIndex, captureID string)
 // Config.AppendStampPoll overrides it.
 const defaultAppendStampPoll = 200 * time.Millisecond
 
+// clearStampOf removes c's append stamp from its note, if it still names c.
+// Best effort, like releaseAppendClaim: a stamp left behind ages out with
+// the lease, during which body saves to the note wait.
+func (p *Pipeline) clearStampOf(ctx context.Context, c model.CaptureIndex) {
+	if c.NoteID == "" {
+		return
+	}
+	if err := p.cfg.Store.ClearNoteAppend(ctx, c.UserID, c.NoteID, c.ID); err != nil {
+		obs.Log(ctx).Warn("could not clear the note's append stamp after the capture was appended; editor saves wait for it to age out",
+			slog.String("note_id", c.NoteID),
+			slog.String("error", err.Error()))
+	}
+}
+
 // finishAppend is the bookkeeping after the text is durably in the note body:
 // the index refresh and the completion of the claim. Both are safe to repeat,
 // which is what lets a retry that finds the marker already written finish an
 // attempt that died here.
 func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex, token string, autoClean bool) (model.CaptureIndex, error) {
 	// The worker's refresh is the editor's (service.RefreshNoteIndex) on the
-	// worker's clock, clearing this capture's stamp, and refusing to index a
-	// body it could not read — a paragraph was just written, so a failed read
-	// is a fault to retry, not an empty note.
+	// worker's clock, refusing to index a body it could not read — a
+	// paragraph was just written, so a failed read is a fault to retry, not
+	// an empty note.
 	refreshed, err := service.RefreshNoteIndex(ctx, p.cfg.Store, p.cfg.Objects, tenantID, note.ID, service.RefreshOptions{
-		Now:                 p.now,
-		ClearAppendStampFor: capture.ID,
-		RequireBody:         true,
-		Attempts:            maxIndexRefreshAttempts,
+		Now:         p.now,
+		RequireBody: true,
+		Attempts:    maxIndexRefreshAttempts,
 	})
 	if err != nil {
 		return *capture, fmt.Errorf("pipeline: refresh note index: %w", err)
@@ -324,6 +348,14 @@ func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *m
 		return *capture, fmt.Errorf("pipeline: complete capture append: %w", err)
 	}
 	*capture = appended
+
+	// The stamp goes only now. Cleared with the refresh, a completion that
+	// failed left the paragraph open to an editor save while the capture was
+	// still unfinished: the edit moved the words off the marker, the retry no
+	// longer recognised its own paragraph, and the takeover after the lease
+	// wrote the dictation a second time. Held until here, the save waits
+	// (409 append_in_progress) and the retry finds the body as written.
+	p.clearStampOf(ctx, appended)
 
 	// Only now, with the capture marked appended: the cleaned view follows the
 	// body, and the body is settled.
@@ -347,7 +379,7 @@ func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *m
 // recording whose items live under nobody's marker (previousItems set, see
 // replaceChecklistItems) it is that replacing them would change nothing:
 // the new lines are in, or the person took the old ones out.
-func (p *Pipeline) paragraphInNote(ctx context.Context, noteKey, captureID, text string, previousItems []string, items []cleanup.Item) (bool, error) {
+func (p *Pipeline) paragraphInNote(ctx context.Context, noteKey, captureID, text string, previousItems []string, items []cleanup.Item, landWithdrawn bool) (bool, error) {
 	existing, err := p.cfg.Objects.Get(ctx, noteKey)
 	if errors.Is(err, repository.ErrNotFound) {
 		return false, nil
@@ -360,6 +392,11 @@ func (p *Pipeline) paragraphInNote(ctx context.Context, noteKey, captureID, text
 	if !found {
 		return false, nil
 	}
+	if previousItems != nil && landWithdrawn && text != "" && !itemsLeft(body, previousItems) {
+		// Asked the way appendToNote writes it: withdrawn items are not
+		// looked for, the new ones under the marker are.
+		previousItems = nil
+	}
 	if items != nil && previousItems == nil {
 		if previousItems = ownItems(old, rest, items); previousItems == nil {
 			_, left, _ := mergeChecklistItems(rest, items)
@@ -370,6 +407,24 @@ func (p *Pipeline) paragraphInNote(ctx context.Context, noteKey, captureID, text
 		return true, nil
 	}
 	return previousItems != nil && replaceChecklistItems(body, captureID, previousItems, text) == body, nil
+}
+
+// itemsLeft reports whether any of a recording's previous items still stands
+// in body as an item line, by its folded words, as replaceChecklistItems
+// looks for them.
+func itemsLeft(body string, previous []string) bool {
+	wanted := map[string]bool{}
+	for _, item := range previous {
+		if t := llm.FoldWords(item); t != "" {
+			wanted[t] = true
+		}
+	}
+	for _, line := range strings.Split(body, "\n") {
+		if t, ok := checklistLineText(line); ok && wanted[t] {
+			return true
+		}
+	}
+	return false
 }
 
 // appendToken is deterministic so a retry of the same work recognises its own
@@ -950,7 +1005,7 @@ func parentOf(lines []string, i int) int {
 // run the merge, so ChecklistItemsMerged is not emitted for a takeover
 // that joins a parent; the counts below are the cut and first-append
 // paths'.
-func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text string, previousItems []string, items []cleanup.Item) error {
+func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text string, previousItems []string, items []cleanup.Item, landWithdrawn bool) error {
 	// counts are the last run's: the write's closure runs again on an ETag
 	// conflict, and only the run whose body landed is counted, below.
 	var counts mergeCounts
@@ -975,6 +1030,11 @@ func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text st
 			if previous == nil && items != nil {
 				rest, old, _ := service.CutCaptureParagraph(existing, captureID)
 				previous = ownItems(old, rest, items)
+			}
+			if previous != nil && landWithdrawn && text != "" && !itemsLeft(existing, previous) {
+				// None of the old words left: the cut-and-merge below puts
+				// the new items under the marker (appendOptions.landWithdrawn).
+				previous = nil
 			}
 			if previous != nil {
 				next := replaceChecklistItems(existing, captureID, previous, text)

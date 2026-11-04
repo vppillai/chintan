@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
@@ -23,6 +23,12 @@ import {
   type CaptureModel,
 } from './machine.ts';
 import { useCaptureStore } from './store.ts';
+
+// A chunk of its own: most visits record, and the launch carries every byte
+// the first screen needs against a fixed budget (check-bundle).
+const TypedThought = lazy(() =>
+  import('./TypedThought.tsx').then((module) => ({ default: module.TypedThought })),
+);
 
 /**
  * The capture surface. Full screen: the shell drops the tab bar here, so the
@@ -166,11 +172,44 @@ export function CaptureScreen() {
     });
   }, [discard, leave]);
 
+  /*
+   * "Type instead", for when speaking is not possible: the recording just
+   * begun is dropped — only offered before there is a take worth asking
+   * about — and the screen becomes a field filed through the same pipeline,
+   * into the same target.
+   */
+  const [typing, setTyping] = useState<{ noteId: string | null } | null>(null);
+  const canType =
+    ((model.state === 'requesting' || model.state === 'recording' || model.state === 'paused') &&
+      model.elapsedMs < DISCARD_CONFIRM_AFTER_MS) ||
+    (model.state === 'failed' && !canRetryUpload(model));
+  const typeInstead = useCallback(() => {
+    const { noteId } = useCaptureStore.getState().model;
+    setTyping({ noteId });
+    void discard();
+  }, [discard]);
+
   const reviewEnvelope = useMemo(
     () => (model.state === 'review' ? envelope() : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [model.state, model.localId],
   );
+
+  if (typing) {
+    return (
+      <div className="capture">
+        <h1 className="visually-hidden">Type a thought</h1>
+        <Suspense fallback={null}>
+          <TypedThought
+            initialNoteId={typing.noteId}
+            onDone={(noteId) => {
+              leave(captureReturnPath(noteId));
+            }}
+          />
+        </Suspense>
+      </div>
+    );
+  }
 
   return (
     <div className="capture">
@@ -338,6 +377,12 @@ export function CaptureScreen() {
           leave(captureReturnPath(model.noteId));
         }}
       />
+
+      {canType && (
+        <button type="button" className="capture__type" onClick={typeInstead}>
+          Type instead
+        </button>
+      )}
     </div>
   );
 }

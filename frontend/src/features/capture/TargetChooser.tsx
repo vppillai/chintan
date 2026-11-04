@@ -1,13 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useId, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
-import { queryKeys, useNotes } from '@/api/queries.ts';
+import { queryKeys, useArchiveNote, useDeleteNoteForever, useNotes } from '@/api/queries.ts';
 import type { NoteWire, SettingsWire } from '@/api/schema.ts';
-import { openItemsText, parseChecklist } from '@/features/notes/checklist.ts';
-import { formatRowTime } from '@/features/notes/groups.ts';
 import { AUTO_LANGUAGE, LANGUAGES, languageName } from '@/features/settings/languages.ts';
 import { useCachedNote, useCachedNotes } from '@/offline/useNotesCache.ts';
+
+import { useCaptureStore } from './store.ts';
 
 /**
  * Where this recording will be filed, shown and changeable before you speak.
@@ -15,7 +15,12 @@ import { useCachedNote, useCachedNotes } from '@/offline/useNotesCache.ts';
  * "Chintan decides" by default, or "Into ⟨title⟩" when the screen was opened
  * from one ("Record into this") or with `?note=`. Tapping it unfolds a short
  * list — Chintan decides first, then the most recent notes — and choosing sets the
- * capture's target before Send. The backend has always accepted `note_id` on
+ * capture's target before Send. A field above the list finds any note the
+ * device holds, not only the recent twenty, and what it is given becomes a
+ * new note to record into when no note is the one: "New note “Tax 2026”"
+ * is `POST /v1/notes` with that title, then that note as the target, so the
+ * recording is filed into it as into any other. Making one needs the
+ * server, so offline the field only finds. The backend has always accepted `note_id` on
  * `POST /v1/captures`; nothing in the UI offered it, so the only ways to file
  * into a particular note were to say its name and hope the router agreed, or
  * to fix it afterwards from the "needs a target" row.
@@ -31,8 +36,13 @@ import { useCachedNote, useCachedNotes } from '@/offline/useNotesCache.ts';
  * sent under an English default failed with no warning it could have.
  */
 
-/** Enough to find a note made this week without a search field. */
+/** Enough to find a note made this week before anything is typed. */
 const RECENT_LIMIT = 20;
+
+// The sheet is a chunk of its own: most recordings never open it.
+const TargetChooserSheet = lazy(() =>
+  import('./TargetChooserSheet.tsx').then((module) => ({ default: module.TargetChooserSheet })),
+);
 
 export interface TargetChooserProps {
   noteId: string | null;
@@ -52,7 +62,7 @@ export interface TargetChooserProps {
 }
 
 /** The pill and the first option when no note is chosen: the router decides where it goes. */
-const DEFAULT_TARGET_LABEL = 'Chintan decides';
+export const DEFAULT_TARGET_LABEL = 'Chintan decides';
 
 export function TargetChooser({
   noteId,
@@ -108,25 +118,67 @@ export function TargetChooser({
   // the device even when the list cannot be reached.
   const opened = useCachedNote(noteId ?? undefined);
 
-  const notes: NoteWire[] =
-    served.data?.pages.flatMap((page) => page.items) ?? cached.data ?? [];
-  const recent = notes.slice(0, RECENT_LIMIT);
+  const notes: NoteWire[] = useMemo(
+    () => served.data?.pages.flatMap((page) => page.items) ?? cached.data ?? [],
+    [served.data, cached.data],
+  );
+  const recent = useMemo(() => notes.slice(0, RECENT_LIMIT), [notes]);
 
-  const chosen = noteId ? (notes.find((note) => note.id === noteId) ?? opened.data) : undefined;
+  /*
+   * The note "New note “…”" made, until it is kept. Picking another target,
+   * or leaving without sending anything into it, leaves a note that is only
+   * a title; it is discarded then, as the note screen discards an untouched
+   * placeholder (archive, then purge) — but only once the server says it is
+   * still empty with no capture, so a recording or a typed thought already
+   * on its way into it keeps it.
+   */
+  const [made, setMade] = useState<NoteWire | null>(null);
+  const madeId = useRef<string | null>(null);
+  const archiveNote = useArchiveNote();
+  const deleteForever = useDeleteNoteForever();
+  const discardIfUntouched = useRef((id: string) => {
+    // Anything but a clear "empty, no capture" — a failed read, an answer of
+    // another shape — keeps the note.
+    void api
+      .getNote(id)
+      .then((note) => {
+        if (note.body.trim() !== '' || (note.captures?.length ?? 0) > 0) return;
+        void archiveNote.mutateAsync(id).then(() => deleteForever.mutate(id), () => undefined);
+      })
+      .catch(() => undefined);
+  });
+  useEffect(
+    () => () => {
+      const id = madeId.current;
+      if (!id) return;
+      // A take still aimed at it — recording, or sent and uploading — keeps it.
+      const { model } = useCaptureStore.getState();
+      if (model.noteId === id && model.state !== 'idle') return;
+      discardIfUntouched.current(id);
+    },
+    [],
+  );
+  /** Every note the device holds or the server has listed, newest first, for the field. */
+  const everything = useMemo(() => {
+    const byId = new Map<string, NoteWire>();
+    for (const note of [...notes, ...(cached.data ?? [])]) {
+      if (!byId.has(note.id)) byId.set(note.id, note);
+    }
+    return [...byId.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  }, [notes, cached.data]);
+  const chosen = noteId
+    ? (everything.find((note) => note.id === noteId) ??
+      opened.data ??
+      (made?.id === noteId ? made : undefined))
+    : undefined;
   /*
    * No target means the router chooses, and it may well file into a note
    * that already exists — "add this to my roof note" is the hint under the
    * pill. The default read "Into New note", which promised the opposite
-   * (R7-14). A forced new note is not offered: the owner's call, in the
-   * backlog.
+   * (R7-14). A new note is made by naming it in the field, never by default.
    */
   const title = noteId === null ? DEFAULT_TARGET_LABEL : (chosen?.title ?? 'This note');
   const language = transcriptionLanguage(noteId, chosen, settings.data);
-
-  const choose = (id: string | null): void => {
-    onChoose(id);
-    setOpen(false);
-  };
 
   return (
     <div ref={rootRef} className="target-chooser">
@@ -155,85 +207,33 @@ export function TargetChooser({
       </button>
 
       {open && (
-        <div
-          id={listId}
-          className="target-chooser__sheet"
-          role="group"
-          aria-label="Where this recording goes"
-        >
-          <ul className="target-chooser__list" role="list">
-            <li>
-              <button
-                type="button"
-                className="target-chooser__option"
-                aria-pressed={noteId === null}
-                onClick={() => {
-                  choose(null);
-                }}
-              >
-                {DEFAULT_TARGET_LABEL}
-              </button>
-            </li>
-            {recent.map((note) => (
-              <li key={note.id}>
-                <button
-                  type="button"
-                  className="target-chooser__option"
-                  aria-pressed={note.id === noteId}
-                  onClick={() => {
-                    choose(note.id);
-                  }}
-                >
-                  <span className="target-chooser__option-title">{note.title}</span>
-                  {/* Part of the name on purpose: two "Roof repair"s are as
-                      alike to a screen reader as to the eye. */}
-                  <span className="target-chooser__option-meta">{optionMeta(note)}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-          {recent.length === 0 && (
-            <p className="target-chooser__empty">
-              {served.fetchStatus === 'paused'
-                ? 'No notes are on this device yet. The router will file it once you reconnect.'
-                : 'No notes yet — this will start the first one.'}
-            </p>
-          )}
-        </div>
+        <Suspense fallback={null}>
+          <TargetChooserSheet
+            id={listId}
+            noteId={noteId}
+            everything={everything}
+            recent={recent}
+            paused={served.fetchStatus === 'paused'}
+            onChoose={(id, created) => {
+              const previous = madeId.current;
+              if (previous && previous !== id) {
+                madeId.current = null;
+                discardIfUntouched.current(previous);
+              }
+              if (created) {
+                setMade(created);
+                madeId.current = created.id;
+              }
+              onChoose(id);
+              setOpen(false);
+            }}
+          />
+        </Suspense>
       )}
 
       {language && <p className="target-chooser__language">{language}</p>}
     </div>
   );
-}
-
-/**
- * What tells two notes with the same title apart: when it was last touched
- * and how it begins, cut at forty characters so the row stays one line.
- *
- * Characters as a reader counts them, not code points. In Malayalam, Tamil or
- * Hindi the fortieth code point is a vowel sign or a virama as often as a
- * letter, and a cut there strands the sign — a dotted circle on screen, a
- * broken syllable in the option's name — or takes it off its consonant. The
- * cut is marked, because the name is read where the CSS ellipsis is not.
- */
-const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-const META_SNIPPET_GRAPHEMES = 40;
-
-export function optionMeta(note: NoteWire): string {
-  const when = formatRowTime(note.updated_at);
-  // A checklist's snippet is its raw `- [ ]` lines; the row and the Move
-  // sheet show the open items as words (QA 2026-09-21, finding 9).
-  const text =
-    note.kind === 'checklist'
-      ? openItemsText(parseChecklist(note.snippet ?? ''))
-      : (note.snippet ?? '');
-  const graphemes = Array.from(GRAPHEMES.segment(text.trim()), (s) => s.segment);
-  const snippet =
-    graphemes.length > META_SNIPPET_GRAPHEMES
-      ? `${graphemes.slice(0, META_SNIPPET_GRAPHEMES).join('')}…`
-      : graphemes.join('');
-  return [when, snippet].filter(Boolean).join(' · ');
 }
 
 /**

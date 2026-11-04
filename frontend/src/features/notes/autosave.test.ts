@@ -438,6 +438,9 @@ describe('the PATCH names only what changed since the server’s copy', () => {
     expect(patchFor(edited({ language: 'ml' }))).toEqual({ version: 3, language: 'ml' });
     expect(patchFor(edited({ tags: ['house'] }))).toEqual({ version: 3, tags: ['house'] });
     expect(patchFor(edited({ verbatim: true }))).toEqual({ version: 3, verbatim: true });
+    // The colour rides the same PATCH, and so the offline queue.
+    expect(patchFor(edited({ color: 'mint' }))).toEqual({ version: 3, color: 'mint' });
+    expect(patchFor(edited({ color: 'none' }))).toEqual({ version: 3 });
   });
 
   it('sends the body alone when only the body changed, and the version alone when nothing did', () => {

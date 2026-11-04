@@ -367,3 +367,50 @@ func TestRetryOfAnUploadThatNeverLandedIs409WithItsSentence(t *testing.T) {
 		t.Errorf("detail is not the never-uploaded sentence: %s", w.Body.String())
 	}
 }
+
+// A thought typed on /capture is the inbox's text capture made under the
+// session: it starts at transcribed with the text where the transcript would
+// be, comes from the app rather than a device, goes to the note named or to
+// the router, and the worker is handed it at once — the same pipeline, and so
+// the same filing tray, as a recording. No device key is involved.
+func TestATypedThoughtIsATextCaptureFromTheApp(t *testing.T) {
+	h := newHarness(t)
+
+	w := h.do(t, http.MethodPost, "/v1/captures/text", "user1", map[string]any{"text": "  call the roofer about the ridge "})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+	}
+	var accepted handler.InboxAccepted
+	decodeInto(t, w, &accepted)
+	c := accepted.Capture
+	if c.Status != string(model.StatusTranscribed) || c.HasAudio || c.Targeted || c.NoteID != nil {
+		t.Fatalf("capture on the wire = %+v; want transcribed, no audio, for the router", c)
+	}
+	if strings.HasPrefix(c.Source, "device:") {
+		t.Fatalf("source = %q, want the app", c.Source)
+	}
+	stored, err := h.store.GetCapture(context.Background(), "user1", c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := h.objects.Get(context.Background(), stored.RawKey)
+	if err != nil || string(raw) != "call the roofer about the ridge" {
+		t.Fatalf("raw transcript = %q, %v", raw, err)
+	}
+	if len(h.worker.calls) != 1 || h.worker.calls[0] != "user1/"+c.ID+"/inbox-text" {
+		t.Fatalf("worker calls = %v, want one hand-off for the capture", h.worker.calls)
+	}
+
+	// Into a chosen note, as a recording aimed at one is.
+	note := h.createNote(t, "user1", "Roof repair", nil)
+	w = h.do(t, http.MethodPost, "/v1/captures/text", "user1", map[string]any{"text": "ridge tiles", "note_id": note.ID})
+	decodeInto(t, w, &accepted)
+	if w.Code != http.StatusAccepted || accepted.Capture.NoteID == nil || *accepted.Capture.NoteID != note.ID || !accepted.Capture.Targeted {
+		t.Fatalf("status = %d capture = %+v", w.Code, accepted.Capture)
+	}
+
+	// The session is the key: without one, nothing.
+	if w := h.do(t, http.MethodPost, "/v1/captures/text", "", map[string]any{"text": "x"}); w.Code != http.StatusUnauthorized {
+		t.Fatalf("no session: status = %d", w.Code)
+	}
+}

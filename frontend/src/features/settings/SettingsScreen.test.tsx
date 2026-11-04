@@ -1,3 +1,4 @@
+import { onlineManager } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
@@ -63,6 +64,22 @@ function idTokenWith(claims: Record<string, unknown>): string {
     btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return `${encode({ alg: 'RS256' })}.${encode(claims)}.sig`;
 }
+
+describe('offline, with nothing loaded', () => {
+  it('says the settings wait for a connection, not Loading forever', async () => {
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+    onlineManager.setOnline(false);
+    window.dispatchEvent(new Event('offline'));
+    try {
+      mountSettings();
+      expect(await screen.findByText('Offline — your settings load when you reconnect.')).toBeInTheDocument();
+      expect(screen.queryByText(/Loading your settings/)).toBeNull();
+    } finally {
+      Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+      onlineManager.setOnline(true);
+    }
+  });
+});
 
 describe('every control saves itself when it is changed', () => {
   /*

@@ -78,9 +78,11 @@ recording files, or a cached full note's body (`offline.md`). Folding is
 `foldMalayalam(text.toLowerCase())` from `features/notes/find.ts`, the same
 chillu fold as the server's.
 
-The weights are crude on purpose: a title prefix 100, a title substring 60,
-an alias 40, a tag 30, the snippet or body 15; ties break on `updated_at`,
-newest first. The excerpt (`excerptAround`, 48 code points of context,
+Each word of the query is looked for on its own, and a note must hold every
+one somewhere — title, alias, tag or text — as the server's `matchNote`
+requires. The weights are crude on purpose, per word and summed: a title
+prefix 100, a title substring 60, an alias 40, a tag 30, the snippet or body
+15; ties break on `updated_at`, newest first. The excerpt (`excerptAround`, 48 code points of context,
 sliced by code point so a surrogate pair is never split) prefers the body
 context over repeating the title. `localSearch.test.ts` pins the order
 ("ranks a title prefix above a body match", "ranks a body match below a tag
@@ -94,7 +96,12 @@ the answer is kept for 30 s (`useSearch`). `mergeResults` keeps the local
 list first and in its order — reordering under a finger is worse than a
 stable list — and appends what only the server found, which in practice is
 a word deep in a transcript the device has not cached; a note in both keeps
-its local excerpt and the union of `matched_in`. Offline, or on a server
+its local excerpt and the union of `matched_in`. Under a tag or Checklists
+chip the server's hits are held to the chip by the device's copy of each
+note, and a hit the device holds no copy of is left out. A row marks every
+word of the query where it occurs (`NoteRow`'s `Marked`, through
+`findMatches`), and opening it opens the note with Find on the query's first
+word (route state `find`, `note-screen.md`). Offline, or on a server
 error, a status line under the field says the search covered this device's
 notes only (`LibraryList.tsx`, `search-offline`), and the local list stands.
 

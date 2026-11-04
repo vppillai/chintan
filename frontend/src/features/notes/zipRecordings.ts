@@ -21,13 +21,17 @@ export async function zipRecordings(
   items: readonly RecordingUrlWire[],
   onProgress: (done: number, total: number) => void = () => {},
   fetchImpl: typeof fetch = (...args) => globalThis.fetch(...args),
+  /** The download format's conversion, applied to each file before it is stored (`downloadFormat.ts`). */
+  convert: (bytes: ArrayBuffer, filename: string) => Promise<[ArrayBuffer, string]> = (bytes, filename) =>
+    Promise.resolve([bytes, filename]),
 ): Promise<Blob> {
   const files: Record<string, [Uint8Array, { level: 0 }]> = {};
   let done = 0;
   for (const item of items) {
     const response = await fetchImpl(item.url, { cache: 'no-store' });
     if (!response.ok) throw new Error(`audio fetch failed: ${String(response.status)}`);
-    files[item.filename] = [new Uint8Array(await response.arrayBuffer()), { level: 0 }];
+    const [bytes, filename] = await convert(await response.arrayBuffer(), item.filename);
+    files[filename] = [new Uint8Array(bytes), { level: 0 }];
     done += 1;
     onProgress(done, items.length);
   }

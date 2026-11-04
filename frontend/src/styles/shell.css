@@ -853,7 +853,7 @@
 }
 
 .resume-prompt__error {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   color: var(--color-ink);
 }
 
@@ -1064,9 +1064,9 @@
 }
 
 .dialog__action--destructive {
-  background-color: var(--color-accent);
-  border-color: var(--color-accent);
-  color: var(--color-on-accent);
+  background-color: var(--color-destructive-fill);
+  border-color: var(--color-destructive-fill);
+  color: var(--color-on-destructive);
 }
 
 /* --------------------------------------------------------------------------
@@ -1123,7 +1123,7 @@
 
 /* The one failure worth colouring: it asks the user to do something. */
 .copy__result[data-state='failed'] {
-  color: var(--color-accent);
+  color: var(--color-accent-strong);
 }
 
 /*
@@ -1207,7 +1207,7 @@
 }
 
 .download__result[data-state='failed'] {
-  color: var(--color-accent);
+  color: var(--color-accent-strong);
 }
 
 /* --------------------------------------------------------------------------
@@ -1286,17 +1286,17 @@
   background-color: var(--color-line);
 }
 
-/* Delete wears the accent, as the confirm dialog's destructive control does:
-   the one consequential colour, on the one action here that takes something
-   away. */
+/* Delete wears the destructive fill, as the confirm dialog's destructive
+   control does: the one consequential colour, on the one action here that
+   takes something away — never Nocturne's record lime. */
 .swipe__action[data-destructive] {
-  background-color: var(--color-accent);
+  background-color: var(--color-destructive-fill);
   background-image: var(--gradient-lift);
-  color: var(--color-on-accent);
+  color: var(--color-on-destructive);
 }
 
 .swipe__action[data-destructive]:active {
-  background-color: var(--color-accent-strong);
+  background-color: var(--color-destructive-pressed);
   background-image: none;
 }
 
@@ -1382,8 +1382,8 @@
 }
 
 /* Dangerous, not highlighted: in Nocturne the accent is the record button's
-   lime (QA 2026-09-21, finding 8). The weight carries the warning where the
-   colour is ink. */
+   lime (QA 2026-09-21, finding 8), so the destructive token is its own
+   coral there, and the weight says it too. */
 .overflow-menu__item[data-destructive] {
   color: var(--color-destructive);
   font-weight: var(--font-weight-medium);
@@ -1462,8 +1462,8 @@
 }
 
 .selection-bar__action--destructive {
-  border-color: var(--color-accent);
-  color: var(--color-accent-strong);
+  border-color: var(--color-destructive-fill);
+  color: var(--color-destructive);
 }
 
 .selection-bar__action--destructive[disabled] {

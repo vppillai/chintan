@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/vppillai/chintan/backend/internal/keys"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
 )
@@ -371,7 +372,13 @@ func (s *tenantScan) object(info ObjectInfo) error {
 			Detail: "the note exists but names no such key",
 		})
 	case "captures":
-		if _, ok := s.idx.Captures[ref.EntityID]; !ok {
+		_, owned := s.idx.Captures[ref.EntityID]
+		if owned && slices.Contains(keys.CaptureDerived(s.tenantID, ref.EntityID), info.Key) {
+			// The capture's own key whatever its row names: the delete
+			// unlinks it with the capture (service.captureObjectKeys).
+			return nil
+		}
+		if !owned {
 			s.orphans = append(s.orphans, finding{
 				Kind: findingOrphanObject, TenantID: s.tenantID, Key: info.Key,
 				Owner:  "CAPTURE#" + ref.EntityID,

@@ -420,6 +420,7 @@ describe('pinned notes on Home', () => {
     await user.click(moreFor('One'));
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
       'Unpin',
+      'Colour…',
       'Delete',
       'Move down',
     ]);

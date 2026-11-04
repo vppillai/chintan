@@ -1218,3 +1218,31 @@ describe('the section is a tray of notices under the heading "Filing" (F9)', () 
     expect(document.activeElement).toHaveClass('library-heading');
   });
 });
+
+describe('a receipt for the wrong note', () => {
+  it('offers “Wrong note?”, which moves what it filed with the Move sheet', async () => {
+    const user = userEvent.setup();
+    const items = [
+      capture({
+        id: 'srv-filed',
+        status: 'appended',
+        note_id: 'kitchen',
+        appended_at: new Date().toISOString(),
+        excerpt: 'Call the roofer about the ridge.',
+      }),
+    ];
+    const { calls } = mount(items);
+    await screen.findByText(/^Filed/);
+
+    await user.click(screen.getByRole('button', { name: 'Wrong note?' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Move this recording to…' });
+    await user.click(await within(sheet).findByRole('button', { name: /roof repair/i }));
+
+    await waitFor(() => {
+      expect(calls).toContainEqual({ url: expect.stringMatching(/\/v1\/captures\/srv-filed\/move$/), method: 'POST' });
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+  });
+});

@@ -1,6 +1,7 @@
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useCallback, useSyncExternalStore } from 'react';
 
+import { useCachedNotes } from './useNotesCache.ts';
 import { useOfflineQueue } from './useOfflineQueue.ts';
 
 /**
@@ -15,6 +16,13 @@ import { useOfflineQueue } from './useOfflineQueue.ts';
  */
 export function OfflineBanner() {
   const { online, queued, flushing } = useOfflineQueue();
+  /*
+   * The device's own copy, read from IndexedDB into the cache under the
+   * `notes` prefix, which the lookup below then counts. Without it the
+   * banner knew only what the screen on show had read: Home said "showing
+   * saved notes" and You, a tap later, "nothing is saved on this device".
+   */
+  useCachedNotes('active');
   const cached = useHasCachedNotes();
 
   if (online && queued === 0) return null;

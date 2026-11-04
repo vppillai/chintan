@@ -58,7 +58,16 @@ and keeps the +. A placeholder left exactly as it was made — the title
 untyped, no body, no recording — is discarded when its screen is left
 (`features/notes/newNote.ts` `isUntouchedPlaceholder`; the note screen
 archives and purges it, no confirm, no toast), so Back from an idle + leaves
-no "New note" row behind.
+no "New note" row behind. One left to record into is kept (`note-screen.md`).
+
+## The field
+
+One field, two modes (`LibraryField.tsx`): a search that filters on every
+keystroke, and Ask, a question sent on Enter (`ask.md`). The switch is
+inside the field's end, a sparkle and the word "Ask"; in Ask mode the same
+place is a × named "Back to search". A glyph alone, with "Back to search"
+only as a hover title, left Ask unfound and gave a phone no visible way
+out. The search's rules are `search.md`.
 
 ## Filing, above the list
 
@@ -129,7 +138,7 @@ tray — or in the note's own header menu, and a hold on a plain row does
 nothing: its release opens the note. With Undo on each row, doing things to
 several notes at once is not needed.
 
-Every row has a ⋮ at its right — Pin or Unpin · Delete, plus Move up · Move
+Every row has a ⋮ at its right — Pin or Unpin · Colour… · Delete, plus Move up · Move
 down on a pinned row, and in the archive Restore · Delete forever. Under a
 fine pointer it is revealed on hover and on focus-within; under a finger it
 is always there at the meta colour, 44 px. Swipe stays touch-only: with a
@@ -139,6 +148,51 @@ forever in the archive, the same words as the menu with Delete at the edge of
 both; one row is open at a time app-wide, a tap elsewhere or a scroll closes
 it, and a pointer held still for the long-press duration is not a swipe.
 Nothing is only a swipe away.
+
+## Colour
+
+A note can wear one of eight pastel tints — rose, peach, sand, lime, mint,
+sky, lavender, slate — or none (`NoteColor` in `openapi.yaml`; the stored
+name is `color`, data-model.md). Colour… on a row's ⋮ opens a small dialog
+(`components/ColorPicker.tsx`, `ColorDialog`) holding the picker: nine
+44 px swatches, "No colour" first, native radios named by the colour, the
+current one ringed in ink. A choice applies at once and the status region
+says "Colour: Rose"; Done or Escape closes. It is one `PATCH {version,
+color}` (`useColorNote`), shown before the server answers and put back if
+refused; the requests of one note share a mutation scope and each reads
+the version the last one left, so arrowing through the swatches is a run of
+saves, not of conflicts. Like Pin it is online only from the row and is
+not an edit: `updated_at` stays, so the note keeps its day. The note's own
+Details has the same picker and carries a colour through the offline queue
+(note-screen.md).
+
+The tint fills the whole card (`.note-row[data-color]`, `home.css`), not a
+band at its edge. Both were tried at 360 px in both themes: a pastel band
+beside a raised card barely registers in Ink & Paper and vanishes in
+Nocturne, where the tints are deep, while a filled card is found at a
+glance and still reads as one list because only the ground changes —
+title, snippet, time, tags and meta keep their colours, and a tag chip's
+hairline steps up to `line-strong` so it survives the tint. Each name is a
+pair of tokens (`--color-tint-<name>`, `tokens.css`): a pastel in Ink &
+Paper and a deep tint of the same hue at the lightness of `raised` in
+Nocturne. Contrast, WCAG 2.2, computed:
+
+| Tint | Ink & Paper | ink | muted | faint | accent-strong | Nocturne | ink | muted | faint |
+|---|---|---|---|---|---|---|---|---|---|
+| rose | `#ffe5e9` | 14.75 | 6.84 | 4.51 | 5.45 | `#2d181b` | 15.21 | 7.19 | 4.71 |
+| peach | `#ffe9d6` | 14.96 | 6.93 | 4.57 | 5.53 | `#2c1a0e` | 15.17 | 7.17 | 4.70 |
+| sand | `#fceed1` | 15.30 | 7.09 | 4.67 | 5.65 | `#261d0a` | 15.15 | 7.16 | 4.70 |
+| lime | `#e9f4d7` | 15.38 | 7.13 | 4.70 | 5.68 | `#1b220f` | 14.92 | 7.05 | 4.62 |
+| mint | `#d7f8e8` | 15.46 | 7.16 | 4.72 | 5.71 | `#0d241b` | 14.88 | 7.04 | 4.61 |
+| sky | `#d6f4ff` | 15.26 | 7.07 | 4.66 | 5.64 | `#0c212d` | 15.05 | 7.12 | 4.67 |
+| lavender | `#f1eaff` | 15.02 | 6.96 | 4.59 | 5.55 | `#201b2e` | 15.21 | 7.19 | 4.72 |
+| slate | `#e8f0fa` | 15.29 | 7.08 | 4.67 | 5.65 | `#1a1f26` | 15.09 | 7.13 | 4.68 |
+
+`faint` is the binding constraint in both themes, which is why the pastels
+are this pale and the deep tints this dark. The focus ring is ink, outside
+the card. `e2e/colors.spec.ts` sets a colour from the row and from Details,
+reloads, and runs axe's contrast rule over every tint and the open picker in
+both themes.
 
 ## Deleting
 

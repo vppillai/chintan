@@ -1,10 +1,17 @@
 import { useApi } from '@/api/ApiProvider.tsx';
 import { newIdempotencyKey } from '@/api/client.ts';
 import type { ChintanApi } from '@/api/endpoints.ts';
+import { useId, useState } from 'react';
+
 import { DownloadButton } from '@/components/DownloadButton.tsx';
 import { config } from '@/config/env.ts';
+import {
+  downloadFormat,
+  setDownloadFormat,
+  type DownloadFormat,
+} from '@/features/notes/downloadFormat.ts';
 
-import { SettingsCard } from './SettingsCard.tsx';
+import { SettingsCard, SettingsRow } from './SettingsCard.tsx';
 
 /**
  * How often a running export is asked about. The job is one walk of the
@@ -34,10 +41,13 @@ export async function exportBlob(
     fetchImpl = (...args: Parameters<typeof fetch>) => globalThis.fetch(...args),
     sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
     now = Date.now,
+    onTruncated,
   }: {
     fetchImpl?: typeof fetch;
     sleep?: (ms: number) => Promise<void>;
     now?: () => number;
+    /** Called when the server says the file stops at a bound. */
+    onTruncated?: () => void;
   } = {},
 ): Promise<Blob> {
   const started = now();
@@ -48,6 +58,7 @@ export async function exportBlob(
     job = await api.getExport(job.id);
   }
   if (job.status !== 'ready' || !job.url) throw new Error('The export failed');
+  if (job.truncated) onTruncated?.();
   const response = await fetchImpl(job.url);
   if (!response.ok) throw new Error(`The export could not be fetched (${String(response.status)})`);
   return response.blob();
@@ -71,26 +82,62 @@ export function exportFilename(now: Date = new Date()): string {
  *
  * Export existed for the API and the operator (`chintanctl export`) and not
  * for the person whose notes they are; a per-note markdown download meant
- * portability one note at a time (round-3 T30). One row: everything as one
- * JSON file, through the same button and save path as every other download
- * in the app. "Delete my account" is not here on purpose: it needs a backend
+ * portability one note at a time (round-3 T30). One row: the notes and
+ * their transcripts as one JSON file, through the same button and save path
+ * as every other download in the app. The audio is not in it, and the lead
+ * says so; a file that stops at the server's bounds says that too, since a
+ * backup that silently omits recordings is the worst way for one to fail. "Delete my account" is not here on purpose: it needs a backend
  * route the owner has not decided on, and `chintanctl erase` is the path.
  */
 export function ExportCard() {
   const api = useApi();
+  const formatId = useId();
+  const [format, setFormat] = useState<DownloadFormat>(downloadFormat);
+  const [truncated, setTruncated] = useState(false);
   return (
     <SettingsCard
       title="Your data"
-      lead="Everything you have recorded and written, as one file you keep."
+      lead="Your notes and their transcripts, as one file you keep. The recordings' audio is not in it."
     >
       <DownloadButton
         className="you-row you-row--action"
         label="Download my notes (JSON)"
         // Most of the wait is the server building the file, before any download starts.
         busyLabel="Preparing your file…"
-        blob={() => exportBlob(api)}
+        blob={() => {
+          setTruncated(false);
+          return exportBlob(api, { onTruncated: () => setTruncated(true) });
+        }}
         filename={() => exportFilename()}
       />
+      {truncated && (
+        <p className="settings-status" role="status">
+          This file is not everything: it stops at 2,000 notes on a shelf and 500 recordings on a
+          note.
+        </p>
+      )}
+      {/*
+        This device's choice, not a saved setting: what opens a file is the
+        device's player or the app it is shared to (`downloadFormat.ts`).
+      */}
+      <SettingsRow label="Recording downloads" labelFor={formatId}>
+        <select
+          id={formatId}
+          className="settings-select"
+          value={format}
+          onChange={(event) => {
+            const next = event.target.value === 'mp4' ? 'mp4' : 'original';
+            setDownloadFormat(next);
+            setFormat(next);
+          }}
+        >
+          <option value="original">As recorded (WebM)</option>
+          <option value="mp4">MP4</option>
+        </select>
+      </SettingsRow>
+      <p className="you-card__note">
+        On this device. MP4 is converted here before it is saved, and plays almost anywhere.
+      </p>
     </SettingsCard>
   );
 }

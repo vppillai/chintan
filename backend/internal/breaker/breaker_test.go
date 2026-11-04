@@ -24,11 +24,15 @@ func newMemCounter() *memCounter {
 	return &memCounter{totals: map[string]int64{}}
 }
 
-func (m *memCounter) Add(_ context.Context, day string, delta int64) (int64, error) {
+func (m *memCounter) Add(ctx context.Context, day string, delta int64) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
 		return 0, m.err
+	}
+	if err := ctx.Err(); err != nil {
+		// As the DynamoDB counter: a done context writes nothing.
+		return 0, err
 	}
 	m.calls = append(m.calls, delta)
 	m.totals[day] += delta
@@ -353,5 +357,23 @@ func TestDoSurvivesARecorderThatFailsAndSkipsAnonymousCalls(t *testing.T) {
 	}
 	if len(rec.records) != 0 {
 		t.Errorf("a call without a tenant was attributed: %+v", rec.records)
+	}
+}
+
+// A provider call that ran out its stage deadline returns with ctx done; the
+// release on that ctx failed and the estimate stayed on the day's counter.
+func TestAReservationIsReleasedWhenTheCallRanOutItsDeadline(t *testing.T) {
+	counter := newMemCounter()
+	b := newTestBreaker(counter, 10_000)
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err := b.Do(ctx, estimate(60), func(context.Context) (Result, error) {
+		cancel()
+		return Result{}, context.DeadlineExceeded
+	})
+	if err == nil {
+		t.Fatal("Do succeeded with the call failing")
+	}
+	if got := counter.total(testDay); got != 0 {
+		t.Fatalf("spend total=%d after a failed call, want the reservation released", got)
 	}
 }

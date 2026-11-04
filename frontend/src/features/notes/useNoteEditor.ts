@@ -33,6 +33,10 @@ import {
   type NoteDraft,
 } from './autosave.ts';
 
+/** A recording still filing into the note after the whole wait. */
+export const APPEND_STUCK_MESSAGE =
+  'A recording is still being added to this note. Try again in a few minutes.';
+
 function draftFrom(note: NoteDetailWire): NoteDraft {
   return {
     title: note.title,
@@ -46,6 +50,7 @@ function draftFrom(note: NoteDetailWire): NoteDraft {
     language: note.language ?? '',
     auto_clean: note.auto_clean ?? false,
     verbatim: note.verbatim ?? false,
+    color: note.color ?? 'none',
     // The mode is only known from a cleaned view that exists; with none, the
     // draft leaves it unset and nothing is sent until the user picks one.
     ...(note.cleaned?.mode ? { cleaned_mode: note.cleaned.mode } : {}),
@@ -72,6 +77,7 @@ function withDraft(base: NoteDetailWire, draft: NoteDraft): NoteDetailWire {
     ...(draft.auto_clean !== undefined ? { auto_clean: draft.auto_clean } : {}),
     ...(draft.verbatim !== undefined ? { verbatim: draft.verbatim } : {}),
     ...(draft.kind !== undefined ? { kind: draft.kind } : {}),
+    ...(draft.color !== undefined ? { color: draft.color } : {}),
   };
 }
 
@@ -236,12 +242,17 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
    * polls slowly and only reacts to reconnect and focus, so without this it
    * went on saying "waiting to sync" over an edit the server had.
    */
-  const forgetQueued = useCallback(async () => {
-    if (!note) return;
-    await clearQueuedEdit(note.id).catch(() => {});
-    queryClient.setQueryData(queryKeys.queuedEdit(note.id), null);
-    void queryClient.invalidateQueries({ queryKey: queryKeys.offlineQueue() });
-  }, [note, queryClient]);
+  const forgetQueued = useCallback(
+    async (key?: string) => {
+      if (!note) return;
+      const gone = await clearQueuedEdit(note.id, key).catch(() => false);
+      // A newer entry kept: read it back rather than claim nothing is owed.
+      if (gone) queryClient.setQueryData(queryKeys.queuedEdit(note.id), null);
+      else void queryClient.invalidateQueries({ queryKey: queryKeys.queuedEdit(note.id) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.offlineQueue() });
+    },
+    [note, queryClient],
+  );
 
   useEffect(() => {
     if (!note) return;
@@ -289,10 +300,18 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     if (current.state !== 'dirty' && current.state !== 'error') return;
 
     const attempted = current.draft;
-    // Only what changed since the server's copy, and always the version: an
-    // unchanged body sent along with a language change is what detached the
-    // recordings' markers (see `patchFor`).
-    const body = patchFor(current);
+    /*
+     * Only what changed since the server's copy, and always the version: an
+     * unchanged body sent along with a language change is what detached the
+     * recordings' markers (see `patchFor`). Over the edit the queue still
+     * holds for the note, when there is one: this save forgets that entry once
+     * it lands, and the copy `patchFor` diffs against is the cached one, which
+     * already reads as the queued text — so a title queued offline and a body
+     * typed online sent the body alone and dropped the title.
+     */
+    const body = { ...(queued.data?.pending ? queued.data.body : null), ...patchFor(current) };
+    // The entry this save supersedes, by key; see `forgetQueued`.
+    const heldKey = queued.data?.key;
     commit({ type: 'saveStart' });
 
     try {
@@ -301,7 +320,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
       // this note — a retired entry included, once Keep my edits re-sent it.
       // Only when something is (or may be) held: a plain autosave must not
       // invalidate the offline banner's query for nothing.
-      if (queued.data !== null) await forgetQueued();
+      if (queued.data !== null) await forgetQueued(heldKey);
       /*
        * What the server now holds, written into the caches this screen reads
        * from next time. The response is a list row — no body — so the text is
@@ -347,10 +366,11 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
            * title-and-body with the body alone (review 2026-10-01, FE-1).
            */
           const held = await queuedEditBody(note.id);
-          await enqueueReplacing({
+          const queuedBody = { ...held, ...body };
+          const entry = await enqueueReplacing({
             id: queuedEditId(note.id),
             kind: 'updateNote',
-            payload: { noteId: note.id, body: { ...held, ...body } },
+            payload: { noteId: note.id, body: queuedBody },
           });
           /*
            * The caches this screen reads from next time, as a landed save
@@ -364,7 +384,13 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
           // Seeded rather than invalidated: between the write and a refetch the
           // query would still answer "nothing queued", and the screen would
           // read "Saved" for an edit the server has never seen.
-          const outstanding: QueuedEdit = { pending: true, dead: false, error: null };
+          const outstanding: QueuedEdit = {
+            pending: true,
+            dead: false,
+            error: null,
+            body: queuedBody,
+            key: entry.idempotencyKey,
+          };
           queryClient.setQueryData(queryKeys.queuedEdit(note.id), outstanding);
           // The banner counts what is waiting, and nothing else tells it the
           // depth changed: its query polls slowly and only reacts to reconnect
@@ -389,14 +415,22 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
        * after the server's `Retry-After`; the rebase below is deliberately
        * not run, because it would carry the draft onto the pre-append version
        * and re-save straight into that window. Once the paragraph is in the
-       * body, the ordinary conflict prompt is the right outcome, and the limit
-       * makes sure it is reached.
+       * body, the next answer is a plain 409 and the ordinary conflict prompt
+       * is the right outcome.
        */
-      if (
-        error instanceof ApiError &&
-        error.isAppendInProgress &&
-        appendWaits.current < APPEND_WAIT_LIMIT
-      ) {
+      if (error instanceof ApiError && error.isAppendInProgress) {
+        /*
+         * Still refused after the whole wait: the append is stuck behind its
+         * lease (`append-vs-autosave.md`, "What is still open"), not landed.
+         * The conflict prompt would offer "Keep my edits" against a paragraph
+         * that never arrived, so the save fails with its own sentence, and
+         * Try again waits afresh.
+         */
+        if (appendWaits.current >= APPEND_WAIT_LIMIT) {
+          appendWaits.current = 0;
+          commit({ type: 'saveError', message: APPEND_STUCK_MESSAGE });
+          return;
+        }
         appendWaits.current += 1;
         commit({ type: 'saveDeferred' });
         if (timer.current) clearTimeout(timer.current);
@@ -411,6 +445,16 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
         appendWaits.current = 0;
         const theirs = await api.getNote(note.id).catch(() => null);
         /*
+         * Without the server's copy there is no conflict to show: one built
+         * from my own draft as "theirs" made Keep my edits send nothing and
+         * read Saved, and Use the newer version keep my text as the server's.
+         * The save fails instead, and Try again asks again.
+         */
+        if (!theirs) {
+          commit({ type: 'saveError', message: 'Could not save.' });
+          return;
+        }
+        /*
          * Not every 409 is a conflict. A clean request bumps the note's
          * version the moment it is accepted, and the worker's cleaned view
          * bumps it again, so a PATCH that crossed either loses the version
@@ -419,7 +463,6 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
          * new version and sent again; `save()`'s re-run does the sending.
          */
         if (
-          theirs &&
           theirs.version > current.version &&
           !rebased.current &&
           sameText(draftFrom(theirs), current.saved)
@@ -438,15 +481,15 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
          * the draft, so neither side has to be thrown away.
          */
         const recording =
-          theirs?.captures?.some(
+          theirs.captures?.some(
             (capture) => capture.status === 'appended' && !knownCaptures.current.has(capture.id),
           ) ?? false;
         commit({
           type: 'conflict',
-          theirs: theirs ? draftFrom(theirs) : attempted,
-          version: theirs?.version ?? error.currentVersion ?? current.version + 1,
+          theirs: draftFrom(theirs),
+          version: theirs.version,
           message: 'This note changed somewhere else while you were editing.',
-          addition: theirs ? additionTo(current.saved.body, theirs.body) : null,
+          addition: additionTo(current.saved.body, theirs.body),
           recording,
         });
         return;

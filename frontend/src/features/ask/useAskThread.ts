@@ -7,6 +7,7 @@ import { ASK_POLL_TIMEOUT_MS, useAsk, useAskQuestion } from '@/api/queries.ts';
 import {
   LOST_MESSAGE,
   NOT_SENT_MESSAGE,
+  OFFLINE_MESSAGE,
   applyRow,
   canResend,
   canResume,
@@ -122,6 +123,13 @@ export function useAskThread(): AskThread {
     (turn: AskTurn, attempt = 0): void => {
       if (!turn.request) return;
       sent.current.add(turn.key);
+      // Offline, TanStack holds the mutation until a connection returns, and
+      // the panel sat on "Asking…" with nothing on the way. An answer is no
+      // use later, so the question fails at once and says why.
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        settle(turn.key, (current) => failTurn(current, OFFLINE_MESSAGE));
+        return;
+      }
       void send.mutateAsync({ body: turn.request, key: turn.key }).then(
         (created) => {
           // `since` is the moment the row exists, not when the field was
