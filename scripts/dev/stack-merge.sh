@@ -59,6 +59,10 @@ for spec in "$@"; do
                         done
                     }
                 )
+                # As in merge-seq.sh: a clean merge of docs/backlog.md still leaves the generated view stale.
+                python3 scripts/backlog-view.py >/dev/null
+                git diff --quiet -- docs/backlog-open.md ||
+                    git commit -q -m "Regenerate the open backlog view after the rebase" -- docs/backlog-open.md
                 [ "$(git rev-parse HEAD)" != "$tip" ] || {
                     echo "STOP: rebuild of $n produced no new commit"
                     exit 2
