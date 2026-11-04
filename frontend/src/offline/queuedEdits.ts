@@ -59,6 +59,8 @@ export interface QueuedEdit {
   /** Attempted as far as it ever will be. `error` says why it stopped. */
   dead: boolean;
   error: string | null;
+  /** The PATCH body held, for a direct save that will supersede the entry. */
+  body: NoteUpdateWire | null;
 }
 
 /** `null` means the server has it — the entry is removed only on success. */
@@ -67,7 +69,7 @@ export async function queuedEditFor(noteId: string): Promise<QueuedEdit | null> 
   const entry = await db.get('mutations', queuedEditId(noteId));
   if (!entry) return null;
   const dead = isDead(entry);
-  return { pending: !dead, dead, error: entry.lastError };
+  return { pending: !dead, dead, error: entry.lastError, body: queuedEditPayload(entry)?.body ?? null };
 }
 
 /**

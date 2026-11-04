@@ -9,7 +9,7 @@ import { flushTasks, onAFakeClock } from '@/test/clock.ts';
 import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
 import { APPEND_WAIT_LIMIT, AUTOSAVE_DELAY_MS } from './autosave.ts';
-import { useNoteEditor } from './useNoteEditor.ts';
+import { APPEND_STUCK_MESSAGE, useNoteEditor } from './useNoteEditor.ts';
 
 const NOTE: NoteDetailWire = {
   id: 'roof-repair',
@@ -509,17 +509,20 @@ describe('a save that arrives while a recording is being filed into the note', (
     expect(view.result.current.model.version).toBe(NOTE.version + 1);
   });
 
-  it('stops waiting after the limit and shows the conflict it then must be', async () => {
+  it('stops waiting after the limit and says so, rather than offering a conflict nothing caused', async () => {
+    // Still refused after the whole wait is an append stuck behind its lease,
+    // not one that landed: "Keep my edits" would answer a paragraph that never
+    // arrived.
     let patches = 0;
     const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
       if ((init?.method ?? 'GET') === 'PATCH') {
         patches += 1;
         return appendInProgress(NOTE.version + 1, '0');
       }
-      return new Response(
-        JSON.stringify({ ...NOTE, version: NOTE.version + 1, body: 'Appended by a recording.' }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      );
+      return new Response(JSON.stringify({ ...NOTE, version: NOTE.version + 1 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
     });
     const api = testApiContext(fetchImpl);
     const wrapper = ({ children }: { children: ReactNode }) => (
@@ -535,10 +538,12 @@ describe('a save that arrives while a recording is being filed into the note', (
     });
 
     await waitFor(() => {
-      expect(view.result.current.model.state).toBe('conflict');
+      expect(view.result.current.model.state).toBe('error');
     });
     expect(patches).toBe(APPEND_WAIT_LIMIT + 1);
-    expect(view.result.current.model.theirs?.draft.body).toBe('Appended by a recording.');
+    expect(view.result.current.model.error).toBe(APPEND_STUCK_MESSAGE);
+    expect(view.result.current.model.theirs).toBeNull();
+    expect(view.result.current.model.draft.body).toBe('My own words.');
   });
 
   it('treats a 409 without a reason as it always has', async () => {
@@ -786,5 +791,105 @@ describe('an edit made offline is the note the device shows', () => {
       title: 'Roof repair — Ellis',
       body: 'Ellis quoted nine hundred.',
     });
+  });
+});
+
+describe('a 409 whose server copy cannot be read', () => {
+  it('fails the save, keeping the draft, rather than building a conflict from my own text', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      if ((init?.method ?? 'GET') === 'PATCH') {
+        return new Response(
+          JSON.stringify({ type: 'about:blank', title: 'Conflict', status: 409, current_version: 4 }),
+          { status: 409, headers: { 'content-type': 'application/problem+json' } },
+        );
+      }
+      return new Response(JSON.stringify({ type: 'about:blank', title: 'Forbidden', status: 403 }), {
+        status: 403,
+        headers: { 'content-type': 'application/problem+json' },
+      });
+    });
+    const api = testApiContext(fetchImpl);
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TestProviders api={api}>{children}</TestProviders>
+    );
+    const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+
+    act(() => {
+      view.result.current.edit({ body: 'My own words.' });
+    });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+
+    await waitFor(() => {
+      expect(view.result.current.model.state).toBe('error');
+    });
+    expect(view.result.current.model.theirs).toBeNull();
+    expect(view.result.current.model.draft.body).toBe('My own words.');
+    // Still owed: Try again sends the words, not an empty PATCH.
+    expect(view.result.current.model.version).toBe(NOTE.version);
+  });
+});
+
+describe('an online save over an edit still queued for the note', () => {
+  it('sends the queued fields with it, since it forgets the queued entry once it lands', async () => {
+    let online = false;
+    const patches: Record<string, unknown>[] = [];
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      if ((init?.method ?? 'GET') === 'PATCH') {
+        if (!online) throw new TypeError('Failed to fetch');
+        patches.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(JSON.stringify({ ...NOTE, version: NOTE.version + 1 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify(NOTE), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const queryClient = testQueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TestProviders api={testApiContext(fetchImpl)} queryClient={queryClient}>
+        {children}
+      </TestProviders>
+    );
+
+    await onAFakeClock(async () => {
+      const first = renderHook(() => useNoteEditor(NOTE), { wrapper });
+      act(() => {
+        first.result.current.edit({ title: 'Roof repair — Ellis' });
+      });
+      await act(() => vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 20_000));
+      await waitFor(() => {
+        expect(first.result.current.model.state).toBe('queued');
+      });
+      const patched = queryClient.getQueryData<NoteDetailWire>(queryKeys.note(NOTE.id));
+      first.unmount();
+
+      // Back online before the queue has flushed: the note reopens reading as
+      // the queued title, and the body is typed.
+      online = true;
+      const second = renderHook(() => useNoteEditor(patched), { wrapper });
+      await waitFor(() => {
+        expect(second.result.current.model.state).toBe('queued');
+      });
+      act(() => {
+        second.result.current.edit({ body: 'Ellis quoted nine hundred.' });
+      });
+      await act(() => vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 100));
+      await waitFor(() => {
+        expect(second.result.current.model.state).toBe('saved');
+      });
+    });
+
+    expect(patches).toHaveLength(1);
+    expect(patches[0]).toMatchObject({
+      version: NOTE.version,
+      title: 'Roof repair — Ellis',
+      body: 'Ellis quoted nine hundred.',
+    });
+    expect(await queuedEditBody(NOTE.id)).toBeNull();
   });
 });
