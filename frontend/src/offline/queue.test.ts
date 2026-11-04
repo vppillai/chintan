@@ -4,7 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, SPEND_CAP_PROBLEM_TYPE } from '@/api/problem.ts';
 
 import { resetDatabaseHandle, type QueuedMutation } from './db.ts';
-import { MAX_ATTEMPTS, count, enqueue, flush, isDead, pending, remove } from './queue.ts';
+import {
+  MAX_ATTEMPTS,
+  count,
+  enqueue,
+  enqueueReplacing,
+  flush,
+  isDead,
+  pending,
+  remove,
+  waiting,
+} from './queue.ts';
 
 beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
@@ -220,10 +230,12 @@ describe('flush', () => {
     const result = await flush(run);
 
     expect(run).not.toHaveBeenCalled();
-    expect(result.failed).toBe(1);
+    // Not a failure of this pass: the caller refetches every note list on one.
+    expect(result.failed).toBe(0);
     // Retained so the UI can show it as needing attention rather than
-    // vanishing the user's edit.
+    // vanishing the user's edit — but no longer waiting for anything.
     expect(await count()).toBe(1);
+    expect(await waiting()).toBe(0);
   });
 
   it('tolerates a non-ApiError thrown by the runner', async () => {
@@ -318,7 +330,7 @@ describe('what counts as terminal', () => {
     expect(isDead(queued!)).toBe(false);
   });
 
-  it.each([400, 403, 404, 409, 413, 422])('retires a %d on first sight', async (status) => {
+  it.each([400, 403, 409, 413, 422])('retires a %d on first sight', async (status) => {
     await enqueue({ kind: 'updateNote', payload: 'a' });
 
     await flush(async () => {
@@ -327,6 +339,109 @@ describe('what counts as terminal', () => {
 
     const [queued] = await pending();
     expect(isDead(queued!)).toBe(true);
+  });
+});
+
+describe('a flush against what changed while it ran', () => {
+  const edit = (body: string) =>
+    enqueueReplacing({
+      id: 'updateNote:n1',
+      kind: 'updateNote',
+      payload: { noteId: 'n1', body: { version: 5, body } },
+    });
+  const bodyOf = (mutation: QueuedMutation | undefined) =>
+    (mutation?.payload as { body: { body: string } } | undefined)?.body.body;
+
+  it('keeps an edit queued while the older one was on the wire, when the older one lands', async () => {
+    await edit('first');
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const running = flush(async () => {
+      await gate;
+    });
+    await edit('second');
+    release();
+    await running;
+
+    expect((await pending()).map(bodyOf)).toEqual(['second']);
+  });
+
+  it('does not write the older text back over a newer edit when the older one fails', async () => {
+    await edit('first');
+    let reject: (error: unknown) => void = () => {};
+    const gate = new Promise<void>((_, fail) => {
+      reject = fail;
+    });
+    const running = flush(async () => {
+      await gate;
+    });
+    await edit('second');
+    reject(new ApiError({ kind: 'http', status: 409, title: 'Conflict' }));
+    await running;
+
+    const [left] = await pending();
+    expect(bodyOf(left)).toBe('second');
+    expect(left && isDead(left)).toBe(false);
+  });
+});
+
+describe('what a failure costs', () => {
+  it('counts no attempt against an offline pass, so a captive portal never retires an edit', async () => {
+    await enqueue({ kind: 'updateNote', payload: 'a' });
+
+    for (let pass = 0; pass < MAX_ATTEMPTS + 2; pass += 1) {
+      await flush(async () => {
+        throw offline();
+      });
+    }
+
+    const [entry] = await pending();
+    expect(entry?.attempts).toBe(0);
+    expect(entry && isDead(entry)).toBe(false);
+  });
+
+  it('removes an edit to a note that is gone, so nothing waits on it', async () => {
+    await enqueue({ kind: 'updateNote', payload: 'a' });
+
+    await flush(async () => {
+      throw new ApiError({ kind: 'http', status: 404, title: 'Not found' });
+    });
+
+    expect(await count()).toBe(0);
+  });
+
+  it('does not count a retired entry as waiting', async () => {
+    await enqueue({ kind: 'updateNote', payload: 'a' });
+    await flush(async () => {
+      throw badRequest();
+    });
+
+    expect(await count()).toBe(1);
+    expect(await waiting()).toBe(0);
+  });
+
+  it('retries an edit refused while a recording is filed into the note, at no attempt', async () => {
+    await enqueue({ kind: 'updateNote', payload: 'a' });
+    const appending = new ApiError({
+      kind: 'http',
+      status: 409,
+      title: 'Conflict',
+      reason: 'append_in_progress',
+    });
+
+    await flush(async () => {
+      throw appending;
+    });
+    const [entry] = await pending();
+    expect(entry && isDead(entry)).toBe(false);
+    expect(entry?.attempts).toBe(0);
+
+    const run = vi.fn(async () => {});
+    await flush(run);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(await count()).toBe(0);
   });
 });
 
