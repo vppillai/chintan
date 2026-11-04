@@ -107,6 +107,31 @@ describe('exporting the notes', () => {
     await user.click(screen.getByRole('button', { name: 'Download my notes (JSON)' }));
     expect(screen.getByRole('button', { name: 'Preparing your file…' })).toBeDisabled();
   });
+
+  it('says so when the server reports the file stops at a bound', async () => {
+    const user = userEvent.setup();
+    const api = {
+      startExport: async (): Promise<ExportJobWire> => ({
+        id: 'job-1',
+        status: 'ready',
+        url: 'https://s3.invalid/export.json',
+        truncated: true,
+      }),
+    } as unknown as ChintanApi;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: 200 })),
+    );
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: () => 'blob:x', revokeObjectURL: () => undefined }));
+    render(
+      <TestProviders api={{ ...testApiContext(), api }}>
+        <ExportCard />
+      </TestProviders>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Download my notes (JSON)' }));
+    expect(await screen.findByText(/this file is not everything/i)).toHaveAttribute('role', 'status');
+    vi.unstubAllGlobals();
+  });
 });
 
 describe('the recording download format', () => {

@@ -769,6 +769,8 @@ export interface ExportJobWire {
   url?: string | null;
   expires_at?: string | null;
   bytes?: number | null;
+  /** The file stops at a bound and is not the whole account. */
+  truncated?: boolean;
 }
 
 /**
