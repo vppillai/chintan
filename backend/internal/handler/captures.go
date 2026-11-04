@@ -132,6 +132,25 @@ func (rt *router) beginCapture(w http.ResponseWriter, r *http.Request) {
 	writeCaptureCreated(w, created)
 }
 
+// captureText is a thought typed on /capture, for when speaking is not
+// possible: the same capture POST /v1/inbox/text makes for a device, made
+// under the user's session. It starts at `transcribed` and the worker routes,
+// cleans and appends it as it does a transcript, so it is filed — and shown
+// on Home's filing tray — exactly as a recording is. The body is the
+// InboxText schema; the answer, 202 with the capture.
+func (rt *router) captureText(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	var req inboxTextRequest
+	if !decodeJSON(w, r, MaxInboxTextRequestBytes, &req) {
+		return
+	}
+	rt.acceptInboxText(w, r, userID, service.CaptureRequest{NoteID: req.NoteID}, req.Text)
+}
+
 // writeCaptureCreated is the 201 of POST /v1/captures and of the inbox's
 // two-step route. The upload headers reach the client verbatim. x-amz-tagging
 // is inside the signature, so dropping or rewriting it turns every upload

@@ -24,6 +24,8 @@ import type {
   CaptureListQuery,
   CaptureMoveWire,
   CaptureTargetWire,
+  CaptureTextAcceptedWire,
+  CaptureTextWire,
   CaptureWire,
   CleanQueuedWire,
   CleanRequestWire,
@@ -249,6 +251,19 @@ export class ChintanApi {
     idempotencyKey: string,
   ): Promise<CaptureCreatedWire> {
     return this.client.request('/v1/captures', {
+      method: 'POST',
+      body,
+      idempotencyKey,
+    });
+  }
+
+  /**
+   * Files a typed thought: the text goes where a transcript would and the
+   * worker routes, cleans and appends it. The key is the caller's, so a retry
+   * after a lost 202 is the same capture, not a second one.
+   */
+  captureText(body: CaptureTextWire, idempotencyKey: string): Promise<CaptureTextAcceptedWire> {
+    return this.client.request('/v1/captures/text', {
       method: 'POST',
       body,
       idempotencyKey,

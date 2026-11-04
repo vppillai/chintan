@@ -408,6 +408,10 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 			"content_type": "audio/webm", "size_bytes": 4 << 20, "duration_ms": 12_000, "peak": 0.21,
 		}))
 
+	add("captureTextAccepted", "CaptureTextAcceptedWire",
+		"POST /v1/captures/text → 202. A typed thought, already transcribed; the worker routes, cleans and appends it.",
+		newHarness(t).do(t, http.MethodPost, "/v1/captures/text", contractUser, map[string]any{"text": "Call the roofer about the ridge."}))
+
 	// ---- recording edits: delete, move, and the download manifest
 	edits := newHarness(t)
 	wrong := edits.createNote(t, contractUser, "Filed wrong", nil)
@@ -848,7 +852,7 @@ func renderContractFixtures(t *testing.T, fixtures []contractFixture) string {
 func neededSchemaTypes(fixtures []contractFixture) []string {
 	known := map[string]bool{
 		"AskWire":            true,
-		"CaptureCreatedWire": true, "CaptureWire": true, "DeviceCreatedWire": true, "DeviceWire": true, "ExportJobWire": true,
+		"CaptureCreatedWire": true, "CaptureTextAcceptedWire": true, "CaptureWire": true, "DeviceCreatedWire": true, "DeviceWire": true, "ExportJobWire": true,
 		"PushKeyWire": true, "PushSubscriptionWire": true,
 		"MatchResponseWire": true, "NoteCleanQueuedWire": true, "NoteDetailWire": true, "NoteWire": true,
 		"NoteRegenerateQueuedWire": true, "Page": true, "PresignedDownloadWire": true, "ProblemWire": true,

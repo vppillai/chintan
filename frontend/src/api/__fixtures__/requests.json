@@ -244,6 +244,23 @@
     }
   },
   {
+    "name": "captureText",
+    "method": "POST",
+    "path": "/v1/captures/text",
+    "body": {
+      "text": "Call the roofer.",
+      "note_id": "contract-note"
+    }
+  },
+  {
+    "name": "captureTextUnrouted",
+    "method": "POST",
+    "path": "/v1/captures/text",
+    "body": {
+      "text": "Call the roofer."
+    }
+  },
+  {
     "name": "getCapture",
     "method": "GET",
     "path": "/v1/captures/contract-capture"

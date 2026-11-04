@@ -1,12 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
-import { queryKeys, useNotes } from '@/api/queries.ts';
+import { queryKeys, useCreateNote, useNotes } from '@/api/queries.ts';
 import type { NoteWire, SettingsWire } from '@/api/schema.ts';
 import { openItemsText, parseChecklist } from '@/features/notes/checklist.ts';
 import { formatRowTime } from '@/features/notes/groups.ts';
 import { AUTO_LANGUAGE, LANGUAGES, languageName } from '@/features/settings/languages.ts';
+import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNote, useCachedNotes } from '@/offline/useNotesCache.ts';
 
 /**
@@ -15,7 +16,12 @@ import { useCachedNote, useCachedNotes } from '@/offline/useNotesCache.ts';
  * "Chintan decides" by default, or "Into ⟨title⟩" when the screen was opened
  * from one ("Record into this") or with `?note=`. Tapping it unfolds a short
  * list — Chintan decides first, then the most recent notes — and choosing sets the
- * capture's target before Send. The backend has always accepted `note_id` on
+ * capture's target before Send. A field above the list finds any note the
+ * device holds, not only the recent twenty, and what it is given becomes a
+ * new note to record into when no note is the one: "New note “Tax 2026”"
+ * is `POST /v1/notes` with that title, then that note as the target, so the
+ * recording is filed into it as into any other. Making one needs the
+ * server, so offline the field only finds. The backend has always accepted `note_id` on
  * `POST /v1/captures`; nothing in the UI offered it, so the only ways to file
  * into a particular note were to say its name and hope the router agreed, or
  * to fix it afterwards from the "needs a target" row.
@@ -31,7 +37,7 @@ import { useCachedNote, useCachedNotes } from '@/offline/useNotesCache.ts';
  * sent under an English default failed with no warning it could have.
  */
 
-/** Enough to find a note made this week without a search field. */
+/** Enough to find a note made this week before anything is typed. */
 const RECENT_LIMIT = 20;
 
 export interface TargetChooserProps {
@@ -62,6 +68,7 @@ export function TargetChooser({
 }: TargetChooserProps) {
   const [open, setOpen] = useState(false);
   const listId = useId();
+  const searchId = useId();
   const api = useApi();
   const rootRef = useRef<HTMLDivElement>(null);
   const pillRef = useRef<HTMLButtonElement>(null);
@@ -108,17 +115,47 @@ export function TargetChooser({
   // the device even when the list cannot be reached.
   const opened = useCachedNote(noteId ?? undefined);
 
-  const notes: NoteWire[] =
-    served.data?.pages.flatMap((page) => page.items) ?? cached.data ?? [];
-  const recent = notes.slice(0, RECENT_LIMIT);
+  const notes: NoteWire[] = useMemo(
+    () => served.data?.pages.flatMap((page) => page.items) ?? cached.data ?? [],
+    [served.data, cached.data],
+  );
+  const recent = useMemo(() => notes.slice(0, RECENT_LIMIT), [notes]);
 
-  const chosen = noteId ? (notes.find((note) => note.id === noteId) ?? opened.data) : undefined;
+  const [query, setQuery] = useState('');
+  const term = query.trim();
+  const online = useOnline();
+  const create = useCreateNote();
+  const [createFailed, setCreateFailed] = useState(false);
+  /** Every note the device holds or the server has listed, newest first, for the field. */
+  const everything = useMemo(() => {
+    const byId = new Map<string, NoteWire>();
+    for (const note of [...notes, ...(cached.data ?? [])]) if (!byId.has(note.id)) byId.set(note.id, note);
+    return [...byId.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  }, [notes, cached.data]);
+  const found = useMemo(() => {
+    const folded = term.toLowerCase();
+    if (!folded) return recent;
+    return everything.filter(
+      (note) =>
+        note.title.toLowerCase().includes(folded) ||
+        (note.aliases ?? []).some((alias) => alias.toLowerCase().includes(folded)) ||
+        (note.tags ?? []).some((tag) => tag.toLowerCase().includes(folded)),
+    );
+  }, [term, recent, everything]);
+  // Offered while the name is not already a note's title: two "Roof"s is
+  // the routing mistake this exists to avoid.
+  const offerNew = term !== '' && !everything.some((note) => note.title.toLowerCase() === term.toLowerCase());
+
+  const chosen = noteId
+    ? (everything.find((note) => note.id === noteId) ??
+      opened.data ??
+      (create.data?.id === noteId ? create.data : undefined))
+    : undefined;
   /*
    * No target means the router chooses, and it may well file into a note
    * that already exists — "add this to my roof note" is the hint under the
    * pill. The default read "Into New note", which promised the opposite
-   * (R7-14). A forced new note is not offered: the owner's call, in the
-   * backlog.
+   * (R7-14). A new note is made by naming it in the field, never by default.
    */
   const title = noteId === null ? DEFAULT_TARGET_LABEL : (chosen?.title ?? 'This note');
   const language = transcriptionLanguage(noteId, chosen, settings.data);
@@ -126,6 +163,22 @@ export function TargetChooser({
   const choose = (id: string | null): void => {
     onChoose(id);
     setOpen(false);
+    setQuery('');
+  };
+
+  const startNote = (): void => {
+    setCreateFailed(false);
+    create.mutate(
+      { title: term, kind: 'note' },
+      {
+        onSuccess: (created) => {
+          choose(created.id);
+        },
+        onError: () => {
+          setCreateFailed(true);
+        },
+      },
+    );
   };
 
   return (
@@ -161,7 +214,35 @@ export function TargetChooser({
           role="group"
           aria-label="Where this recording goes"
         >
+          <label className="visually-hidden" htmlFor={searchId}>
+            Find a note, or name a new one
+          </label>
+          <input
+            id={searchId}
+            className="move-sheet__search"
+            type="search"
+            value={query}
+            placeholder="Find or name a note"
+            autoComplete="off"
+            maxLength={200}
+            onChange={(event) => {
+              setCreateFailed(false);
+              setQuery(event.target.value);
+            }}
+          />
           <ul className="target-chooser__list" role="list">
+            {offerNew && online && (
+              <li>
+                <button
+                  type="button"
+                  className="target-chooser__option"
+                  disabled={create.isPending}
+                  onClick={startNote}
+                >
+                  New note &ldquo;{term}&rdquo;
+                </button>
+              </li>
+            )}
             <li>
               <button
                 type="button"
@@ -174,7 +255,7 @@ export function TargetChooser({
                 {DEFAULT_TARGET_LABEL}
               </button>
             </li>
-            {recent.map((note) => (
+            {found.map((note) => (
               <li key={note.id}>
                 <button
                   type="button"
@@ -192,7 +273,15 @@ export function TargetChooser({
               </li>
             ))}
           </ul>
-          {recent.length === 0 && (
+          {offerNew && !online && (
+            <p className="target-chooser__empty">New note needs a connection.</p>
+          )}
+          {createFailed && (
+            <p className="target-chooser__empty" role="alert">
+              The note could not be created. Try again.
+            </p>
+          )}
+          {term === '' && recent.length === 0 && (
             <p className="target-chooser__empty">
               {served.fetchStatus === 'paused'
                 ? 'No notes are on this device yet. The router will file it once you reconnect.'
