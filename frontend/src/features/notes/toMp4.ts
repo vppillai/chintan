@@ -14,18 +14,38 @@
  * macOS. Where the browser has no AAC encoder (Firefox, Chromium builds
  * without the proprietary codecs) it writes Opus in the same MP4 container,
  * named `.mp4` rather than `.m4a`; Chrome, Edge, Firefox and Safari 17+ play
- * that. Where there is no `AudioEncoder` at all, `Mp4Unsupported` says so.
+ * that. Where there is no `AudioEncoder` at all (Safari before 26),
+ * `Mp4Unsupported` says so.
+ *
+ * Mono, whatever the source: these are voice notes, and one channel halves
+ * the encoder's work. The AAC config is always the one written here
+ * (`audioSpecificConfig`), never the encoder's own `decoderConfig.description`:
+ * Safari 26/27 hands back a wrong one (22050 Hz, 0 channels; WebKit bug
+ * 302253), which made a silent file on an iPhone.
  *
  * The container is written here, about a hundred lines of ISO BMFF boxes:
  * one audio track, every sample in one chunk, `moov` before `mdat` so a
- * player can start before the whole file has arrived. ponytail: no edit
- * list, so AAC's encoder delay (about 21 ms) plays as leading silence; add
- * an `edts` box if a sample-exact start ever matters.
+ * player can start before the whole file has arrived, and for AAC an edit
+ * list that skips `AAC_PRIMING` samples of encoder delay.
  */
 
 const SAMPLE_RATE = 48_000;
 /** Samples handed to the encoder per call: 100 ms, any size works. */
 const BLOCK = 4_800;
+/**
+ * Blocks the encoder may hold before the loop waits for it. Unbounded, a
+ * twenty-minute recording queued every block at once (~740 MB in the
+ * renderer); bounded, the decoded PCM is what remains (note-screen.md,
+ * "The Recordings tab").
+ */
+const MAX_QUEUE = 4;
+/**
+ * AAC encoder delay skipped by the edit list. 1024 is the common floor
+ * (Apple's encoder primes 2112), so the trim never cuts speech; a larger
+ * delay leaves the remainder, about 23 ms, as leading silence.
+ */
+const AAC_PRIMING = 1024;
+const CHANNELS = 1;
 
 class Mp4Unsupported extends Error {
   constructor() {
@@ -45,10 +65,9 @@ type Codec = 'aac' | 'opus';
 export async function toMp4(input: ArrayBuffer): Promise<Mp4File> {
   if (typeof AudioEncoder === 'undefined') throw new Mp4Unsupported();
   const audio = await new OfflineAudioContext(1, 1, SAMPLE_RATE).decodeAudioData(input);
-  const channels = Math.min(audio.numberOfChannels, 2);
 
-  const aac = { codec: 'mp4a.40.2', sampleRate: SAMPLE_RATE, numberOfChannels: channels, bitrate: 128_000 };
-  const opus = { codec: 'opus', sampleRate: SAMPLE_RATE, numberOfChannels: channels, bitrate: 96_000 };
+  const aac = { codec: 'mp4a.40.2', sampleRate: SAMPLE_RATE, numberOfChannels: CHANNELS, bitrate: 96_000 };
+  const opus = { codec: 'opus', sampleRate: SAMPLE_RATE, numberOfChannels: CHANNELS, bitrate: 64_000 };
   let codec: Codec;
   if ((await AudioEncoder.isConfigSupported(aac)).supported) codec = 'aac';
   else if ((await AudioEncoder.isConfigSupported(opus)).supported) codec = 'opus';
@@ -56,35 +75,38 @@ export async function toMp4(input: ArrayBuffer): Promise<Mp4File> {
 
   const samples: Uint8Array[] = [];
   const durations: number[] = [];
-  let description: Uint8Array | undefined;
   let failure: unknown = null;
   const encoder = new AudioEncoder({
-    output: (chunk, meta) => {
+    output: (chunk) => {
       const bytes = new Uint8Array(chunk.byteLength);
       chunk.copyTo(bytes);
       samples.push(bytes);
       durations.push(Math.round(((chunk.duration ?? 0) * SAMPLE_RATE) / 1e6) || (codec === 'aac' ? 1024 : 960));
-      const config = meta?.decoderConfig?.description;
-      if (config && !description) description = bufferBytes(config);
     },
     error: (error) => {
       failure = error;
     },
   });
   encoder.configure(codec === 'aac' ? aac : opus);
-  for (let start = 0; start < audio.length; start += BLOCK) {
+  const sources = Array.from({ length: audio.numberOfChannels }, (_, c) => audio.getChannelData(c));
+  for (let start = 0; start < audio.length && !failure; start += BLOCK) {
+    while (encoder.encodeQueueSize > MAX_QUEUE) {
+      await new Promise((resolve) => {
+        encoder.addEventListener('dequeue', resolve, { once: true });
+      });
+    }
     const frames = Math.min(BLOCK, audio.length - start);
-    const planes = new Float32Array(frames * channels);
-    for (let channel = 0; channel < channels; channel += 1) {
-      planes.set(audio.getChannelData(channel).subarray(start, start + frames), channel * frames);
+    const mono = new Float32Array(frames);
+    for (const source of sources) {
+      for (let i = 0; i < frames; i += 1) mono[i]! += source[start + i]! / sources.length;
     }
     const data = new AudioData({
       format: 'f32-planar',
       sampleRate: SAMPLE_RATE,
       numberOfFrames: frames,
-      numberOfChannels: channels,
+      numberOfChannels: CHANNELS,
       timestamp: Math.round((start * 1e6) / SAMPLE_RATE),
-      data: planes,
+      data: mono,
     });
     encoder.encode(data);
     data.close();
@@ -93,10 +115,7 @@ export async function toMp4(input: ArrayBuffer): Promise<Mp4File> {
   encoder.close();
   if (failure) throw failure instanceof Error ? failure : new Error('audio encoding failed');
 
-  const entry =
-    codec === 'aac'
-      ? mp4a(channels, description ?? audioSpecificConfig(channels))
-      : opusEntry(channels, opusPreSkip(description));
+  const entry = codec === 'aac' ? mp4a(CHANNELS, audioSpecificConfig(CHANNELS)) : opusEntry(CHANNELS, OPUS_PRE_SKIP);
   const bytes = mux(entry, samples, durations, codec);
   return {
     blob: new Blob([bytes as BlobPart], { type: codec === 'aac' ? 'audio/mp4' : 'video/mp4' }),
@@ -107,12 +126,6 @@ export async function toMp4(input: ArrayBuffer): Promise<Mp4File> {
 /* ---------------------------------------------------------------------------
    ISO BMFF (ISO/IEC 14496-12, -14; Opus in ISOBMFF). Exported for the test.
    --------------------------------------------------------------------------- */
-
-function bufferBytes(source: AllowSharedBufferSource): Uint8Array {
-  return ArrayBuffer.isView(source)
-    ? new Uint8Array(source.buffer, source.byteOffset, source.byteLength).slice()
-    : new Uint8Array(source).slice();
-}
 
 function concat(parts: readonly Uint8Array[]): Uint8Array {
   const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
@@ -149,13 +162,8 @@ export function audioSpecificConfig(channels: number): Uint8Array {
   return Uint8Array.of((2 << 3) | (frequencyIndex >> 1), ((frequencyIndex & 1) << 7) | (channels << 3));
 }
 
-/** The pre-skip from an `OpusHead` the encoder may hand over (little-endian at byte 10). */
-function opusPreSkip(head: Uint8Array | undefined): number {
-  if (head && head.length >= 12 && String.fromCharCode(...head.subarray(0, 8)) === 'OpusHead') {
-    return head[10]! | (head[11]! << 8);
-  }
-  return 312;
-}
+/** libopus's pre-skip at 48 kHz, the value every encoder of it writes in its own OpusHead. */
+const OPUS_PRE_SKIP = 312;
 
 /** The fields every audio sample entry starts with. */
 function audioEntry(type: string, channels: number, ...tail: Uint8Array[]): Uint8Array {
@@ -212,16 +220,22 @@ export function mux(
   codec: Codec,
 ): Uint8Array {
   const duration = durations.reduce((sum, d) => sum + d, 0);
+  // What plays: the media less the encoder delay the edit list skips.
+  const shown = codec === 'aac' ? Math.max(duration - AAC_PRIMING, 0) : duration;
   const brands = codec === 'aac' ? ['M4A ', 'M4A ', 'isom', 'mp42'] : ['isom', 'isom', 'iso2', 'mp41'];
   const ftyp = box('ftyp', ascii(brands[0]!), u32(0), ...brands.slice(1).map(ascii));
 
   const moovFor = (offset: number): Uint8Array =>
     box(
       'moov',
-      fullBox('mvhd', 0, 0, u32(0), u32(0), u32(SAMPLE_RATE), u32(duration), u32(0x10000), u16(0x100), zeros(10), MATRIX, zeros(24), u32(2)),
+      fullBox('mvhd', 0, 0, u32(0), u32(0), u32(SAMPLE_RATE), u32(shown), u32(0x10000), u16(0x100), zeros(10), MATRIX, zeros(24), u32(2)),
       box(
         'trak',
-        fullBox('tkhd', 0, 3, u32(0), u32(0), u32(1), u32(0), u32(duration), zeros(8), u16(0), u16(0), u16(0x100), u16(0), MATRIX, u32(0), u32(0)),
+        fullBox('tkhd', 0, 3, u32(0), u32(0), u32(1), u32(0), u32(shown), zeros(8), u16(0), u16(0), u16(0x100), u16(0), MATRIX, u32(0), u32(0)),
+        // An edit list for AAC: the movie starts after the encoder delay.
+        ...(codec === 'aac'
+          ? [box('edts', fullBox('elst', 0, 0, u32(1), u32(shown), u32(AAC_PRIMING), u16(1), u16(0)))]
+          : []),
         box(
           'mdia',
           fullBox('mdhd', 0, 0, u32(0), u32(0), u32(SAMPLE_RATE), u32(duration), u16(0x55c4), u16(0)),

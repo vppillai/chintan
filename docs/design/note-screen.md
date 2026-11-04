@@ -454,14 +454,23 @@ A download — one file or the zip — is in the format chosen on You →
 Your data (`downloadFormat.ts`, per device in `localStorage`): as recorded
 (WebM from a browser, M4A or MP3 from a shortcut), or MP4. MP4 is made on
 the device by `toMp4.ts`, a chunk of its own loaded only at that tap:
-`decodeAudioData` reads the recording at 48 kHz, WebCodecs' `AudioEncoder`
-writes AAC-LC, and a small ISO BMFF writer puts it in an `.m4a` (`moov`
-before `mdat`). A browser with no AAC encoder (Firefox, open-source
-Chromium) gets Opus in the same container as `.mp4`; one with no
-`AudioEncoder` at all is told so on the notice line. An M4A or MP4 already
-in the bucket is saved untouched. The server does not transcode: that would
-mean an ffmpeg layer in the worker and a second object per recording, for a
-conversion every browser the app supports can do itself.
+`decodeAudioData` reads the recording at 48 kHz, it is mixed to one channel,
+WebCodecs' `AudioEncoder` writes AAC-LC, and a small ISO BMFF writer puts it
+in an `.m4a` (`moov` before `mdat`). The AAC config in the file is always
+the writer's own (48 kHz mono), never the encoder's: Safari 26/27 reports a
+wrong one (WebKit bug 302253) and the file plays silent. An edit list skips
+1024 samples of encoder delay; an encoder that primes more (Apple's 2112)
+leaves about 23 ms of silence at the start. A browser with no AAC encoder
+(Firefox, open-source Chromium) gets Opus in the same container as `.mp4`;
+one with no `AudioEncoder` at all — Safari before 26, so an iPhone before
+iOS 26 — gets the fixed sentence on the notice line and can still download
+as recorded. An M4A or MP4 already in the bucket is saved untouched. The
+encoder holds at most four 100 ms blocks before the loop waits on it
+(`dequeue`), so what memory the conversion takes is the decoded recording:
+32-bit PCM at 48 kHz, about 230 MB for twenty minutes, on top of the file
+itself. The server does not transcode: that would mean an ffmpeg layer in
+the worker and a second object per recording, for a conversion every
+browser with a WebCodecs `AudioEncoder` does itself.
 
 ### Transcribe again
 
