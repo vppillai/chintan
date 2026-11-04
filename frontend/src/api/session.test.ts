@@ -162,7 +162,7 @@ describe('a token endpoint that never answers', () => {
 });
 
 describe('a token endpoint having a bad minute', () => {
-  it.each([500, 502, 503, 429])('keeps the session on a %i, to be asked again later', async (status) => {
+  it.each([500, 502, 503, 429, 403])('keeps the session on a %i, to be asked again later', async (status) => {
     const refresher: TokenRefresher = {
       refresh: () => Promise.reject(new ApiError({ kind: 'http', status, title: 'Upstream' })),
     };
@@ -179,6 +179,32 @@ describe('a token endpoint having a bad minute', () => {
     const session = new Session(createMemoryTokenStore(tokens()), refresher);
 
     await expect(session.refresh()).rejects.toBeInstanceOf(ApiError);
+    expect(session.isAuthenticated()).toBe(false);
+  });
+});
+
+describe('what the token endpoint\'s failure says', () => {
+  const answering = (status: number): typeof fetch => async () => new Response('{}', { status });
+
+  it.each([500, 503, 429, 403])('a %i keeps the session and does not say to sign in again', async (status) => {
+    const session = new Session(
+      createMemoryTokenStore(tokens()),
+      new CognitoRefresher('https://cognito.test', 'client', answering(status)),
+    );
+    const error = await session.refresh().catch((caught: unknown) => caught);
+
+    expect((error as ApiError).userMessage).toBe("Couldn't reach sign-in. Try again in a moment.");
+    expect(session.isAuthenticated()).toBe(true);
+  });
+
+  it('a 400 (invalid_grant) ends the session and says to sign in again', async () => {
+    const session = new Session(
+      createMemoryTokenStore(tokens()),
+      new CognitoRefresher('https://cognito.test', 'client', answering(400)),
+    );
+    const error = await session.refresh().catch((caught: unknown) => caught);
+
+    expect((error as ApiError).userMessage).toBe('Sign in again to continue.');
     expect(session.isAuthenticated()).toBe(false);
   });
 });
