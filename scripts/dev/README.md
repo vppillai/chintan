@@ -24,7 +24,9 @@ CI shellchecks and shfmt-checks every `*.sh` here.
    and the reviewer re-reads.
 4. **Driver merge.** `merge-seq.sh "<pr>:<wt-dir>:<be|fe|infra>" …` merges in
    order: rebase if conflicting (`resolve-known.py` settles the append-only
-   files and regenerates `docs/backlog-open.md`), wait for `CI passed`,
+   files; after every rebase the driver reruns `backlog-view.py` and commits
+   `docs/backlog-open.md` if it changed, since a clean merge of the ledger
+   alone leaves the view stale), wait for `CI passed`,
    squash-merge, pull main, drop the worktree. It STOPs — never merges — on a
    failing or still-pending check. `stack-merge.sh "<bottom>,<upper>…:<kind>"`
    merges stacked pull requests bottom-up, retargeting the uppers to `main`
