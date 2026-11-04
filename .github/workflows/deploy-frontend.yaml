@@ -40,17 +40,49 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A main commit that touches the backend paths too starts Deploy Backend
+  # as well as this push run, and this run used to win: the new bundle went
+  # live against the old API for the length of the staging and prod deploys,
+  # and stayed live if the backend failed. Such a push leaves the publish to
+  # the workflow_run that follows a successful backend deploy. The paths are
+  # Deploy Backend's own; config/** and scripts/lib/common.sh are in both.
+  follows-backend:
+    name: Wait for the backend?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      backend: ${{ steps.paths.outputs.backend }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - id: paths
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          backend=false
+          if [ "$EVENT" = "push" ] && git diff --name-only HEAD^1 HEAD |
+            grep -qE '^(backend/|infrastructure/|config/|scripts/(deploy|ci-deploy-stack|build-lambda|list-instances)\.sh$|scripts/lib/common\.sh$|\.github/workflows/deploy-backend\.yaml$)'; then
+            backend=true
+          fi
+          echo "backend=$backend"
+          echo "backend=$backend" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build instance bundles
     runs-on: ubuntu-latest
+    needs: follows-backend
     # Required: the OIDC trust policy scopes by environment, and a job
     # without one gets a ref: subject that matches nothing.
     environment: build
     # Only auto-follow a successful backend deploy; a manual run or a
-    # frontend-only push is unconditional.
+    # frontend-only push is unconditional, a push that also deploys the
+    # backend waits for it (follows-backend).
     if: >-
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success') &&
+      needs.follows-backend.outputs.backend != 'true'
     permissions:
       contents: read
       id-token: write
