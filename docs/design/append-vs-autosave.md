@@ -77,7 +77,7 @@ race made deterministic.
    `ClearNoteAppend` removes it, conditional on the stamp still naming the
    capture. Cleared any earlier, a completion that failed left the paragraph
    open to a save while the capture was unfinished: the edit moved the words
-   off the marker, the retry no longer recognised its own paragraph, and the
+   off the marker, the retry did not recognise its own paragraph, and the
    takeover after the lease wrote the dictation twice. A move clears its
    stamp with the target's refresh (`ClearAppendStampFor`). An append that
    hands its claim back without writing clears the stamp with

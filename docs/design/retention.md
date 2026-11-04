@@ -45,7 +45,7 @@ answers 404, since the note is then the sweep's. A weekly EventBridge rule
 (`ExpirySweepRule`, `rate(7 days)`) invokes the worker with
 `{"task":"sweep-expired"}`; `purge.Sweeper.Sweep` scans for rows whose
 `purge_after_epoch` has passed (`ExpiredNotes`), reads each row again and
-skips one no longer archived and due (the scan is a snapshot), runs the same cascade a
+skips one that is not still archived and due (the scan is a snapshot), runs the same cascade a
 user's "Delete forever" runs (`NotesService.PurgeNoteArtifacts`: exactly the
 S3 keys the note and its captures name, never a prefix listing) and then
 deletes the row. DynamoDB TTL is only the backstop, set a fortnight after
