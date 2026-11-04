@@ -102,7 +102,8 @@ describe('the capture record', () => {
     expect(record?.serverCaptureId).toBeNull();
     expect(record?.contentType).toBe('audio/mp4');
 
-    // And it is what a fresh boot would offer back.
+    // And, once its first chunk is on disk, what a fresh boot would offer back.
+    await appendChunk(localId!, 0, new Blob(['x']));
     const stranded = await unconfirmedCaptures();
     expect(stranded.map((r) => r.localId)).toContain(localId);
   });
