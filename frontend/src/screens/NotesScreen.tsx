@@ -43,11 +43,28 @@ const AskPanel = lazy(() =>
  * every launch's download.
  */
 const PasskeyNudge = lazy(() =>
-  import('@/features/auth/PasskeyNudge.tsx').then((m) => ({ default: m.PasskeyNudge })),
+  import('@/features/auth/PasskeyNudge.tsx').then(
+    (m) => ({ default: m.PasskeyNudge }),
+    () => ({ default: Nothing }),
+  ),
 );
 const ResumePrompt = lazy(() =>
-  import('@/features/capture/ResumePrompt.tsx').then((m) => ({ default: m.ResumePrompt })),
+  import('@/features/capture/ResumePrompt.tsx').then(
+    (m) => ({ default: m.ResumePrompt }),
+    () => ({ default: Nothing }),
+  ),
 );
+
+/*
+ * What either is when its chunk cannot be fetched — the connection dropped
+ * between Home's paint and the fetch. Neither is Home's to fail over: thrown,
+ * the lazy chunk's rejection replaced the whole library with the route's
+ * fault screen. A stranded recording stays on disk and is offered on the
+ * next launch.
+ */
+function Nothing(): null {
+  return null;
+}
 
 /**
  * The library. Home.
