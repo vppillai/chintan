@@ -165,30 +165,12 @@ func (rt *router) createNote(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	note, err := rt.Notes.CreateNoteWithTags(r.Context(), userID, req.Title, req.Aliases, req.Tags)
+	// The body and the kind go in with the create, so a failure leaves no
+	// empty plain note for the client's retry to add a second to.
+	note, err := rt.Notes.CreateNoteWithBody(r.Context(), userID, req.Title, req.Aliases, req.Tags, kind, req.Body)
 	if err != nil {
 		fail(w, r, err)
 		return
-	}
-
-	// A body or a kind supplied at creation is written through the same path
-	// an edit takes, so there is one place that maintains the snippet and the
-	// meta mirror.
-	if req.Body != "" || kind != "" {
-		version := note.Version
-		updates := service.NoteUpdates{ExpectedVersion: &version}
-		if req.Body != "" {
-			updates.Body = &req.Body
-		}
-		if kind != "" {
-			updates.Kind = &kind
-		}
-		updated, err := rt.Notes.UpdateNote(r.Context(), userID, note.ID, updates)
-		if err != nil {
-			fail(w, r, err)
-			return
-		}
-		note = updated
 	}
 
 	writeJSON(w, http.StatusCreated, noteOf(note))

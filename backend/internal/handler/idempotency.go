@@ -134,8 +134,7 @@ func (rt *router) idempotent(next http.HandlerFunc) http.HandlerFunc {
 		// The defer also covers a handler panic, which the same reasoning
 		// applies to.
 		recorded := false
-		// The claim's two writes run whatever happened to the request: a
-		// caller that hung up is exactly the one that retries.
+		// Whatever happened to the request: a caller that hung up retries.
 		bookkeeping := context.WithoutCancel(r.Context())
 		defer func() {
 			if recorded {
@@ -163,10 +162,8 @@ func (rt *router) idempotent(next http.HandlerFunc) http.HandlerFunc {
 		if settled(buffered.status) {
 			err := rt.Store.CompleteIdempotent(bookkeeping, tenantID, key, buffered.status,
 				buffered.header.Get("Content-Type"), buffered.body.Bytes())
-			// Recorded, or not: the work is done either way, and releasing
-			// the claim would let a retry with this key do it a second time
-			// — a second note, a second capture. Kept, the claim answers a
-			// retry 409 for its lease.
+			// Recorded or not, the work is done: a released claim let a
+			// retry do it twice. Kept, it answers 409 for its lease.
 			recorded = true
 			if err != nil && !errors.Is(err, repository.ErrNotFound) {
 				obs.Log(r.Context()).Warn("could not record idempotent response; the claim stays until its lease runs out",

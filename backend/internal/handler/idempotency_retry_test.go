@@ -187,3 +187,35 @@ func TestARetryAfterAFailedRecordDoesNotRedoTheWork(t *testing.T) {
 		t.Fatalf("the note was created %d times, want 1", count)
 	}
 }
+
+// failSecondPutNote fails every PutNote after the first.
+type failSecondPutNote struct {
+	repository.Store
+	mu    sync.Mutex
+	calls int
+}
+
+func (s *failSecondPutNote) PutNote(ctx context.Context, tenantID string, n model.NoteIndex) (model.NoteIndex, error) {
+	s.mu.Lock()
+	s.calls++
+	n2 := s.calls
+	s.mu.Unlock()
+	if n2 > 1 {
+		return model.NoteIndex{}, errors.New("induced store failure")
+	}
+	return s.Store.PutNote(ctx, tenantID, n)
+}
+
+// A note created with a body and a kind is one write. Created empty and then
+// edited, a failure of the edit left an empty plain note behind and the
+// client's retry made a second.
+func TestCreatingANoteWithABodyAndAKindIsOneWrite(t *testing.T) {
+	h := newHarness(t, func(deps *handler.Deps, h *harness) {
+		deps.Notes = service.NewNotesService(&failSecondPutNote{Store: h.store}, h.objects)
+	})
+	body := map[string]any{"title": "Packing", "kind": "checklist", "body": "- [ ] passport"}
+	res := h.do(t, http.MethodPost, "/v1/notes", "user1", body)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", res.Code, res.Body.String())
+	}
+}
