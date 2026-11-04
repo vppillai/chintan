@@ -12,8 +12,10 @@ import { queryKeys, useSettings } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { CheckMark } from '@/components/CheckMark.tsx';
 import { CopyButton } from '@/components/CopyButton.tsx';
+import { ColorPicker, colorName } from '@/components/ColorPicker.tsx';
 import { DownloadButton } from '@/components/DownloadButton.tsx';
 import { Icon } from '@/components/Icon.tsx';
+import { announce } from '@/components/StatusRegion.tsx';
 import { LanguageSelect } from '@/components/LanguageSelect.tsx';
 import { canShare, ShareButton } from '@/components/ShareButton.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
@@ -297,6 +299,14 @@ export function NoteDrawer({
                   editor.edit({ aliases });
                 }}
                 onCommit={() => void editor.saveNow()}
+              />
+              <ColorPicker
+                value={draft.color ?? note.color ?? 'none'}
+                onChange={(color) => {
+                  editor.edit({ color });
+                  void editor.saveNow();
+                  announce(`Colour: ${colorName(color)}`);
+                }}
               />
               <VerbatimSwitch
                 checked={draft.verbatim ?? note.verbatim ?? false}

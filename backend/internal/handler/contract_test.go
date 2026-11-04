@@ -189,9 +189,10 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 	// test exists to surface.
 	// Pinned the same way, and in this order: the two notes lead the list in
 	// pin_rank order — tagged first at 0, plain at 1000 — above the touch
-	// order the rest of the page keeps.
+	// order the rest of the page keeps. The tagged note is tinted too, so the
+	// list and detail fixtures carry a colour other than none.
 	h.do(t, http.MethodPatch, "/v1/notes/"+tagged.ID, contractUser,
-		map[string]any{"version": tagged.Version, "pinned": true})
+		map[string]any{"version": tagged.Version, "pinned": true, "color": "mint"})
 	h.do(t, http.MethodPatch, "/v1/notes/"+plain.ID, contractUser,
 		map[string]any{"version": plain.Version, "verbatim": true, "pinned": true})
 

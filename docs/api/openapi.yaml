@@ -1771,7 +1771,7 @@ components:
 
     Note:
       type: object
-      required: [id, title, updated_at, version, archived, kind, pinned, pin_rank]
+      required: [id, title, updated_at, version, archived, kind, pinned, pin_rank, color]
       properties:
         id: { type: string }
         title: { type: string, maxLength: 200 }
@@ -1873,6 +1873,8 @@ components:
             in this order (a tie broken by the more recently pinned first),
             then the rest by `updated_at`, and the cursor pages across the
             two tiers unchanged. Rewritten by `POST /v1/notes/pins`.
+        color:
+          $ref: '#/components/schemas/NoteColor'
 
     NoteCleaned:
       type: object
@@ -2052,6 +2054,20 @@ components:
             still moves. At most fifty notes are pinned (409 `you can pin up
             to fifty notes`). The order within the group is
             `POST /v1/notes/pins`.
+        color:
+          $ref: '#/components/schemas/NoteColor'
+
+    NoteColor:
+      type: string
+      enum: [none, rose, peach, sand, lime, mint, sky, lavender, slate]
+      description: |
+        The tint of the note's row on Home and of its screen's header, by
+        name; each client maps a name to a pastel in a light theme and a deep
+        tint of the same hue in a dark one. `none` is no tint, and what every
+        note reads until one is chosen. Always present on a `Note`. Set
+        through `NoteUpdate.color`; any other value is 400 `color must be
+        none, rose, peach, sand, lime, mint, sky, lavender or slate`. Like a
+        pin it is not an edit: `updated_at` stays, `version` moves.
 
     NotePinsRequest:
       type: object

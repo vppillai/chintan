@@ -6,6 +6,7 @@ import type {
   CaptureWire,
   NoteCleanQueuedWire,
   NoteCleanedWire,
+  NoteColor,
   NoteCreateWire,
   NoteDetailWire,
   NoteWire,
@@ -878,6 +879,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
           note.pinned = body['pinned'];
           note.pin_rank = body['pinned'] ? 1000 * pinnedCount : null;
         }
+        if (typeof body['color'] === 'string') note.color = body['color'] as NoteColor;
         if (Array.isArray(body['tags'])) note.tags = body['tags'] as string[];
         if (typeof body['language'] === 'string') {
           // The empty string means "inherit again", which the wire spells as absence.

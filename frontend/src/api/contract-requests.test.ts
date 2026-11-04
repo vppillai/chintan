@@ -183,6 +183,8 @@ describe('the requests the frontend actually sends', () => {
     // The pin-only PATCH is its own shape — `pinned` beside `version` and
     // nothing else — and the drag's reorder names every pinned note.
     await call('pinNote', () => api.updateNote(NOTE_ID, { version: 1, pinned: true }));
+    // Home's colour picker sends the colour alone, like the pin.
+    await call('colorNote', () => api.updateNote(NOTE_ID, { version: 1, color: 'mint' }));
     await call('reorderPins', () => api.reorderPins({ ids: [NOTE_ID_2, NOTE_ID] }));
     await call('cleanNote', () => api.cleanNote(NOTE_ID));
     await call('cleanNoteMode', () => api.cleanNote(NOTE_ID, { mode: 'polished' }));

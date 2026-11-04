@@ -46,6 +46,7 @@ function draftFrom(note: NoteDetailWire): NoteDraft {
     language: note.language ?? '',
     auto_clean: note.auto_clean ?? false,
     verbatim: note.verbatim ?? false,
+    color: note.color ?? 'none',
     // The mode is only known from a cleaned view that exists; with none, the
     // draft leaves it unset and nothing is sent until the user picks one.
     ...(note.cleaned?.mode ? { cleaned_mode: note.cleaned.mode } : {}),
@@ -72,6 +73,7 @@ function withDraft(base: NoteDetailWire, draft: NoteDraft): NoteDetailWire {
     ...(draft.auto_clean !== undefined ? { auto_clean: draft.auto_clean } : {}),
     ...(draft.verbatim !== undefined ? { verbatim: draft.verbatim } : {}),
     ...(draft.kind !== undefined ? { kind: draft.kind } : {}),
+    ...(draft.color !== undefined ? { color: draft.color } : {}),
   };
 }
 

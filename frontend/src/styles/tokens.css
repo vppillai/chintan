@@ -244,6 +244,20 @@
   --color-overlay: rgb(26 25 23 / 38%);
   --color-selection: rgb(194 65 12 / 18%);
 
+  /* Note tints (`NoteColor`): a pastel per name, the row's ground on Home and
+     the wash at the top of the note screen. Each is light enough that ink
+     (≥14.7:1), muted (≥6.8:1), faint (≥4.51:1) and accent-strong (≥5.4:1)
+     hold AA on it (every ratio: docs/design/home.md, "Colour"), and
+     Nocturne's block below keeps each hue as a deep tint. */
+  --color-tint-rose: #ffe5e9;
+  --color-tint-peach: #ffe9d6;
+  --color-tint-sand: #fceed1;
+  --color-tint-lime: #e9f4d7;
+  --color-tint-mint: #d7f8e8;
+  --color-tint-sky: #d6f4ff;
+  --color-tint-lavender: #f1eaff;
+  --color-tint-slate: #e8f0fa;
+
   /* Ink casts on paper: short, soft, barely tinted. Each step is two layers
      — a tight one for the edge and a wide one for the lift — so a card reads
      as resting on the page rather than outlined on it. */
@@ -336,6 +350,18 @@
   --color-overlay: rgb(10 12 11 / 62%);
   --color-selection: rgb(184 241 53 / 22%);
 
+  /* Note tints, deep: the same hues as Ink & Paper's pastels, at the
+     lightness of `raised`, so ink (≥14.8:1), muted (≥7.0:1) and faint
+     (≥4.61:1) stay AA and the hue is what tells two rows apart. */
+  --color-tint-rose: #2d181b;
+  --color-tint-peach: #2c1a0e;
+  --color-tint-sand: #261d0a;
+  --color-tint-lime: #1b220f;
+  --color-tint-mint: #0d241b;
+  --color-tint-sky: #0c212d;
+  --color-tint-lavender: #201b2e;
+  --color-tint-slate: #1a1f26;
+
   /* Darker and wider than Ink & Paper's: on a near-black page a shadow is
      the only thing that separates one plane from the next. The lift is a
      shade from below rather than a light from above, because `ink` here is
@@ -385,6 +411,14 @@
 
     --color-overlay: rgb(10 12 11 / 62%);
     --color-selection: rgb(184 241 53 / 22%);
+    --color-tint-rose: #2d181b;
+    --color-tint-peach: #2c1a0e;
+    --color-tint-sand: #261d0a;
+    --color-tint-lime: #1b220f;
+    --color-tint-mint: #0d241b;
+    --color-tint-sky: #0c212d;
+    --color-tint-lavender: #201b2e;
+    --color-tint-slate: #1a1f26;
 
     --shadow-xs: 0 1px 1px rgb(0 0 0 / 40%);
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 45%), 0 2px 8px rgb(0 0 0 / 35%);

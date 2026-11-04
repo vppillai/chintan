@@ -49,6 +49,8 @@ type noteUpdateRequest struct {
 	// Pinned puts the note in Home's Pinned group (last among them) or takes
 	// it out. Reordering the group is POST /v1/notes/pins.
 	Pinned *bool `json:"pinned"`
+	// Color tints the note's row on Home: "none" or one of model.NoteColors.
+	Color *string `json:"color"`
 }
 
 // notePinsRequest is the OpenAPI NotePinsRequest schema: the caller's pinned
@@ -246,6 +248,16 @@ func (rt *router) updateNote(w http.ResponseWriter, r *http.Request) {
 	if req.CleanedMode != nil {
 		mode := model.NoteCleanMode(*req.CleanedMode)
 		updates.CleanMode = &mode
+	}
+	if req.Color != nil {
+		// Refused here, as kind is, rather than through fail: the service
+		// checks it too, for a caller that is not this handler.
+		color := storedNoteColor(*req.Color)
+		if !model.ValidNoteColor(color) {
+			httperr.BadRequest(w, r, service.ErrInvalidNoteColor.Error())
+			return
+		}
+		updates.Color = &color
 	}
 	if req.Kind != nil {
 		kind, ok := storedNoteKind(*req.Kind)

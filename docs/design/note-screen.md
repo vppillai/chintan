@@ -24,7 +24,12 @@ region's rules in `styles/shell.css` `.app__main`).
 
 Top to bottom, inside the shell's one scroll region (`.app__main`):
 
-- **Header** (`screen__header--detail`): "‹ Notes" (`BackLink`, which goes
+- **Header** (`screen__header--detail`), under a wash of the note's colour
+  when it has one: the screen wears `data-color` from the draft and the tint
+  fades out below the title (`.note-screen[data-color]`, `home.css`). The
+  colour rides the draft like the language — one PATCH with the note's
+  version, queued offline with the rest of the draft — so the wash follows
+  a swatch at once: "‹ Notes" (`BackLink`, which goes
   back one history entry when the app has one beneath and otherwise replaces
   itself with the library through `goBackTo`; the stack model is
   `navigation.md`), the Find toggle (`aria-expanded`, `aria-controls` the
@@ -209,7 +214,8 @@ scrolls sideways.
 
 ## The drawer
 
-Details — the transcription language, Tags, "Also called", the Word for
+Details — the transcription language, Tags, "Also called", Colour (the
+row of swatches Home's Colour… dialog holds, home.md "Colour"), the Word for
 word and Checklist switches, and the note's id in monospace with a **Copy
 note id** button and the `X-Chintan-Note-Id` hint — or Share. The rules:
 
