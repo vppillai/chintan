@@ -14,7 +14,7 @@ import { queryKeys } from './keys.ts';
  * pair — which the Notifications card explains rather than retries; any
  * other failure is an error like the rest.
  */
-export function usePushKey() {
+export function usePushKey(enabled = true) {
   const api = useApi();
   return useQuery<PushKeyWire | null>({
     queryKey: queryKeys.pushKey(),
@@ -26,6 +26,7 @@ export function usePushKey() {
         throw error;
       }
     },
+    enabled,
     staleTime: Infinity,
   });
 }

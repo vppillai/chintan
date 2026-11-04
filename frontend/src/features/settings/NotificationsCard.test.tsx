@@ -7,10 +7,14 @@ import { pushKey, pushSubscriptionCreated } from '@/api/__fixtures__/responses.t
 import type { PushSubscriptionWire } from '@/api/schema.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
+import { usePushResync } from '@/pwa/usePushResync.ts';
+
 import { NotificationsCard } from './NotificationsCard.tsx';
-import { applicationServerKey, browserLabel, pushSubscriptionId } from './push.ts';
+import { PUSH_WANTED_KEY, applicationServerKey, browserLabel, pushSubscriptionId } from './push.ts';
 
 const ENDPOINT = 'https://web.push.apple.com/send/this-browser';
+/** A subscription the push service has called gone (the worker pruned its row on a 410). */
+const DEAD = 'https://fcm.googleapis.com/fcm/send/dead-one';
 
 /** A browser subscription as `pushManager` hands one out, `toJSON` and `unsubscribe` included. */
 function fakeSubscription(endpoint = ENDPOINT) {
@@ -30,11 +34,20 @@ function installPushApis(options: {
   permission?: NotificationPermission;
   grant?: NotificationPermission;
   existing?: PushSubscription | null;
+  fresh?: string;
   userAgent?: string;
 } = {}) {
   const requestPermission = vi.fn(async () => options.grant ?? 'granted');
-  const subscribe = vi.fn(async () => fakeSubscription());
-  const getSubscription = vi.fn(async () => options.existing ?? null);
+  // As a browser does: `subscribe` hands back the subscription already held
+  // until it is unsubscribed, and only then a new one.
+  let held: PushSubscription | null = options.existing ?? null;
+  const live = (): PushSubscription | null =>
+    held && vi.mocked(held.unsubscribe).mock.calls.length === 0 ? held : null;
+  const subscribe = vi.fn(async () => {
+    held = live() ?? fakeSubscription(options.fresh ?? ENDPOINT);
+    return held;
+  });
+  const getSubscription = vi.fn(async () => live());
   const globals = globalThis as unknown as Record<string, unknown>;
   globals['PushManager'] = class PushManager {};
   globals['Notification'] = { permission: options.permission ?? 'default', requestPermission };
@@ -69,7 +82,7 @@ function json(body: unknown, status = 200): Response {
 }
 
 /** A stub API: the key (or its 404), the list, a POST that adds a row, a DELETE that drops it. */
-function mount(options: { configured?: boolean; enrolled?: PushSubscriptionWire[] } = {}) {
+function mount(options: { configured?: boolean; enrolled?: PushSubscriptionWire[]; resync?: boolean } = {}) {
   let items = [...(options.enrolled ?? [])];
   const calls: { method: string; path: string; body?: unknown }[] = [];
   const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
@@ -113,10 +126,16 @@ function mount(options: { configured?: boolean; enrolled?: PushSubscriptionWire[
   });
   render(
     <TestProviders api={testApiContext(fetchImpl)}>
-      <NotificationsCard />
+      {options.resync ? <Resync /> : <NotificationsCard />}
     </TestProviders>,
   );
   return { calls, items: () => items };
+}
+
+/** The shell's launch-time re-enrolment, alone, as `AppShell` mounts it. */
+function Resync() {
+  usePushResync(true);
+  return null;
 }
 
 afterEach(uninstallPushApis);
@@ -250,6 +269,114 @@ describe('the notifications card on You', () => {
       expect(toggle).toBeEnabled();
     });
     expect(toggle).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByRole('region', { name: 'Notifications' })).toHaveTextContent(
+      /not reaching this device\. turn on again/i,
+    );
+  });
+
+  it('turning on again replaces a subscription the push service called gone, rather than re-sending it', async () => {
+    const dead = fakeSubscription(DEAD);
+    installPushApis({ permission: 'granted', grant: 'granted', existing: dead });
+    const { calls } = mount({ enrolled: [] });
+    const user = userEvent.setup();
+    const toggle = await screen.findByRole('switch', { name: /notify me when a recording files/i });
+    await waitFor(() => {
+      expect(toggle).toBeEnabled();
+    });
+    await user.click(toggle);
+    await waitFor(() => {
+      expect(toggle).toHaveAttribute('aria-checked', 'true');
+    });
+    expect(dead.unsubscribe).toHaveBeenCalledTimes(1);
+    const posts = calls.filter((call) => call.method === 'POST');
+    expect(posts.map((call) => (call.body as { endpoint: string }).endpoint)).toEqual([ENDPOINT]);
+    expect(localStorage.getItem(PUSH_WANTED_KEY)).toBe('1');
+  });
+
+  it('says it is not reaching this device when it was turned on here and nothing is held any more', async () => {
+    localStorage.setItem(PUSH_WANTED_KEY, '1');
+    installPushApis({ permission: 'default' });
+    mount({ enrolled: [] });
+    const card = await screen.findByRole('region', { name: 'Notifications' });
+    await waitFor(() => {
+      expect(card).toHaveTextContent(/not reaching this device/i);
+    });
+  });
+
+  it('forgets that it was wanted when turned off', async () => {
+    localStorage.setItem(PUSH_WANTED_KEY, '1');
+    const existing = fakeSubscription();
+    installPushApis({ permission: 'granted', existing });
+    mount({ enrolled: [{ ...pushSubscriptionCreated, id: await pushSubscriptionId(ENDPOINT) }] });
+    const user = userEvent.setup();
+    const toggle = await screen.findByRole('switch', { name: /notify me when a recording files/i });
+    await waitFor(() => {
+      expect(toggle).toHaveAttribute('aria-checked', 'true');
+    });
+    await user.click(toggle);
+    await waitFor(() => {
+      expect(toggle).toHaveAttribute('aria-checked', 'false');
+    });
+    expect(localStorage.getItem(PUSH_WANTED_KEY)).toBeNull();
+    expect(screen.getByRole('region', { name: 'Notifications' })).not.toHaveTextContent(/not reaching/i);
+  });
+});
+
+describe('re-enrolling on launch', () => {
+  it('replaces and registers a subscription the server pruned, without a tap', async () => {
+    const dead = fakeSubscription(DEAD);
+    const apis = installPushApis({ permission: 'granted', existing: dead });
+    const { calls } = mount({ enrolled: [], resync: true });
+    await waitFor(() => {
+      expect(calls.some((call) => call.method === 'POST')).toBe(true);
+    });
+    expect(dead.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(apis.requestPermission).not.toHaveBeenCalled();
+    const post = calls.find((call) => call.method === 'POST');
+    expect((post?.body as { endpoint: string }).endpoint).toBe(ENDPOINT);
+  });
+
+  it('subscribes afresh a browser that was turned on and holds nothing any more', async () => {
+    localStorage.setItem(PUSH_WANTED_KEY, '1');
+    installPushApis({ permission: 'granted' });
+    const { calls } = mount({ enrolled: [], resync: true });
+    await waitFor(() => {
+      expect(calls.some((call) => call.method === 'POST')).toBe(true);
+    });
+  });
+
+  it('leaves a browser the server lists alone', async () => {
+    const held = fakeSubscription();
+    installPushApis({ permission: 'granted', existing: held });
+    const { calls } = mount({
+      enrolled: [{ ...pushSubscriptionCreated, id: await pushSubscriptionId(ENDPOINT) }],
+      resync: true,
+    });
+    await waitFor(() => {
+      expect(localStorage.getItem(PUSH_WANTED_KEY)).toBe('1');
+    });
+    expect(held.unsubscribe).not.toHaveBeenCalled();
+    expect(calls.some((call) => call.method === 'POST')).toBe(false);
+  });
+
+  it('leaves a browser that was never turned on alone', async () => {
+    const apis = installPushApis({ permission: 'granted' });
+    const { calls } = mount({ enrolled: [], resync: true });
+    await waitFor(() => {
+      expect(calls.some((call) => call.path === '/v1/push/subscriptions')).toBe(true);
+    });
+    // Give the effect its turn; it must not subscribe or register.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(apis.subscribe).not.toHaveBeenCalled();
+    expect(calls.some((call) => call.method === 'POST')).toBe(false);
+  });
+
+  it('asks for nothing without permission already granted', async () => {
+    localStorage.setItem(PUSH_WANTED_KEY, '1');
+    installPushApis({ permission: 'default' });
+    const { calls } = mount({ resync: true });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls).toHaveLength(0);
   });
 });
 
