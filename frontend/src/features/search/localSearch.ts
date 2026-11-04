@@ -99,46 +99,74 @@ function bodyText(note: NoteWire): string {
  * corpus carries it, the whole body. A prefix match on the title outranks a
  * mid-word one, because that is what someone typing a note's name expects to
  * see first.
+ *
+ * Several words are each looked for, and a note must have every one of them
+ * somewhere — title, alias, tag or text — as `GET /v1/search` does
+ * (`matchNote`). Matching the whole query as one phrase found nothing for
+ * "roof plumber" here while the server, a moment later, found the note:
+ * offline, never.
  */
 export function rankLocal(notes: readonly NoteWire[], query: string): MergedHit[] {
-  const term = fold(query.trim());
-  if (!term) return [];
+  const terms = fold(query.trim()).split(/\s+/u).filter(Boolean);
+  if (terms.length === 0) return [];
+  const words = query.trim().split(/\s+/u);
 
   const results: Scored[] = [];
 
   for (const note of notes) {
     const title = fold(note.title);
-    const matchedIn: string[] = [];
-    let score = 0;
-
-    if (title.startsWith(term)) {
-      score += 100;
-      matchedIn.push('title');
-    } else if (title.includes(term)) {
-      score += 60;
-      matchedIn.push('title');
-    }
-
-    if ((note.aliases ?? []).some((alias) => fold(alias).includes(term))) {
-      score += 40;
-      matchedIn.push('alias');
-    }
-
-    if ((note.tags ?? []).some((tag) => fold(tag).includes(term))) {
-      score += 30;
-      matchedIn.push('tag');
-    }
-
+    const aliases = (note.aliases ?? []).map(fold);
+    const tags = (note.tags ?? []).map(fold);
     const snippet = note.snippet ?? '';
-    const inSnippet = fold(snippet).includes(term);
+    const foldedSnippet = fold(snippet);
     const body = bodyText(note);
-    const inBody = !inSnippet && fold(body).includes(term);
-    if (inSnippet || inBody) {
-      score += 15;
-      matchedIn.push('body');
+    const matchedIn = new Set<string>();
+    let score = 0;
+    /** The first word found in the snippet, else in the body: where the excerpt is cut. */
+    let inSnippet: string | null = null;
+    let inBody: string | null = null;
+
+    let allFound = true;
+    for (const [index, term] of terms.entries()) {
+      let found = false;
+      if (title.startsWith(term)) {
+        score += 100;
+        found = true;
+        matchedIn.add('title');
+      } else if (title.includes(term)) {
+        score += 60;
+        found = true;
+        matchedIn.add('title');
+      }
+      if (aliases.some((alias) => alias.includes(term))) {
+        score += 40;
+        found = true;
+        matchedIn.add('alias');
+      }
+      if (tags.some((tag) => tag.includes(term))) {
+        score += 30;
+        found = true;
+        matchedIn.add('tag');
+      }
+      const word = words[index] ?? term;
+      if (foldedSnippet.includes(term)) {
+        inSnippet ??= word;
+        score += 15;
+        found = true;
+        matchedIn.add('body');
+      } else if (fold(body).includes(term)) {
+        inBody ??= word;
+        score += 15;
+        found = true;
+        matchedIn.add('body');
+      }
+      if (!found) {
+        allFound = false;
+        break;
+      }
     }
 
-    if (score === 0) continue;
+    if (!allFound) continue;
 
     results.push({
       noteId: note.id,
@@ -147,12 +175,13 @@ export function rankLocal(notes: readonly NoteWire[], query: string): MergedHit[
       // heading, so repeating it as the excerpt wastes the line. A hit deeper
       // in the body than the snippet reaches is excerpted from where it was
       // found, so the row shows why it matched.
-      excerpt: inSnippet
-        ? excerptAround(snippet, query.trim())
-        : inBody
-          ? excerptAround(body, query.trim())
-          : excerptAround(snippet, ''),
-      matchedIn,
+      excerpt:
+        inSnippet !== null
+          ? excerptAround(snippet, inSnippet)
+          : inBody !== null
+            ? excerptAround(body, inBody)
+            : excerptAround(snippet, ''),
+      matchedIn: [...matchedIn],
       score,
       updatedAt: note.updated_at,
     });

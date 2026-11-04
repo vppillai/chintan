@@ -19,6 +19,7 @@ import {
   progressOf,
   snippetIsCut,
 } from '@/features/notes/checklist.ts';
+import { findMatches, splitRuns } from '@/features/notes/find.ts';
 import { describeRecordings, formatRowTime } from '@/features/notes/groups.ts';
 import { describePurge, purgeCountdown } from '@/features/notes/purge.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
@@ -260,7 +261,11 @@ export function NoteRow({
             data-pinned={note.pinned || undefined}
             data-color={tint === 'none' ? undefined : tint}
             onClick={() => {
-              void navigate(ROUTES.note(note.id));
+              // A search hit opens with Find on the search's first word, so
+              // the match is marked in the note, not hunted for again. Find
+              // looks for one phrase; the search, for every word apart.
+              const find = highlight?.trim().split(/\s+/u)[0];
+              void navigate(ROUTES.note(note.id), find ? { state: { find } } : undefined);
             }}
           >
             {body}
@@ -330,16 +335,32 @@ export function NoteRow({
   );
 }
 
-/** Renders the match in situ, with the hit marked rather than stripped out. */
+/**
+ * Renders the match in situ, with the hit marked rather than stripped out:
+ * every word of the search, each where it occurs, folded the way the search
+ * matched it (`findMatches`) — a two-word search marked nothing when the
+ * whole query was looked for as one phrase.
+ */
 function Marked({ text, term }: { text: string; term: string }) {
-  const index = term ? text.toLowerCase().indexOf(term.toLowerCase()) : -1;
-  if (index === -1) return <>{text}</>;
+  const matches = term
+    .split(/\s+/u)
+    .filter(Boolean)
+    .flatMap((word) => findMatches(text, word))
+    .sort((a, b) => a.start - b.start)
+    .filter((match, index, all) => index === 0 || match.start >= (all[index - 1]?.end ?? 0));
+  if (matches.length === 0) return <>{text}</>;
 
   return (
     <>
-      {text.slice(0, index)}
-      <mark className="search-hit">{text.slice(index, index + term.length)}</mark>
-      {text.slice(index + term.length)}
+      {splitRuns(text, matches).map((run, index) =>
+        run.match === null ? (
+          run.text
+        ) : (
+          <mark key={index} className="search-hit">
+            {run.text}
+          </mark>
+        ),
+      )}
     </>
   );
 }

@@ -407,6 +407,38 @@ describe('search narrows the list as you type, from what is already on the devic
     expect(screen.getByRole('button', { name: /roof repair/i })).toBeInTheDocument();
   });
 
+  it('holds what only the server found to the chip that is pressed', async () => {
+    // The server searches every note; under "books", its "Roof repair" (a
+    // "house" note) is not a result, however well it matched.
+    const user = userEvent.setup();
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/v1/search')) {
+        return json({
+          items: [
+            { note_id: 'roof-repair', title: 'Roof repair', excerpt: '…the quotes…', matched_in: ['body'] },
+            { note_id: 'reading-list', title: 'Reading list', excerpt: '…two quotes…', matched_in: ['transcript'] },
+          ],
+        });
+      }
+      return library()(input);
+    });
+    mount(fetchImpl, '/?tag=books');
+    await screen.findByRole('button', { name: /reading list/i });
+
+    await user.type(screen.getByRole('searchbox', { name: /search notes/i }), 'quotes');
+
+    expect(await screen.findByText(/1 result/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        vi.mocked(fetchImpl).mock.calls.some((call) => new URL(String(call[0])).pathname.endsWith('/v1/search')),
+      ).toBe(true);
+    });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(screen.getByRole('button', { name: /reading list/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /roof repair/i })).toBeNull();
+  });
+
   it('keeps the query in the URL', async () => {
     mount(library(), '/?q=roof');
     expect(await screen.findByRole('searchbox', { name: /search notes/i })).toHaveValue('roof');

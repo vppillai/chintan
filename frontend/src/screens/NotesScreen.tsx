@@ -231,10 +231,27 @@ export function NotesScreen() {
    */
   const settled = useDebouncedValue(trimmed, SERVER_SEARCH_DEBOUNCE_MS);
   const server = useSearch(settled, { enabled: online && view === 'active' });
-  const hits = useMemo(
-    () => mergeResults(local, server.data?.items ?? []),
-    [local, server.data],
-  );
+  /*
+   * The server searches every active note and knows nothing of the chips, so
+   * under a tag or Checklists chip its hits are held to the same filter the
+   * list is, read from the device's copy of each note. Before, a server hit
+   * from another tag joined the filtered results. A hit the device holds no
+   * copy of cannot be checked, and is left out while a chip is pressed.
+   */
+  const remote = useMemo(() => {
+    const items = server.data?.items ?? [];
+    if (!tag && !kind) return items;
+    const known = new Map([...(cached.data ?? []), ...notes].map((note) => [note.id, note]));
+    return items.filter((hit) => {
+      const note = known.get(hit.note_id);
+      return (
+        note !== undefined &&
+        (!tag || (note.tags ?? []).includes(tag)) &&
+        (!kind || (note.kind ?? 'note') === kind)
+      );
+    });
+  }, [server.data, tag, kind, cached.data, notes]);
+  const hits = useMemo(() => mergeResults(local, remote), [local, remote]);
   const serverUnavailable = view === 'active' && (!online || server.isError);
   // Still waiting on the server: either the debounce has not let the word
   // through yet, or the request is in flight.

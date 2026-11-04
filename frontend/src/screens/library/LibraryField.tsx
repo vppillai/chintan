@@ -8,7 +8,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery.ts';
 
 import type { LibraryParams } from './useLibraryParams.ts';
 
-/** Below this the search field no longer fits the long placeholder beside its Ask glyph. */
+/** Below this the search field no longer fits the long placeholder beside its Ask button. */
 const NARROW_FIELD_QUERY = '(max-width: 26rem)';
 
 /** A count for a chip, and whether there is more behind it than has been loaded. */
@@ -33,9 +33,10 @@ interface LibraryFieldProps extends LibraryParams {
  *
  * Searching filters on every keystroke through the URL's `q`; asking holds
  * the question until Enter, because a question is a request that costs a
- * model call, not a filter to narrow. The glyph inside the field's trailing
- * edge is the switch, a pressed button rather than the Search | Ask segment
- * that took a third of the row (round-3 T17); switching to Ask drops the
+ * model call, not a filter to narrow. "Ask", a word and a glyph inside the
+ * field's trailing edge, is the switch rather than the Search | Ask segment
+ * that took a third of the row (round-3 T17), and a × in the same place is
+ * the way back while asking; switching to Ask drops the
  * filter so coming back to Search shows the whole library. With a thread
  * open the field is the follow-up (round-3 T21): one field for one
  * conversation. A second question typed while the first is unanswered stays
@@ -140,19 +141,26 @@ export function LibraryField({
               else setFilter({ q: event.target.value });
             }}
           />
-          {/* `type="button"`: inside the form so it can sit inside the field, never its submit. */}
+          {/*
+            `type="button"`: inside the form so it can sit inside the field,
+            never its submit. A word beside the glyph, not the glyph alone: a
+            sparkle with a hover title was how Ask went unfound for weeks, and a
+            phone has no hover. In Ask mode the same place is the way out, a ×
+            named for where it goes; two names on one pressed toggle would say
+            neither, so it is a plain button in each mode.
+          */}
           <button
             type="button"
             className="ask-toggle"
-            aria-pressed={asking}
-            aria-label="Ask"
-            title={asking ? 'Back to search' : 'Ask your notes'}
+            data-asking={asking || undefined}
+            aria-label={asking ? 'Back to search' : undefined}
             onClick={() => {
               setFilter(asking ? { mode: null } : { mode: ASK_MODE, q: null });
               inputRef.current?.focus();
             }}
           >
-            <Icon name="sparkle" size={20} />
+            <Icon name={asking ? 'close' : 'sparkle'} size={20} />
+            {!asking && <span className="ask-toggle__label">Ask</span>}
           </button>
         </div>
       </form>

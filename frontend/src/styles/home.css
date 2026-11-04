@@ -215,7 +215,7 @@
 /* What a swipe action could not do, said under the row it was asked of. */
 .note-row__error {
   padding: var(--space-1) var(--space-4) 0;
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   color: var(--color-accent-strong);
 }
 
@@ -316,9 +316,10 @@
    Search
    -------------------------------------------------------------------------- */
 
+/* Ink, not the snippet's muted: muted on Nocturne's lime wash is 3.85:1. */
 .search-hit {
   background-color: var(--color-selection);
-  color: inherit;
+  color: var(--color-ink);
   border-radius: var(--radius-sm);
 }
 
@@ -423,34 +424,39 @@
   color: var(--color-muted);
 }
 
-/* The field spans the row; Ask is a glyph inside its trailing edge, pressed
-   while the field is a question rather than a filter. */
+/* The field spans the row; "Ask" is a glyph and a word inside its trailing
+   edge, and a × there while the field is a question rather than a filter. */
 .search-field {
+  --ask-toggle-size: calc(var(--layout-touch-target-min) + var(--space-8));
   position: relative;
 }
 
 .search-field .search-input {
-  padding-inline-end: calc(var(--layout-touch-target-min) + var(--space-2));
+  padding-inline-end: calc(var(--ask-toggle-size) + var(--space-2));
+}
+
+.search-field:has(.ask-toggle[data-asking]) {
+  --ask-toggle-size: var(--layout-touch-target-min);
 }
 
 .ask-toggle {
   position: absolute;
   inset-block: 0;
   inset-inline-end: 0;
-  display: grid;
-  place-items: center;
-  inline-size: var(--layout-touch-target-min);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  inline-size: var(--ask-toggle-size);
   border-radius: var(--radius-lg);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   color: var(--color-muted);
   transition: color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .ask-toggle:hover {
   color: var(--color-ink);
-}
-
-.ask-toggle[aria-pressed='true'] {
-  color: var(--color-accent-strong);
 }
 
 /* The way into the archive: a quiet row at the list's end, so the chip row
