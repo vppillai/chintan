@@ -42,7 +42,7 @@ const RECENTLY_SETTLED_MS = 10 * 60 * 1000;
  */
 const FILED_RECEIPT_MS = 24 * 60 * 60 * 1000;
 
-/** Newest-first, and twenty is more than one person records before the first has filed. */
+/** Newest-first; past twenty, the captures waiting on the user are asked for by name. */
 const CAPTURE_LIST_LIMIT = 20;
 
 /**
@@ -139,9 +139,10 @@ export function isFilingRelevant(capture: CaptureWire, now: number = serverNow()
  * ONE request per poll. Firing `pending`, `failed`, `needs_target` and `all`
  * in parallel every four seconds, plus all four again on every window focus,
  * comes to ~120 invocations for a two-minute pipeline, while the user is most
- * likely driving on cellular. The newest twenty captures contain
+ * likely driving on cellular. The newest twenty captures usually contain
  * everything those filters would have returned that is worth showing (see
- * `isFilingRelevant`), so the filtering happens here. Always stale: the
+ * `isFilingRelevant`), so the filtering happens here; only when there are
+ * more than twenty are `failed` and `needs_target` asked for as well. Always stale: the
  * library is remounted every time the user comes back to it — including
  * from the capture screen, six hundred milliseconds after a Send — and that
  * mount is one moment a fresh answer is owed. Coming to the foreground is the
@@ -154,7 +155,25 @@ export function usePendingCaptures(enabled = true) {
     queryKey: queryKeys.pendingCaptures(),
     queryFn: async () => {
       const page = await api.listCaptures({ status: 'all', limit: CAPTURE_LIST_LIMIT });
-      return { items: page.items.filter((capture) => isFilingRelevant(capture)) };
+      let items = page.items;
+      /*
+       * More than twenty: a capture waiting on the user can sit past the
+       * window — a ring files twenty in an afternoon over the one that
+       * failed this morning — and would leave Home without being acted on.
+       * Only then are the two filters that hold such captures asked as well.
+       */
+      if (page.cursor) {
+        const waiting = await Promise.all([
+          api.listCaptures({ status: 'failed', limit: CAPTURE_LIST_LIMIT }),
+          api.listCaptures({ status: 'needs_target', limit: CAPTURE_LIST_LIMIT }),
+        ]);
+        const seen = new Set(items.map((capture) => capture.id));
+        items = [
+          ...items,
+          ...waiting.flatMap((more) => more.items).filter((capture) => !seen.has(capture.id)),
+        ];
+      }
+      return { items: items.filter((capture) => isFilingRelevant(capture)) };
     },
     enabled,
     refetchInterval: (query) => capturePollInterval(query.state.data?.items ?? []),
