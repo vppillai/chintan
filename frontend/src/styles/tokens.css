@@ -350,8 +350,8 @@
 
    `destructive` (#F28B82) is a pastel coral, the one hue here that is
    neither the record lime nor a grey: a menu's Delete, a failed filing's
-   glyph and the fill of a destructive button. On the note tints it is at
-   least 4.59:1. Ink & Paper says the same thing with its burnt orange.
+   glyph and the fill of a destructive button. On the note tints a lighter coral
+   (`on-tint-destructive`) stands in for it. Ink & Paper says the same thing with its burnt orange.
    ========================================================================== */
 
 [data-theme='nocturne'] {
@@ -387,10 +387,11 @@
 
   /* Note tints, deep and saturated: the same hues as Ink & Paper's pastels
      at OKLCH L 0.40, C 0.13, or as near as sRGB holds at that lightness
-     (sand, mint, sky 0.075–0.11; slate 0.078) — 1.65–1.87:1 from a plain
+     (only rose and lavender reach it; peach 0.103, lime
+     0.108, sand and mint 0.082, sky 0.074, slate 0.079) — 1.65–1.87:1 from a plain
      card. On that ground plain faint and destructive fall below AA, so a
      tinted card lifts its muted, faint and destructive (`on-tint-*`): ink
-     ≥8.0:1, muted ≥6.2:1, faint ≥5.0:1, destructive ≥5.2:1. */
+     ≥7.96:1, muted ≥6.21:1, faint ≥4.99:1, destructive ≥5.15:1. */
   --color-tint-rose: #7e1e34;
   --color-tint-peach: #713400;
   --color-tint-sand: #594500;

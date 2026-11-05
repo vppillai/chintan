@@ -206,7 +206,7 @@ muted, faint and Nocturne's destructive are the `on-tint` values. The picker doe
 wash: each swatch is a solid dot of the colour at full strength
 (`--color-dot-<name>`, OKLCH L 0.60, C 0.12, the same in both themes and
 at least 3.2:1 on every ground of either theme), no name beside it — the colour is the label, and a
-name under each dot only crowded the dialog — in a row of 44 px targets;
+name under each dot only crowded the dialog — in a wrapping row of 44 px targets;
 the checked one is ringed in ink. The
 focus ring is ink, outside the card. `e2e/colors.spec.ts` sets a colour
 from the row and from Details, reloads, and runs axe's contrast rule over
