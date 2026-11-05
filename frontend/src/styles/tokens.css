@@ -281,6 +281,7 @@
   --color-tint-slate: #d1dff7;
   --color-on-tint-muted: var(--color-muted);
   --color-on-tint-faint: #625b4d;
+  --color-on-tint-destructive: var(--color-destructive);
 
   /* Ink casts on paper: short, soft, barely tinted. Each step is two layers
      — a tight one for the edge and a wide one for the lift — so a card reads
@@ -349,8 +350,8 @@
 
    `destructive` (#F28B82) is a pastel coral, the one hue here that is
    neither the record lime nor a grey: a menu's Delete, a failed filing's
-   glyph and the fill of a destructive button. On the note tints it is at
-   least 4.59:1. Ink & Paper says the same thing with its burnt orange.
+   glyph and the fill of a destructive button. On the note tints a lighter coral
+   (`on-tint-destructive`) stands in for it. Ink & Paper says the same thing with its burnt orange.
    ========================================================================== */
 
 [data-theme='nocturne'] {
@@ -384,22 +385,24 @@
   --color-overlay: rgb(10 12 11 / 62%);
   --color-selection: rgb(184 241 53 / 22%);
 
-  /* Note tints, deep: the same hues as Ink & Paper's pastels at OKLCH
-     L 0.35, C 0.065 (slate 0.039) — 1.40–1.49:1 from a plain card, where the
-     first set (at the lightness of `raised`) was 1.00–1.02:1 and read as
-     black. On that ground plain faint falls to 3.1:1, so a tinted card
-     lifts its muted and faint (`on-tint-*`): ink ≥10.0:1, muted ≥6.7:1,
-     faint ≥5.1:1, destructive ≥4.59:1. */
-  --color-tint-rose: #572b31;
-  --color-tint-peach: #543016;
-  --color-tint-sand: #483909;
-  --color-tint-lime: #2f411b;
-  --color-tint-mint: #0b4534;
-  --color-tint-sky: #004253;
-  --color-tint-lavender: #423156;
-  --color-tint-slate: #2f3b4f;
-  --color-on-tint-muted: #c4ccc8;
-  --color-on-tint-faint: #aab4ae;
+  /* Note tints, deep and saturated: the same hues as Ink & Paper's pastels
+     at OKLCH L 0.40, C 0.13, or as near as sRGB holds at that lightness
+     (only rose and lavender reach it; peach 0.103, lime
+     0.108, sand and mint 0.082, sky 0.074, slate 0.079) — 1.65–1.87:1 from a plain
+     card. On that ground plain faint and destructive fall below AA, so a
+     tinted card lifts its muted, faint and destructive (`on-tint-*`): ink
+     ≥7.96:1, muted ≥6.21:1, faint ≥4.99:1, destructive ≥5.15:1. */
+  --color-tint-rose: #7e1e34;
+  --color-tint-peach: #713400;
+  --color-tint-sand: #594500;
+  --color-tint-lime: #335200;
+  --color-tint-mint: #00563f;
+  --color-tint-sky: #005064;
+  --color-tint-lavender: #58307f;
+  --color-tint-slate: #2e4772;
+  --color-on-tint-muted: #d4dbd7;
+  --color-on-tint-faint: #bcc6c1;
+  --color-on-tint-destructive: #ffb4ac;
 
   /* Darker and wider than Ink & Paper's: on a near-black page a shadow is
      the only thing that separates one plane from the next. The lift is a
@@ -453,16 +456,17 @@
 
     --color-overlay: rgb(10 12 11 / 62%);
     --color-selection: rgb(184 241 53 / 22%);
-    --color-tint-rose: #572b31;
-    --color-tint-peach: #543016;
-    --color-tint-sand: #483909;
-    --color-tint-lime: #2f411b;
-    --color-tint-mint: #0b4534;
-    --color-tint-sky: #004253;
-    --color-tint-lavender: #423156;
-    --color-tint-slate: #2f3b4f;
-    --color-on-tint-muted: #c4ccc8;
-    --color-on-tint-faint: #aab4ae;
+    --color-tint-rose: #7e1e34;
+    --color-tint-peach: #713400;
+    --color-tint-sand: #594500;
+    --color-tint-lime: #335200;
+    --color-tint-mint: #00563f;
+    --color-tint-sky: #005064;
+    --color-tint-lavender: #58307f;
+    --color-tint-slate: #2e4772;
+    --color-on-tint-muted: #d4dbd7;
+    --color-on-tint-faint: #bcc6c1;
+    --color-on-tint-destructive: #ffb4ac;
 
     --shadow-xs: 0 1px 1px rgb(0 0 0 / 40%);
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 45%), 0 2px 8px rgb(0 0 0 / 35%);
