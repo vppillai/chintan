@@ -220,7 +220,7 @@ scrolls sideways.
 ## The drawer
 
 Details — the transcription language, Tags, "Also called", Colour (the
-row of swatches Home's Colour… dialog holds, home.md "Colour"), the Word for
+grid of swatches Home's Colour… dialog holds, home.md "Colour"), the Word for
 word and Checklist switches, and the note's id in monospace with a **Copy
 note id** button and the `X-Chintan-Note-Id` hint — or Share. The rules:
 

@@ -616,38 +616,47 @@
 
 [data-color='none'] {
   --note-tint: var(--color-raised);
+  --note-dot: var(--color-raised);
 }
 
 [data-color='rose'] {
   --note-tint: var(--color-tint-rose);
+  --note-dot: var(--color-dot-rose);
 }
 
 [data-color='peach'] {
   --note-tint: var(--color-tint-peach);
+  --note-dot: var(--color-dot-peach);
 }
 
 [data-color='sand'] {
   --note-tint: var(--color-tint-sand);
+  --note-dot: var(--color-dot-sand);
 }
 
 [data-color='lime'] {
   --note-tint: var(--color-tint-lime);
+  --note-dot: var(--color-dot-lime);
 }
 
 [data-color='mint'] {
   --note-tint: var(--color-tint-mint);
+  --note-dot: var(--color-dot-mint);
 }
 
 [data-color='sky'] {
   --note-tint: var(--color-tint-sky);
+  --note-dot: var(--color-dot-sky);
 }
 
 [data-color='lavender'] {
   --note-tint: var(--color-tint-lavender);
+  --note-dot: var(--color-dot-lavender);
 }
 
 [data-color='slate'] {
   --note-tint: var(--color-tint-slate);
+  --note-dot: var(--color-dot-slate);
 }
 
 /* `:where` keeps this at the base rule's weight, so `.note-row:active`
@@ -656,9 +665,19 @@
   background-color: var(--note-tint);
 }
 
-/* A tag chip's hairline disappears into a tint; the stronger line keeps it. */
+/* A tint is strong enough to see, so the theme's muted and faint no longer
+   hold AA on it: a tinted card and a tinted note screen carry their own
+   (tokens.css, `on-tint-*`). Only a coloured note has `data-color`, so a
+   plain card keeps the theme's. */
+.note-row[data-color],
+.note-screen[data-color] {
+  --color-muted: var(--color-on-tint-muted);
+  --color-faint: var(--color-on-tint-faint);
+}
+
+/* A tag chip's hairline disappears into a tint; faint (≥5:1 here) keeps it. */
 .note-row[data-color] .note-row__tag {
-  border-color: var(--color-line-strong);
+  border-color: var(--color-faint);
 }
 
 /* The note screen: the tint at the top, fading out under the title. */
@@ -666,7 +685,10 @@
   background-image: linear-gradient(to bottom, var(--note-tint), var(--note-tint) var(--space-8), transparent 12rem);
 }
 
-/* The picker: a row of 44 px swatches, each a radio stretched over its disc. */
+/* The picker: a grid of 44 px swatches, each a solid dot of the colour and
+   its name, the radio stretched over both. The dot is the colour at full
+   strength (`--color-dot-*`) rather than the card's wash, so a choice is
+   told apart at a glance in either theme. */
 .color-picker {
   margin: 0;
   padding: 0;
@@ -675,27 +697,31 @@
 }
 
 .color-picker__swatches {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
   gap: var(--space-1);
 }
 
 .color-picker__swatch {
   position: relative;
-  display: grid;
-  place-items: center;
-  inline-size: var(--layout-touch-target-min);
-  block-size: var(--layout-touch-target-min);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: var(--layout-touch-target-min);
+  padding-inline: var(--space-1) var(--space-2);
   border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
 }
 
 .color-picker__swatch::before {
   content: '';
+  flex: none;
   inline-size: var(--space-8);
   block-size: var(--space-8);
   border: 1px solid var(--color-line-strong);
   border-radius: var(--radius-full);
-  background-color: var(--note-tint);
+  background-color: var(--note-dot);
 }
 
 /* No colour: the plain card with a slash through it. */
@@ -717,9 +743,13 @@
   cursor: pointer;
 }
 
-/* The current colour: a ring in ink, which every tint carries at AA. */
+/* The current colour: a ring in ink round the dot, and its name in bold. */
 .color-picker__swatch:has(:checked)::before {
   border: 3px solid var(--color-ink);
+}
+
+.color-picker__swatch:has(:checked) {
+  font-weight: var(--font-weight-semibold);
 }
 
 .color-picker__swatch:has(:focus-visible) {
