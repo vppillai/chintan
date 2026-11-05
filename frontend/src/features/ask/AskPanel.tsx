@@ -167,7 +167,7 @@ export function AskPanel({ thread, id }: { thread: AskThread; id?: string }) {
 }
 
 /** How many source chips an answer shows before "+n more". */
-export const SOURCE_CHIPS_SHOWN = 3;
+const SOURCE_CHIPS_SHOWN = 3;
 
 function Answer({
   turn,
