@@ -6,13 +6,12 @@ import { colorName } from './colorName.ts';
 import { useModalFocus } from './useModalFocus.ts';
 
 /**
- * A note's tint: a grid of swatches, "No colour" first, each a dot of the
- * colour and its name. Native radios, so the group is one Tab stop, the
- * arrows move through it and a screen reader says "Rose, radio button, 2 of
- * 9, checked" — each radio stretched invisibly over its 44 px swatch (its
- * aria-label is the visible name, so the name is said once), the checked
- * one ringed in ink (`home.css`). Used by the
- * Details drawer and by Home's dialog below.
+ * A note's tint: a row of dots, "No colour" first. Native radios, so the
+ * group is one Tab stop, the arrows move through it and a screen reader says
+ * "Rose, radio button, 2 of 9, checked" — each radio stretched invisibly
+ * over its 44 px dot and named by its aria-label; the dot itself carries no
+ * text. The checked one is ringed in ink (`home.css`). Used by the Details
+ * drawer and by Home's dialog below.
  */
 export function ColorPicker({
   value,
@@ -42,7 +41,6 @@ export function ColorPicker({
                 onChange(color);
               }}
             />
-            <span aria-hidden="true">{colorName(color)}</span>
           </label>
         ))}
       </div>
