@@ -183,26 +183,26 @@ tints differ from the card by lightness and chroma both, and since a
 ground that visible does not keep the theme's `faint` (and in Nocturne
 `muted`) at AA, a tinted card and a tinted note screen swap in their own:
 `--color-on-tint-muted` and `--color-on-tint-faint` (Ink & Paper: `muted`
-itself and `#5a5447`; Nocturne: `#c4ccc8` and `#aab4ae`).
+itself and `#625b4d`; Nocturne: `#c4ccc8` and `#aab4ae`).
 "vs card" is the tint against `raised`; in Ink & Paper it stays under
 1.25:1 by design — a light pastel cannot be much darker and stay a pastel —
 and the hue carries the difference. Contrast, WCAG 2.2, computed:
 
 | Tint | Ink & Paper | vs card | ink | muted | faint | accent-strong | Nocturne | vs card | ink | muted | faint | destructive |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| rose | `#ffced3` | 1.24 | 12.57 | 5.82 | 5.38 | 4.64 | `#572b31` | 1.40 | 10.66 | 7.14 | 5.49 | 4.90 |
-| peach | `#fed4b9` | 1.22 | 12.83 | 5.94 | 5.49 | 4.74 | `#543016` | 1.41 | 10.56 | 7.08 | 5.44 | 4.85 |
-| sand | `#edddb1` | 1.20 | 13.03 | 6.04 | 5.58 | 4.82 | `#483909` | 1.45 | 10.26 | 6.87 | 5.28 | 4.71 |
-| lime | `#d1e7bd` | 1.17 | 13.28 | 6.15 | 5.68 | 4.91 | `#2f411b` | 1.47 | 10.11 | 6.77 | 5.20 | 4.64 |
-| mint | `#b8ebd6` | 1.17 | 13.30 | 6.16 | 5.69 | 4.91 | `#0b4534` | 1.49 | 9.99 | 6.69 | 5.14 | 4.59 |
-| sky | `#b3e8fb` | 1.18 | 13.26 | 6.14 | 5.67 | 4.90 | `#004253` | 1.48 | 10.05 | 6.73 | 5.17 | 4.62 |
-| lavender | `#e7d5ff` | 1.21 | 12.85 | 5.95 | 5.50 | 4.75 | `#423156` | 1.40 | 10.60 | 7.10 | 5.46 | 4.87 |
-| slate | `#d1dff7` | 1.19 | 13.06 | 6.05 | 5.59 | 4.83 | `#2f3b4f` | 1.45 | 10.29 | 6.89 | 5.30 | 4.73 |
+| rose | `#ffced3` | 1.24 | 12.57 | 5.82 | 4.81 | 4.64 | `#572b31` | 1.40 | 10.66 | 7.14 | 5.49 | 4.90 |
+| peach | `#fed4b9` | 1.22 | 12.83 | 5.94 | 4.91 | 4.74 | `#543016` | 1.41 | 10.56 | 7.08 | 5.44 | 4.85 |
+| sand | `#edddb1` | 1.20 | 13.03 | 6.04 | 4.99 | 4.82 | `#483909` | 1.45 | 10.26 | 6.87 | 5.28 | 4.71 |
+| lime | `#d1e7bd` | 1.17 | 13.28 | 6.15 | 5.08 | 4.91 | `#2f411b` | 1.47 | 10.11 | 6.77 | 5.20 | 4.64 |
+| mint | `#b8ebd6` | 1.17 | 13.30 | 6.16 | 5.09 | 4.91 | `#0b4534` | 1.49 | 9.99 | 6.69 | 5.14 | 4.59 |
+| sky | `#b3e8fb` | 1.18 | 13.26 | 6.14 | 5.08 | 4.90 | `#004253` | 1.48 | 10.05 | 6.73 | 5.17 | 4.62 |
+| lavender | `#e7d5ff` | 1.21 | 12.85 | 5.95 | 4.92 | 4.75 | `#423156` | 1.40 | 10.60 | 7.10 | 5.46 | 4.87 |
+| slate | `#d1dff7` | 1.19 | 13.06 | 6.05 | 5.00 | 4.83 | `#2f3b4f` | 1.45 | 10.29 | 6.89 | 5.30 | 4.73 |
 
 muted and faint are the `on-tint` values. The picker does not show the
 wash: each swatch is a solid dot of the colour at full strength
-(`--color-dot-<name>`, OKLCH L 0.65, C 0.12, the same in both themes and
-at least 3:1 on either dialog ground) beside its name, in a grid of 44 px
+(`--color-dot-<name>`, OKLCH L 0.60, C 0.12, the same in both themes and
+at least 3.2:1 on every ground of either theme) beside its name, in a grid of 44 px
 targets; the checked one is ringed in ink and its name set in bold. The
 focus ring is ink, outside the card. `e2e/colors.spec.ts` sets a colour
 from the row and from Details, reloads, and runs axe's contrast rule over

@@ -668,8 +668,10 @@
 /* A tint is strong enough to see, so the theme's muted and faint no longer
    hold AA on it: a tinted card and a tinted note screen carry their own
    (tokens.css, `on-tint-*`). Only a coloured note has `data-color`, so a
-   plain card keeps the theme's. */
+   plain card keeps the theme's. The row's ⋮ sits beside the card, over the
+   same tint, so it takes the swap too. */
 .note-row[data-color],
+.note-row-wrap:has(> .note-row[data-color]) .note-row__menu,
 .note-screen[data-color] {
   --color-muted: var(--color-on-tint-muted);
   --color-faint: var(--color-on-tint-faint);

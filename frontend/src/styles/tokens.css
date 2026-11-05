@@ -147,17 +147,17 @@
   --color-swatch-nocturne-line: #f2f5f3;
 
   /* The colour picker's dots: each note colour at full strength (OKLCH
-     L 0.65, C 0.12; slate 0.054), the same in both themes so a swatch says
-     "rose" even where the card tint is only a wash. At least 3:1 on either
-     theme's dialog ground. Read only by `.color-picker__swatch`. */
-  --color-dot-rose: #cd6e7c;
-  --color-dot-peach: #c77a41;
-  --color-dot-sand: #ac8b26;
-  --color-dot-lime: #779e4b;
-  --color-dot-mint: #2aa681;
-  --color-dot-sky: #019fc3;
-  --color-dot-lavender: #a07bca;
-  --color-dot-slate: #7d90b1;
+     L 0.60, C 0.12; slate 0.054), the same in both themes so a swatch says
+     "rose" even where the card tint is only a wash. At least 3.2:1 on every
+     ground of either theme. Read only by `.color-picker__swatch`. */
+  --color-dot-rose: #bc5f6d;
+  --color-dot-peach: #b66b31;
+  --color-dot-sand: #9c7c0a;
+  --color-dot-lime: #688e3b;
+  --color-dot-mint: #099672;
+  --color-dot-sky: #008fb3;
+  --color-dot-lavender: #916cba;
+  --color-dot-slate: #6e81a1;
 
   --z-content: 1;
   --z-sheet: 20;
@@ -269,7 +269,7 @@
      plain `faint` at AA and came out 1.01–1.06:1 from a plain card, which
      nobody could see. So a tinted card carries its own muted and faint
      (`on-tint-*`, read by home.css): ink ≥12.5:1, muted ≥5.8:1, faint
-     ≥5.3:1, accent-strong ≥4.6:1 (every ratio: docs/design/home.md,
+     ≥4.8:1, accent-strong ≥4.6:1 (every ratio: docs/design/home.md,
      "Colour"). */
   --color-tint-rose: #ffced3;
   --color-tint-peach: #fed4b9;
@@ -280,7 +280,7 @@
   --color-tint-lavender: #e7d5ff;
   --color-tint-slate: #d1dff7;
   --color-on-tint-muted: var(--color-muted);
-  --color-on-tint-faint: #5a5447;
+  --color-on-tint-faint: #625b4d;
 
   /* Ink casts on paper: short, soft, barely tinted. Each step is two layers
      — a tight one for the edge and a wide one for the lift — so a card reads
