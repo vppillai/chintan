@@ -329,8 +329,25 @@ describe('the notifications card on You', () => {
     await waitFor(() => {
       expect(toggle).toHaveAttribute('aria-checked', 'false');
     });
-    expect(localStorage.getItem(PUSH_WANTED_KEY)).toBeNull();
+    expect(localStorage.getItem(PUSH_WANTED_KEY)).toBe('0');
     expect(screen.getByRole('region', { name: 'Notifications' })).not.toHaveTextContent(/not reaching/i);
+  });
+
+  it('counts a browser with permission but no record as turned on (enrolled before the record existed)', async () => {
+    installPushApis({ permission: 'granted' });
+    mount({ enrolled: [] });
+    const card = await screen.findByRole('region', { name: 'Notifications' });
+    await waitFor(() => {
+      expect(card).toHaveTextContent(/not reaching this device/i);
+    });
+  });
+
+  it('stays quiet for a browser with no record and no permission', async () => {
+    installPushApis({ permission: 'default' });
+    mount({ enrolled: [] });
+    const card = await screen.findByRole('region', { name: 'Notifications' });
+    await screen.findByRole('switch', { name: /notify me when a recording files/i });
+    expect(card).not.toHaveTextContent(/not reaching/i);
   });
 });
 
@@ -412,7 +429,18 @@ describe('re-enrolling on launch', () => {
     expect(calls.some((call) => call.method === 'POST')).toBe(false);
   });
 
-  it('leaves a browser that was never turned on alone', async () => {
+  it('subscribes a browser with permission but no record (turned on before the record existed)', async () => {
+    const apis = installPushApis({ permission: 'granted' });
+    const { calls } = mount({ enrolled: [], resync: true });
+    await waitFor(() => {
+      expect(calls.some((call) => call.method === 'POST')).toBe(true);
+    });
+    expect(apis.requestPermission).not.toHaveBeenCalled();
+    expect(localStorage.getItem(PUSH_WANTED_KEY)).toBe('1');
+  });
+
+  it('leaves a browser that was turned off alone', async () => {
+    localStorage.setItem(PUSH_WANTED_KEY, '0');
     const apis = installPushApis({ permission: 'granted' });
     const { calls } = mount({ enrolled: [], resync: true });
     await waitFor(() => {

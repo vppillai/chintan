@@ -155,8 +155,8 @@ just given: `enrolThisBrowser` reads it itself, under a Web Lock
 (`chintan-push-enrol`) so the card, the launch check and a second tab cannot
 drop each other's fresh subscription, and a failed read drops nothing. The
 switch stays held while the list cannot be read, with "Couldn't check which
-devices are enrolled." and a Try again, and the foot counts nothing. On remembers itself on the device
-(`chintan.push.wanted` in `localStorage`) and off forgets it; a browser that
+devices are enrolled." and a Try again, and the foot counts nothing. On and off are remembered on the device
+(`chintan.push.wanted` in `localStorage`, '1' and '0'); a browser that
 was turned on and is not enrolled — it remembers on, or holds a
 subscription the server lacks — reads off with the hint "Not reaching this
 device. Turn on again." instead of the usual one, so a dropped subscription
@@ -178,10 +178,18 @@ service answers 404 or 410 after the browser rotated, expired or dropped it
 data. Once per session the shell (`usePushResync`, mounted in `AppShell`,
 not on the capture screen) checks: with permission already granted, a
 browser that remembers being turned on or holds a subscription, and that
-the server's list does not include, is re-enrolled through the same
+the server's list does not include, is re-enrolled. The memory is
+`chintan.push.wanted` in localStorage, '1' on and '0' off; a browser with no
+record but with permission granted counts as on, since only the card's
+switch asks for permission — that covers a browser turned on before the
+record existed and since dropped by its push service. It also turns back
+on a browser switched off before off was recorded, since off never
+withdraws permission; with one person on the alpha that is accepted, and
+the switch turns it off for good. Such a browser is
+re-enrolled through the same
 `enrolThisBrowser` — a fresh subscription, which needs no tap once
 permission is granted, and the POST. Nothing is fetched for a browser
-without permission or never turned on. Permission the browser itself
+without permission granted. Permission the browser itself
 withdrew cannot be asked for without a tap, so that case is left to the
 card's hint. There is no `pushsubscriptionchange` handler: the service
 worker holds no token to POST with, and the next launch does the same work.
