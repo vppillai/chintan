@@ -35,22 +35,59 @@ env:
 permissions:
   contents: read
 
-concurrency:
-  group: pages-deploy
-  cancel-in-progress: true
-
 jobs:
+  # The bundle is built against the API that prod runs, so it waits for
+  # prod to run this commit's backend. Deploy Backend tags `vX.Y.Z` only on
+  # a successful prod deploy, so the backend paths differing between HEAD
+  # and the newest tag say prod is behind: a push or a workflow_run then
+  # skips the publish and leaves it to the workflow_run that follows the
+  # backend deploy that catches up. Gating on HEAD^1 alone let a push whose
+  # own commit was frontend-only publish while an earlier commit's backend
+  # was still deploying. A dispatch is unconditional. The paths are Deploy
+  # Backend's own; config/** and scripts/lib/common.sh are in both.
+  follows-backend:
+    name: Is prod on this backend?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      backend: ${{ steps.paths.outputs.backend }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: paths
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          backend=false
+          latest="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)"
+          if [ "$EVENT" != "workflow_dispatch" ] && [ -n "$latest" ] && git diff --name-only "$latest" HEAD |
+            grep -qE '^(backend/|infrastructure/|config/|scripts/(deploy|ci-deploy-stack|build-lambda|list-instances)\.sh$|scripts/lib/common\.sh$|\.github/workflows/deploy-backend\.yaml$)'; then
+            backend=true
+          fi
+          echo "latest=$latest backend=$backend"
+          echo "backend=$backend" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build instance bundles
     runs-on: ubuntu-latest
+    needs: follows-backend
+    # On the build and the publish, not the workflow: a run that skips must
+    # not cancel another run's publish.
+    concurrency:
+      group: pages-build
+      cancel-in-progress: true
     # Required: the OIDC trust policy scopes by environment, and a job
     # without one gets a ref: subject that matches nothing.
     environment: build
     # Only auto-follow a successful backend deploy; a manual run or a
-    # frontend-only push is unconditional.
+    # frontend push is unconditional once prod runs this commit's backend
+    # (follows-backend).
     if: >-
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success') &&
+      needs.follows-backend.outputs.backend != 'true'
     permissions:
       contents: read
       id-token: write
@@ -64,7 +101,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       - run: python3 -m pip install --quiet --disable-pip-version-check pyyaml==6.0.3
@@ -105,6 +142,9 @@ jobs:
     name: Publish to Pages
     runs-on: ubuntu-latest
     needs: build
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: true
     # actions/deploy-pages requires this exact environment name; the Pages
     # service rejects a deployment from any other environment.
     environment:

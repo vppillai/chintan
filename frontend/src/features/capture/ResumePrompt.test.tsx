@@ -65,7 +65,7 @@ async function mount(
 ): Promise<void> {
   const queryClient = testQueryClient();
   if (settled) {
-    await queryClient.prefetchQuery({ queryKey: queryKeys.unsentCaptures(), queryFn: unconfirmedCaptures });
+    await queryClient.prefetchQuery({ queryKey: queryKeys.unsentCaptures(), queryFn: () => unconfirmedCaptures() });
   }
   render(
     <TestProviders api={testApiContext(fetchImpl)} queryClient={queryClient}>
@@ -95,6 +95,8 @@ describe('an unsent recording is offered back', () => {
     await saveCaptureRecord(
       stranded({ localId: 'cap-b', serverCaptureId: 'srv-b', createdAt: Date.now() - 60_000 }),
     );
+    await appendChunk('cap-a', 0, new Blob(['webm bytes'], { type: 'audio/webm' }));
+    await appendChunk('cap-b', 0, new Blob(['webm bytes'], { type: 'audio/webm' }));
     await mount();
 
     const region = await screen.findByRole('region', { name: 'Unsent recording' });
@@ -137,9 +139,11 @@ describe('Send', () => {
 
   it('says why when the upload fails, and keeps the recording', async () => {
     const user = userEvent.setup();
-    // A record with no chunks behind it: the one failure `uploadCapture`
-    // reports before it talks to the server.
+    // A chunk with no bytes in it: the one failure `uploadCapture` reports
+    // before it talks to the server. (A record with no chunk at all is not
+    // offered; see `unconfirmedCaptures`.)
     await saveCaptureRecord(stranded());
+    await appendChunk('cap-a', 0, new Blob([], { type: 'audio/webm' }));
     await mount();
 
     await user.click(await screen.findByRole('button', { name: 'Send' }));

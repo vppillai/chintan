@@ -222,7 +222,8 @@ export async function uploadCapture(
      *
      * So: if the credential we were handed is already dead, ask again under a
      * key the server has nothing stored for. That costs a second capture row
-     * with no object behind it — which the purge sweeper reaps — and it is the
+     * with no object behind it — which the reaper marks failed, "The
+     * recording never finished uploading.", once its link has expired — and it is the
      * only way to get live credentials without the server re-minting on
      * replay, which is where this belongs and where it is not yet done. When
      * that lands, this branch simply stops being taken.

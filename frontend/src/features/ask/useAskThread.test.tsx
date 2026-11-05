@@ -1,3 +1,4 @@
+import { onlineManager } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -6,7 +7,7 @@ import { askPending } from '@/api/__fixtures__/responses.ts';
 import { onAFakeClock } from '@/test/clock.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
-import { NOT_SENT_MESSAGE, THREAD_KEY, loadThread } from './thread.ts';
+import { NOT_SENT_MESSAGE, OFFLINE_MESSAGE, THREAD_KEY, loadThread } from './thread.ts';
 import { useAskThread } from './useAskThread.ts';
 
 /**
@@ -231,5 +232,28 @@ describe('Try again on a question that never reached this side', () => {
     expect(new Set(posts.map((post) => post.body)).size).toBe(1);
     expect(result.current.turns).toHaveLength(1);
     expect(result.current.turns[0]?.key).toBe(key);
+  });
+});
+
+describe('a question asked offline', () => {
+  it('fails at once with its own sentence, rather than waiting on a connection', async () => {
+    const { fetchImpl, posts } = server();
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+    onlineManager.setOnline(false);
+    try {
+      const view = renderHook(() => useAskThread(), { wrapper: wrapperFor(fetchImpl) });
+      act(() => {
+        view.result.current.ask('What did Ellis quote?');
+      });
+
+      await waitFor(() => {
+        expect(view.result.current.turns[0]).toMatchObject({ status: 'failed', error: OFFLINE_MESSAGE });
+      });
+      expect(view.result.current.busy).toBe(false);
+      expect(posts).toHaveLength(0);
+    } finally {
+      Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+      onlineManager.setOnline(true);
+    }
   });
 });

@@ -189,9 +189,10 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 	// test exists to surface.
 	// Pinned the same way, and in this order: the two notes lead the list in
 	// pin_rank order — tagged first at 0, plain at 1000 — above the touch
-	// order the rest of the page keeps.
+	// order the rest of the page keeps. The tagged note is tinted too, so the
+	// list and detail fixtures carry a colour other than none.
 	h.do(t, http.MethodPatch, "/v1/notes/"+tagged.ID, contractUser,
-		map[string]any{"version": tagged.Version, "pinned": true})
+		map[string]any{"version": tagged.Version, "pinned": true, "color": "mint"})
 	h.do(t, http.MethodPatch, "/v1/notes/"+plain.ID, contractUser,
 		map[string]any{"version": plain.Version, "verbatim": true, "pinned": true})
 
@@ -406,6 +407,10 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		tagged2.do(t, http.MethodPost, "/v1/captures", contractUser, map[string]any{
 			"content_type": "audio/webm", "size_bytes": 4 << 20, "duration_ms": 12_000, "peak": 0.21,
 		}))
+
+	add("captureTextAccepted", "CaptureTextAcceptedWire",
+		"POST /v1/captures/text → 202. A typed thought, already transcribed; the worker routes, cleans and appends it.",
+		newHarness(t).do(t, http.MethodPost, "/v1/captures/text", contractUser, map[string]any{"text": "Call the roofer about the ridge."}))
 
 	// ---- recording edits: delete, move, and the download manifest
 	edits := newHarness(t)
@@ -847,7 +852,7 @@ func renderContractFixtures(t *testing.T, fixtures []contractFixture) string {
 func neededSchemaTypes(fixtures []contractFixture) []string {
 	known := map[string]bool{
 		"AskWire":            true,
-		"CaptureCreatedWire": true, "CaptureWire": true, "DeviceCreatedWire": true, "DeviceWire": true, "ExportJobWire": true,
+		"CaptureCreatedWire": true, "CaptureTextAcceptedWire": true, "CaptureWire": true, "DeviceCreatedWire": true, "DeviceWire": true, "ExportJobWire": true,
 		"PushKeyWire": true, "PushSubscriptionWire": true,
 		"MatchResponseWire": true, "NoteCleanQueuedWire": true, "NoteDetailWire": true, "NoteWire": true,
 		"NoteRegenerateQueuedWire": true, "Page": true, "PresignedDownloadWire": true, "ProblemWire": true,

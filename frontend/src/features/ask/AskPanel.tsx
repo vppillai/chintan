@@ -9,7 +9,8 @@ import { renderMarkdown } from '@/features/notes/markdown.ts';
 import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
 import { COST_NOTE, costNoteDismissed, dismissCostNote } from './costNote.ts';
-import { TIMEOUT_MESSAGE, noteFromThread, sourceLabels, type AskTurn } from './thread.ts';
+import { noteFromThread, sourceLabels } from './panelThread.ts';
+import { TIMEOUT_MESSAGE, type AskTurn } from './thread.ts';
 import type { AskThread } from './useAskThread.ts';
 
 /**
@@ -166,7 +167,7 @@ export function AskPanel({ thread, id }: { thread: AskThread; id?: string }) {
 }
 
 /** How many source chips an answer shows before "+n more". */
-export const SOURCE_CHIPS_SHOWN = 3;
+const SOURCE_CHIPS_SHOWN = 3;
 
 function Answer({
   turn,

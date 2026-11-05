@@ -24,7 +24,7 @@ link (`base.css` `.skip-link`, `--z-skip-link`) and `useRouteFocus` land
 `note-screen.md`'s. The shell mounts the app-wide hooks once: `useBackGuard`,
 `usePendingTab`, `useScrollRestore` (`navigation.md`), `useKeyboardInset`
 (`note-screen.md`), `useResendOnReconnect` (`offline.md`), `usePushWakeup`
-(`push.md`) and `usePasskeyReturn` (`auth.md`). Below the gate — the shell
+and `usePushResync` (`push.md`) and `usePasskeyReturn` (`auth.md`). Below the gate — the shell
 renders `SignedOutScreen` alone while `useAuthGate` is not `signed-in` — so
 no authenticated query can mount without a token.
 
@@ -146,7 +146,10 @@ and every chunk `index.html` preloads — is held under `BUDGET_BYTES` in
 `frontend/scripts/check-bundle.mjs`, CI's step after the build; the ratchet
 rule is in its header. Everything else is a chunk fetched when first
 wanted and precached by the worker from then on: You (`SettingsScreen`),
-Usage, About, the Ask panel, the note's Details/Share drawer (`NoteDrawer`,
+Usage, About, the Ask panel (with the thread's chip labels and Save as note,
+`ask/panelThread.ts`; Home keeps only what holds and sends the thread),
+Home's `ResumePrompt` and `PasskeyNudge` (each says something only after a
+crash or until a passkey exists), the note's Details/Share drawer (`NoteDrawer`,
 `React.lazy` behind a `Suspense` in `NoteDetailScreen`) and the zip writer
 with `fflate` (`zipRecordings`, an `import()` when an archive is asked for).
 The capture screen is in the main chunk on purpose: as a lazy chunk it cost

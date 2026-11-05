@@ -8,6 +8,7 @@ import { LanguageSelect } from '@/components/LanguageSelect.tsx';
 import { config } from '@/config/env.ts';
 import { AccountHeader } from '@/features/auth/AccountHeader.tsx';
 import { PasskeyCard } from '@/features/auth/PasskeyCard.tsx';
+import { useOnline } from '@/hooks/useOnline.ts';
 import { REPOSITORY_URL } from '@/screens/AboutScreen.tsx';
 import { THEME_LABELS, THEME_PREFERENCES, type ThemePreference } from '@/theme/theme.ts';
 import { useTheme } from '@/theme/useTheme.ts';
@@ -26,7 +27,7 @@ import { formatDollars } from './usage.ts';
  * be showed "45 days" while the audio went on day 30: the
  * choice is now one of the five, and what is shown is what is stored.
  */
-export const RETENTION_TIERS = [0, 7, 30, 90, 365] as const;
+const RETENTION_TIERS = [0, 7, 30, 90, 365] as const;
 
 /**
  * The theme segments. "Follow system" is the preference's full name (it is
@@ -75,6 +76,7 @@ const SAVED_TICK_MS = 2_500;
 export function SettingsScreen() {
   const { preference, resolved, setPreference } = useTheme();
   const { data: stored, isLoading, isError: loadFailed, refetch } = useSettings();
+  const online = useOnline();
   const save = useSaveSettings();
   const usage = useUsage();
 
@@ -156,6 +158,12 @@ export function SettingsScreen() {
             <span className="settings-status__text settings-status__text--saved">
               <Icon name="check" size={16} className="settings-status__tick" />
               Saved
+            </span>
+          ) : !online && !stored ? (
+            // Nothing to load from: the settings are not kept on the device,
+            // and "Loading…" over the defaults never ended.
+            <span className="settings-status__text">
+              Offline — your settings load when you reconnect.
             </span>
           ) : loadFailed ? (
             <>

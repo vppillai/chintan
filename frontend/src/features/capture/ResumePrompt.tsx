@@ -32,7 +32,7 @@ export function ResumePrompt() {
 
   const { data } = useQuery({
     queryKey: queryKeys.unsentCaptures(),
-    queryFn: () => unconfirmedCaptures(),
+    queryFn: () => unconfirmedCaptures(useCaptureStore.getState().model.localId),
     // Read once on boot. Nothing else creates entries behind the app's back:
     // a live capture drives this state itself.
     staleTime: Infinity,

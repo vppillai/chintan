@@ -134,8 +134,13 @@ export class Session {
       .catch((error: unknown) => {
         // A refresh that fails because the network is down must NOT sign the
         // user out — they are offline, not unauthenticated, and clearing the
-        // session here would lose the queued mutations with it.
-        if (error instanceof ApiError && error.isOffline) throw error;
+        // session here would lose the queued mutations with it. Nor one the
+        // token endpoint could not answer — a 5xx, a 429, a timeout: Cognito
+        // having a bad minute is not Cognito refusing the refresh token, and
+        // clearing on it unmounted every open editor mid-draft. Only a refusal
+        // (`invalid_grant`, a 400 read as 401) ends the session; a 403 or
+        // anything else unexpected keeps it, to be asked again.
+        if (!(error instanceof ApiError) || !error.isUnauthorized) throw error;
         // Already cleared — by sign-out, or by an earlier failure. Clearing
         // again would bump the generation under a newer refresh.
         if (generation !== this.generation) throw error;
@@ -201,12 +206,23 @@ export class CognitoRefresher implements TokenRefresher {
         body,
         signal: controller.signal,
       });
+      // 400 is Cognito refusing the refresh token (`invalid_grant`): the one
+      // answer that ends the session. Anything else is the endpoint failing,
+      // and the session stays, so it must not tell anyone to sign in again.
+      if (response.status === 400) {
+        throw new ApiError({
+          kind: 'http',
+          status: 401,
+          title: 'Your session has expired',
+          detail: 'Sign in again to continue.',
+        });
+      }
       if (!response.ok) {
         throw new ApiError({
           kind: 'http',
-          status: response.status === 400 ? 401 : response.status,
-          title: 'Your session has expired',
-          detail: 'Sign in again to continue.',
+          status: response.status,
+          title: 'Could not reach sign-in',
+          detail: "Couldn't reach sign-in. Try again in a moment.",
         });
       }
       wire = await untilAborted(response.json() as Promise<TokenSetWire>, controller.signal);

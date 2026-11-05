@@ -62,6 +62,13 @@ func (s *NotesService) RestoreNote(ctx context.Context, userID, noteID string) (
 	if NoteIsActive(note) {
 		return note, nil
 	}
+	// Past its deadline the note is the expiry sweep's (internal/purge), which
+	// reads the row once more and then deletes its objects; a restore landing
+	// after that read would bring back a row with nothing behind it. The trash
+	// list already hides it, so this answers only a stale list, as gone.
+	if note.PurgeAfterEpoch != 0 && s.now().Unix() >= note.PurgeAfterEpoch {
+		return model.NoteIndex{}, repository.ErrNotFound
+	}
 
 	// Clear archive fields, including the TTL, so the table stops counting down.
 	note.DeletedAt = ""

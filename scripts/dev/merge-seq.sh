@@ -56,6 +56,12 @@ rebase_pr() {
             }
             GIT_EDITOR=true git rebase --continue >/dev/null 2>&1 || true
         done
+        # A rebase where only docs/backlog.md changed (main's rows merged in cleanly) leaves the
+        # generated view stale and CI's "docs/backlog-open.md is current" red: regenerate it always.
+        python3 scripts/backlog-view.py >/dev/null || exit 2
+        if ! git diff --quiet -- docs/backlog-open.md; then
+            git commit -q -m "Regenerate the open backlog view after the rebase" -- docs/backlog-open.md || exit 2
+        fi
         git push -q --force-with-lease origin "$branch" && echo "pushed rebased $wt"
     ) || return 2
     sleep 30

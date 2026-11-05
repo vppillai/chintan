@@ -99,12 +99,35 @@ export async function recordedHereIds(): Promise<Set<string>> {
  * Read on startup: a tab killed mid-upload leaves audio here, and this is what
  * lets the app offer to resend it rather than losing it.
  */
-export async function unconfirmedCaptures(): Promise<StoredCapture[]> {
-  const records = await listCaptureRecords();
-  return records
-    .filter((record) => record.uploadedAt === null)
-    .sort((a, b) => a.createdAt - b.createdAt);
+export async function unconfirmedCaptures(
+  /** The capture store's own recording, never dropped from under it. */
+  active: string | null = null,
+): Promise<StoredCapture[]> {
+  const db = await openChintanDB();
+  const unsent = (await listCaptureRecords()).filter((record) => record.uploadedAt === null);
+  const kept: StoredCapture[] = [];
+  for (const record of unsent) {
+    /*
+     * A record with no audio behind it: a tab killed after the microphone
+     * opened and before the first chunk landed. Offered, it read "0:00" and
+     * its Send could only fail. The disk is asked, not the record, which is
+     * refreshed only now and then while recording. One older than a minute
+     * is dropped; a younger one may be a recording still waiting on its
+     * first chunk, and is only left unoffered.
+     */
+    if ((await db.countFromIndex('captureChunks', 'byLocalId', record.localId)) === 0) {
+      if (record.localId !== active && Date.now() - record.createdAt > EMPTY_RECORD_GRACE_MS) {
+        await db.delete('captures', record.localId);
+      }
+      continue;
+    }
+    kept.push(record);
+  }
+  return kept.sort((a, b) => a.createdAt - b.createdAt);
 }
+
+/** Far past the first chunk (`CHUNK_INTERVAL_MS`), so a live recording is never the one dropped. */
+const EMPTY_RECORD_GRACE_MS = 60_000;
 
 /**
  * Prunes a capture's audio. Called ONLY after the server has confirmed the

@@ -56,6 +56,16 @@ describe('rankLocal', () => {
     expect(rankLocal(CORPUS, 'admin')[0]?.noteId).toBe('car');
   });
 
+  it('needs every word, anywhere in the note, as the server does', () => {
+    // "rosemary" and "gutter" are a sentence apart; "roof" is in a title and
+    // "slipped" in that note's text. A phrase match found neither.
+    expect(rankLocal(CORPUS, 'rosemary gutter').map((hit) => hit.noteId)).toEqual(['garden']);
+    expect(rankLocal(CORPUS, 'roof slipped').map((hit) => hit.noteId)).toEqual(['roof']);
+    expect(rankLocal(CORPUS, 'roof rosemary').map((hit) => hit.noteId)).toEqual(['garden']);
+    // A word no note has rules every note out.
+    expect(rankLocal(CORPUS, 'roof plumber')).toEqual([]);
+  });
+
   it('is case-insensitive', () => {
     expect(rankLocal(CORPUS, 'ROOF')[0]?.noteId).toBe('roof');
   });

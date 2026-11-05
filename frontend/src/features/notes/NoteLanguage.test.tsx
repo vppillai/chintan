@@ -168,6 +168,7 @@ describe('the language is where the user looks', () => {
       'Transcription language',
       'Tags',
       'Also called',
+      'Colour',
       'Word for word',
       'Checklist',
       'Note id',

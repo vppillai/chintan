@@ -70,12 +70,19 @@ race made deterministic.
    recording into a note is a second stamper of that note (`moveInto`):
    it stamps the target before copying the paragraph in, clears the stamp with
    the target's refresh, and refuses the move rather than stamp over a worker's.
-2. **Clear after indexing.** `RefreshNoteIndex` (`ClearAppendStampFor`) clears
-   the two attributes in the same `PutNote` that publishes the paragraph's
-   snippet and search text,
-   so the row's version is once more a witness of the body. An append that
+2. **Clear after completing.** The worker's `RefreshNoteIndex` publishes the
+   paragraph's snippet and search text and bumps the version, so the row's
+   version is once more a witness of the body; the stamp stays until
+   `CompleteCaptureAppend` has marked the capture appended, and then
+   `ClearNoteAppend` removes it, conditional on the stamp still naming the
+   capture; a retry or redelivery that finds the capture already appended
+   clears it too, for the attempt that died between the two. Cleared any earlier, a completion that failed left the paragraph
+   open to a save while the capture was unfinished: the edit moved the words
+   off the marker, the retry did not recognise its own paragraph, and the
+   takeover after the lease wrote the dictation twice. A move clears its
+   stamp with the target's refresh (`ClearAppendStampFor`). An append that
    hands its claim back without writing clears the stamp with
-   `ClearNoteAppend`, conditional on the stamp still naming it.
+   `ClearNoteAppend` too.
 3. **Refuse the save.** `UpdateNote` refuses a body write with
    `ErrAppendInProgress` while `appending_capture` is set and `appending_at` is
    younger than `AppendClaimLease` — checked **before** the version, because
@@ -105,7 +112,12 @@ semantics by construction and cannot test them.
 problem shape (`current_version` present) plus `"reason": "append_in_progress"`
 and `Retry-After: 2`. The client repeats the **same** save unchanged after the
 header and does not rebase; once the paragraph is in the body the next answer
-is a plain 409 and the normal conflict prompt is the right outcome. The reason
+is a plain 409 and the normal conflict prompt is the right outcome. Still
+refused after `APPEND_WAIT_LIMIT` waits, the append is stuck behind its lease
+(below), not landed: the save fails with "A recording is still being added to
+this note. Try again in a few minutes." rather than offering Keep my edits
+against a paragraph that never arrived. The offline queue leaves such an entry
+for its next pass, counting no attempt (`offline.md`). The reason
 is a fixed string the frontend matches, like `type` for the spend cap. Fixture:
 `problemAppendInProgress` in `frontend/src/api/__fixtures__/responses.ts`.
 
@@ -120,7 +132,8 @@ words did not.** The sync effect, on a newer `note`, resets a settled editor
 to it, and otherwise rebases the draft onto the new version when the
 server's text is what this editor last saved (`sameText`); the 409 path
 fetches the server's copy and, under the same test, rebases and resends once
-(`rebased`); and `adopt(fresh)` is that rule on demand, for a caller holding
+(`rebased`) — and when that copy cannot be fetched, fails the save for Try
+again rather than building a conflict from a guess; and `adopt(fresh)` is that rule on demand, for a caller holding
 a copy it knows is the server's own. `useApplyTidy` (`useTidyList.ts`) is
 that caller: a child's effect runs before the editor's own sync effect has
 seen the poll that brought the tidy's answer, so without it the answer would

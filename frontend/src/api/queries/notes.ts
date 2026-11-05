@@ -19,7 +19,14 @@ import { useEffect } from 'react';
 import { cacheNoteDetail, cacheNoteList, forgetNote } from '@/offline/notesCache.ts';
 
 import { useApi } from '../ApiProvider.tsx';
-import type { NoteCreateWire, NoteDetailWire, NoteListQuery, NoteWire, Page } from '../schema.ts';
+import type {
+  NoteColor,
+  NoteCreateWire,
+  NoteDetailWire,
+  NoteListQuery,
+  NoteWire,
+  Page,
+} from '../schema.ts';
 
 import {
   OFFLINE_NOTES_KEY,
@@ -399,6 +406,52 @@ export function usePinNote() {
   });
 }
 
+/**
+ * `PATCH /v1/notes/{id} {color}` from Home's row: shown at once, put back if
+ * refused. One scope per note serialises the requests, and each reads the
+ * version the previous one left in the cache, so arrowing through the
+ * swatches is a run of saves rather than a run of version conflicts.
+ * The note screen does not use this: there the colour rides the editor's
+ * draft, and with it the offline queue (`useNoteEditor`).
+ */
+export function useColorNote(noteId: string) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  const versionOf = (fallback: number): number => {
+    for (const [, data] of queryClient.getQueriesData<InfiniteData<Page<NoteWire>>>({
+      queryKey: ['notes'],
+      predicate: (query) => isNoteListKey(query.queryKey),
+    })) {
+      for (const page of data?.pages ?? []) {
+        const row = page.items.find((item) => item.id === noteId);
+        if (row) return row.version;
+      }
+    }
+    return fallback;
+  };
+  return useMutation({
+    scope: { id: `color:${noteId}` },
+    mutationFn: ({ version, color }: { version: number; color: NoteColor }) =>
+      api.updateNote(noteId, { version: versionOf(version), color }),
+    onMutate: async ({ color }) => {
+      const lists = await snapshotNoteLists(queryClient);
+      patchNoteLists(queryClient, (row) => (row.id === noteId ? { ...row, color } : row));
+      return { lists };
+    },
+    onSuccess: (saved) => {
+      patchNoteLists(queryClient, (row) =>
+        row.id === noteId ? { ...row, color: saved.color ?? 'none', version: saved.version } : row,
+      );
+      queryClient.setQueryData<NoteDetailWire>(queryKeys.note(noteId), (current) =>
+        current ? { ...current, color: saved.color ?? 'none', version: saved.version } : current,
+      );
+    },
+    onError: (_error, _vars, context) => {
+      restoreNoteLists(queryClient, context?.lists);
+    },
+  });
+}
+
 /** `POST /v1/notes/pins {ids}`: one request per drag, the whole pinned order. */
 export function useReorderPins() {
   const api = useApi();
@@ -439,6 +492,8 @@ function rowOf(row: NoteWire, saved: NoteDetailWire): NoteWire {
     // stands until the list is refetched.
     ...(saved.snippet ? { snippet: saved.snippet } : {}),
     ...(saved.language ? { language: saved.language } : {}),
+    // A colour chosen on the note screen tints Home's row before any refetch.
+    ...(saved.color ? { color: saved.color } : {}),
   };
 }
 

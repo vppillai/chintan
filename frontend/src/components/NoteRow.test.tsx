@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { NoteWire } from '@/api/schema.ts';
@@ -8,6 +8,7 @@ import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx'
 import { setCanHover } from '@/test/setup.ts';
 
 import { NoteRow } from './NoteRow.tsx';
+import { StatusRegion } from './StatusRegion.tsx';
 import { Toast, dismissToast } from './Toast.tsx';
 
 /**
@@ -119,6 +120,7 @@ describe('NoteRow swipe actions', () => {
     await user.click(more);
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
       'Pin',
+      'Colour…',
       'Delete',
     ]);
     await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
@@ -261,5 +263,105 @@ describe('NoteRow swipe actions', () => {
 
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(calls.filter((call) => call.startsWith('DELETE'))).toEqual([]);
+  });
+});
+
+describe('NoteRow colour', () => {
+  it('wears its tint, and Colour… sends the colour alone, tints at once and says so', async () => {
+    const user = userEvent.setup();
+    const { calls, bodies } = mount({ ...ACTIVE, color: 'sky' });
+    render(<StatusRegion />);
+    const row = screen.getByRole('button', { name: /roof repair/i });
+    expect(row).toHaveAttribute('data-color', 'sky');
+
+    await user.click(screen.getByRole('button', { name: 'More' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Colour…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Colour for “Roof repair”' });
+    const swatches = within(dialog).getAllByRole('radio');
+    expect(swatches.map((swatch) => swatch.getAttribute('aria-label'))).toEqual([
+      'No colour', 'Rose', 'Peach', 'Sand', 'Lime', 'Mint', 'Sky', 'Lavender', 'Slate',
+    ]);
+    expect(within(dialog).getByRole('radio', { name: 'Sky' })).toBeChecked();
+
+    await user.click(within(dialog).getByRole('radio', { name: 'Rose' }));
+    await waitFor(() => {
+      expect(calls).toContain('PATCH /v1/notes/roof-repair');
+    });
+    expect(bodies).toContainEqual({ version: ACTIVE.version, color: 'rose' });
+    expect(await screen.findByText('Colour: Rose')).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Done' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('wears no tint without a colour, and offers no Colour… offline', async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+    mount(ACTIVE);
+    expect(screen.getByRole('button', { name: /roof repair/i })).not.toHaveAttribute('data-color');
+    await user.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.getByRole('menuitem', { name: 'Colour…' })).toBeDisabled();
+  });
+});
+
+describe('a search hit', () => {
+  it('marks every word of the search, apart, as the search matched them', () => {
+    render(
+      <TestProviders api={testApiContext(vi.fn<typeof fetch>())}>
+        <MemoryRouter>
+          <NoteRow note={ACTIVE} excerpt="Ridge tiles on the south slope have slipped." highlight="SLIPPED ridge" />
+        </MemoryRouter>
+      </TestProviders>,
+    );
+    const marks = Array.from(document.querySelectorAll('mark.search-hit')).map((mark) => mark.textContent);
+    expect(marks).toEqual(['Ridge', 'slipped']);
+  });
+
+  it('draws words inside another word once, the text unchanged', () => {
+    // "kit" and "hen" both lie inside "kitchen"; comparing with the previous
+    // match rather than the last kept one drew "kitchenhen".
+    render(
+      <TestProviders api={testApiContext(vi.fn<typeof fetch>())}>
+        <MemoryRouter>
+          <NoteRow note={ACTIVE} excerpt="Fix the kitchen tap" highlight="kitchen kit hen" />
+        </MemoryRouter>
+      </TestProviders>,
+    );
+    const snippet = document.querySelector('.note-row__snippet');
+    expect(snippet?.textContent).toBe('Fix the kitchen tap');
+    expect(Array.from(document.querySelectorAll('mark.search-hit')).map((mark) => mark.textContent)).toEqual([
+      'kitchen',
+    ]);
+  });
+
+  it('opens the note with Find on the first word searched for', async () => {
+    const user = userEvent.setup();
+    let arrived: unknown = null;
+    function Arrival() {
+      arrived = useLocation().state;
+      return null;
+    }
+    render(
+      <TestProviders api={testApiContext(vi.fn<typeof fetch>())}>
+        <MemoryRouter>
+          <Routes>
+            <Route path="/" element={<NoteRow note={ACTIVE} excerpt="Ridge tiles" highlight=" tiles ridge" />} />
+            <Route path="/notes/:id" element={<Arrival />} />
+          </Routes>
+        </MemoryRouter>
+      </TestProviders>,
+    );
+    await user.click(screen.getByRole('button', { name: /roof repair/i }));
+    expect(arrived).toEqual({ find: 'tiles' });
+  });
+});
+
+describe('a hit only the server found', () => {
+  it('offers no Pin or Colour…, which would be sent on a version the row never had', async () => {
+    const user = userEvent.setup();
+    mount({ ...ACTIVE, version: 0, updated_at: '' });
+    await user.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.getByRole('menuitem', { name: 'Pin' })).toBeDisabled();
+    expect(screen.getByRole('menuitem', { name: 'Colour…' })).toBeDisabled();
   });
 });

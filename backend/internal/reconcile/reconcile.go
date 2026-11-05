@@ -41,6 +41,17 @@ const Task = "reconcile-stuck"
 // because it reaches the person; the worker log carries the rest.
 const Verdict = "Filing did not finish. Retry to try again."
 
+// NeverUploadedVerdict is the sentence on an `uploaded` capture whose
+// recording never landed before its upload link ran out. No Retry can help
+// it — the bytes are on the device that recorded them, whose resend arrives
+// as a new capture — so the sentence promises none.
+const NeverUploadedVerdict = "The recording never finished uploading."
+
+// runBudget is how much of the invocation a pass wants left before it starts
+// resuming another capture: two transcriptions, a cleanup and an append with
+// room to spare, under the worker's 900 s timeout.
+const runBudget = 13 * time.Minute
+
 // Store is the slice of repository.Store the task reads and writes.
 type Store interface {
 	StuckCaptures(ctx context.Context, before string) ([]model.CaptureIndex, error)
@@ -108,6 +119,16 @@ func (r *Reaper) Run(ctx context.Context) (Report, error) {
 		return report, fmt.Errorf("reconcile: list stuck captures: %w", err)
 	}
 	for _, c := range stuck {
+		// One resume can take a transcription twice over (the post-routing
+		// re-transcription), a cleanup and an append: past this much of the
+		// invocation left, a run started now could be killed with the
+		// timeout, the pass retried by Lambda and dead-lettered (a page),
+		// and every capture after it never reached. The next pass, fifteen
+		// minutes on, takes the rest.
+		if deadline, ok := ctx.Deadline(); ctx.Err() != nil || (ok && time.Until(deadline) < runBudget) {
+			obs.Log(ctx).Info("reconcile pass out of time; leaving the rest to the next pass")
+			break
+		}
 		// The store's cutoff is the plain rule; CaptureStuck adds the append
 		// claim's lease, inside which the holder may still be writing.
 		if !service.CaptureStuck(c, now) {
@@ -123,14 +144,33 @@ func (r *Reaper) Run(ctx context.Context) (Report, error) {
 			// died. Running it would hand the provider a link to nothing,
 			// fail the capture and page, and a PUT landing afterwards would
 			// find a terminal row. The server's own Retry refuses this row
-			// (service.RetryCapture, uploadMayStillLand), and so does this.
+			// (service.RetryCapture, UploadMayStillLand), and so does this
+			// while the link could still be used.
 			present, err := r.objects.Exists(cctx, c.AudioKey)
 			if err != nil {
 				log.Error("could not check for the recording's audio; the next pass will try again", slog.String("error", err.Error()))
 				continue
 			}
 			if !present {
-				log.Info("uploaded capture has no recording yet; leaving it for the upload")
+				if service.UploadMayStillLand(c, now) {
+					log.Info("uploaded capture has no recording yet; leaving it for the upload")
+					continue
+				}
+				// Past the link's expiry nothing can land on this row. Left
+				// pending it was rescanned every pass and polled by the app
+				// for good, with nothing ever to say why.
+				// Not counted as CaptureReaped: the capture-reaped alarm
+				// pages on a pipeline that stalled, and this is an upload
+				// the app gave up on — a resume after the link expired
+				// re-keys and leaves exactly this row behind.
+				log.Warn("uploaded capture's recording never landed and its upload link has expired; marking it failed")
+				failed, err := r.fail(cctx, c.UserID, c.ID, NeverUploadedVerdict)
+				if err != nil {
+					log.Error("could not mark the abandoned upload failed; the next pass will try again", slog.String("error", err.Error()))
+				} else if failed {
+					report.Stuck++
+					report.Failed++
+				}
 				continue
 			}
 		}
@@ -155,7 +195,7 @@ func (r *Reaper) Run(ctx context.Context) (Report, error) {
 			continue
 		}
 		log.Error("stuck capture did not finish on its second run", slog.String("error", runErr.Error()))
-		failed, err := r.fail(cctx, c.UserID, c.ID)
+		failed, err := r.fail(cctx, c.UserID, c.ID, Verdict)
 		if err != nil {
 			log.Error("could not mark the stuck capture failed; the next pass will try again", slog.String("error", err.Error()))
 			continue
@@ -176,11 +216,11 @@ func (r *Reaper) Run(ctx context.Context) (Report, error) {
 	return report, nil
 }
 
-// fail marks the capture failed with Verdict, under the row's current version
+// fail marks the capture failed with verdict, under the row's current version
 // and only while it is still pending, and reports whether it did: a run that
 // finished the capture after returning an error, or a person's Retry in
 // between, stands.
-func (r *Reaper) fail(ctx context.Context, tenantID, captureID string) (bool, error) {
+func (r *Reaper) fail(ctx context.Context, tenantID, captureID, verdict string) (bool, error) {
 	current, err := r.store.GetCapture(ctx, tenantID, captureID)
 	if err != nil {
 		return false, err
@@ -189,7 +229,7 @@ func (r *Reaper) fail(ctx context.Context, tenantID, captureID string) (bool, er
 		return false, nil
 	}
 	current.Status = model.StatusFailed
-	current.Error = Verdict
+	current.Error = verdict
 	current.LastProgressAt = model.FormatTime(r.now())
 	if _, err := r.store.PutCapture(ctx, current); err != nil {
 		if errors.Is(err, repository.ErrVersionConflict) {

@@ -8,7 +8,8 @@ by default (`web_push`). Code: `model.PushSubscription`
 push.go`), the worker's notifier (`backend/internal/pipeline/notify.go`) and
 its sender (`backend/internal/push`), the service worker's `push` and
 `notificationclick` handlers (`frontend/src/sw.ts`), the Notifications card
-(`frontend/src/features/settings/NotificationsCard.tsx`) and the key script
+(`frontend/src/features/settings/NotificationsCard.tsx`), the shell's
+re-enrolment on launch (`frontend/src/pwa/usePushResync.ts`) and the key script
 (`scripts/vapid-keys.sh`).
 
 ## Where it sits
@@ -73,7 +74,9 @@ The payload is `{type, capture_id, note_id, title}`: the note's title and
 never its text, because a notification may be read from a lock screen. One
 send per row, each under a five-second timeout, in order — there are at most
 ten. A 2xx writes `last_success_at`; a 404 or 410 is the push service saying
-the browser is gone and deletes the row (`PushSubscriptionsPruned`); anything
+the browser is gone and deletes the row (`PushSubscriptionsPruned`, alarmed
+as `push-subscription-pruned`, because after it nothing fails: the worker
+finds one subscription fewer, or none, and that device goes quiet); anything
 else counts `failures` on the row and `PushSendFailures`, and is not retried:
 the list is the truth and the next open reads it. The endpoint never reaches
 a log line — a failed POST's error text names its URL, so only the reason is
@@ -142,7 +145,22 @@ and the switch is that tap: on runs `Notification.requestPermission()`,
 POST; off runs the DELETE first and then `unsubscribe()`, so a browser is
 never subscribed to a row the worker still sends to. The switch reads on
 only when this browser holds a subscription *and* the server lists it; a
-row the worker pruned reads off, which is the truth.
+row the worker pruned reads off, which is the truth. Turning on runs
+`enrolThisBrowser` (`push.ts`): a subscription the browser holds that the
+server does not list is unsubscribed before a fresh one is asked for,
+because `pushManager.subscribe` returns the one already held, and
+re-registering an endpoint the push service has called gone would be pruned
+again on the next send. "Not listed" comes only from a list the server has
+just given: `enrolThisBrowser` reads it itself, under a Web Lock
+(`chintan-push-enrol`) so the card, the launch check and a second tab cannot
+drop each other's fresh subscription, and a failed read drops nothing. The
+switch stays held while the list cannot be read, with "Couldn't check which
+devices are enrolled." and a Try again, and the foot counts nothing. On remembers itself on the device
+(`chintan.push.wanted` in `localStorage`) and off forgets it; a browser that
+was turned on and is not enrolled — it remembers on, or holds a
+subscription the server lacks — reads off with the hint "Not reaching this
+device. Turn on again." instead of the usual one, so a dropped subscription
+is never mistaken for a choice.
 
 Four states replace the switch, in this order: not set up on this instance
 (the key's 404), with the operator's step named; an iPhone or iPad outside the
@@ -152,21 +170,38 @@ API; and permission denied, which only the browser's own settings undo, so
 the switch is held off with that sentence. The foot counts the enrolled
 devices and says that only the note's title is ever sent.
 
+## Staying enrolled
+
+A subscription can end without the person touching the switch: the push
+service answers 404 or 410 after the browser rotated, expired or dropped it
+(the worker then deletes the row), or the browser loses it with its site
+data. Once per session the shell (`usePushResync`, mounted in `AppShell`,
+not on the capture screen) checks: with permission already granted, a
+browser that remembers being turned on or holds a subscription, and that
+the server's list does not include, is re-enrolled through the same
+`enrolThisBrowser` — a fresh subscription, which needs no tap once
+permission is granted, and the POST. Nothing is fetched for a browser
+without permission or never turned on. Permission the browser itself
+withdrew cannot be asked for without a tap, so that case is left to the
+card's hint. There is no `pushsubscriptionchange` handler: the service
+worker holds no token to POST with, and the next launch does the same work.
+
 ## iOS
 
 Push works only in the installed app, on iOS 16.4 or later; Safari in the
 browser has no `PushManager`, which is what the card detects. Every push
 shows a notification even while the app is in front (the focused-window
 skip is Chrome's), and iOS may drop a subscription after the app is unused
-for weeks — the push service then answers 410 and the row goes; the switch
-reads off on the next visit and one tap re-enrols.
+for weeks — the push service then answers 410 and the row goes; the next
+launch re-enrols the app while permission stands, and otherwise the card
+says it is not reaching this device and one tap re-enrols.
 
 ## Failure modes
 
 Permission denied or unsupported: the poll and the focus refetch are the
 product, unchanged. A push not delivered: nothing is lost, Home is right on
-the next focus. A subscription gone: the row is pruned, the switch reads
-off. Duplicate pushes collapse by tag. One person on two devices: two rows,
+the next focus. A subscription gone: the row is pruned, the alarm mails,
+and the next launch on that device re-enrols it. Duplicate pushes collapse by tag. One person on two devices: two rows,
 both notified, both collapse on open.
 
 History: `docs/backlog.md`.

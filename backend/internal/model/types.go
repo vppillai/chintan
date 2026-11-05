@@ -5,6 +5,7 @@
 package model
 
 import (
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -244,6 +245,17 @@ func ValidNoteKind(k string) bool {
 	return k == "" || k == NoteKindChecklist
 }
 
+// NoteColors are the tints a person can give a note's row on Home, by name:
+// the hex for each lives in the frontend's design tokens, once per theme, so
+// the stored value is a choice, not a colour. The empty string is no colour,
+// the zero value every row written before colours existed reads as.
+var NoteColors = []string{"rose", "peach", "sand", "lime", "mint", "sky", "lavender", "slate"}
+
+// ValidNoteColor reports whether c is a stored note colour ("" is none).
+func ValidNoteColor(c string) bool {
+	return c == "" || slices.Contains(NoteColors, c)
+}
+
 // MaxSearchTextBytes caps NoteIndex.SearchText. DynamoDB's item limit is
 // 400 KB, the rest of a note row is well under 10 KB, and 32 KB of lowercased
 // text is roughly 5,000 words — more than any dictation session produces
@@ -334,8 +346,8 @@ type NoteIndex struct {
 	// AppendingCapture and AppendingAt say a capture's paragraph is on its way
 	// into the body: the worker stamps them, together with a version bump,
 	// after it takes the append claim and before it writes the body
-	// (repository.Store.StampNoteAppend), and clears them when the index
-	// refresh that follows the write lands or the claim is handed back. While
+	// (repository.Store.StampNoteAppend), and clears them once the capture is
+	// marked appended or the claim is handed back. While
 	// the stamp is younger than repository.AppendClaimLease, PATCH refuses a
 	// body write with 409 `append_in_progress` (service.UpdateNote): the
 	// version alone cannot witness a body write the worker has made but not yet
@@ -352,6 +364,11 @@ type NoteIndex struct {
 	// reads as unpinned. Archiving clears both: the archive is never pinned.
 	PinnedAt string `json:"pinned_at,omitempty"`
 	PinRank  int64  `json:"pin_rank,omitempty"`
+	// Color is the row's tint on Home, one of NoteColors, or "" for none.
+	// Promoted like Kind and written only when set, so a row from before
+	// colours existed needs no backfill. A label, not an edit: setting it
+	// moves the version and leaves updated_at alone, as a pin does.
+	Color string `json:"color,omitempty"`
 	// PurgeAfterEpoch is the same instant as PurgeAfter as a Unix second count.
 	// The archived list filters on it, and the weekly expiry sweep
 	// (internal/purge) deletes the note's objects and row once it has passed.

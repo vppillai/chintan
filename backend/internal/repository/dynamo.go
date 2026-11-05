@@ -146,7 +146,7 @@ const ttlGraceSeconds = 14 * 24 * 60 * 60
 const noteListProjection = "sk, note_id, title, aliases, tags, snippet, created_at, updated_at, " +
 	"s3_markdown_key, s3_meta_key, deleted_at, purge_after, purge_after_epoch, verbatim, #lang, version, " +
 	"auto_clean, clean_mode, cleaned_mode, cleaned_at, cleaned_stale, cleaned_error, " +
-	"cleaned_requested_at, cleaned_requested_mode, appending_capture, appending_at, kind, pinned_at, pin_rank"
+	"cleaned_requested_at, cleaned_requested_mode, appending_capture, appending_at, kind, pinned_at, pin_rank, color"
 
 // languageAttr is the promoted attribute for NoteIndex.Language. `language` is
 // a DynamoDB reserved word, so the projection names it through an expression
@@ -360,6 +360,11 @@ func noteItemAttrs(tenantID string, n model.NoteIndex) (map[string]types.Attribu
 		item["pinned_at"] = strAttr(n.PinnedAt)
 		item["pin_rank"] = numAttr(n.PinRank)
 	}
+	if n.Color != "" {
+		// Written only when set, like kind: an uncoloured row carries no
+		// attribute and reads back as none.
+		item["color"] = strAttr(n.Color)
+	}
 	if n.SearchText != "" {
 		// Promoted only. The blob deliberately omits it (model.NoteIndex tags it
 		// json:"-"), so the field is stored once, not twice.
@@ -430,6 +435,9 @@ func noteFromItem(m map[string]types.AttributeValue) (model.NoteIndex, error) {
 	if _, ok := m["pinned_at"]; ok {
 		n.PinnedAt = readString(m, "pinned_at")
 		n.PinRank = readInt(m, "pin_rank")
+	}
+	if _, ok := m["color"]; ok {
+		n.Color = readString(m, "color")
 	}
 	if _, ok := m[cleanedBodyAttr]; ok {
 		n.CleanedBody = readString(m, cleanedBodyAttr)

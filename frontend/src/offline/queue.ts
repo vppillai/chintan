@@ -104,9 +104,20 @@ export async function pending(): Promise<QueuedMutation[]> {
   return db.getAllFromIndex('mutations', 'byCreatedAt');
 }
 
+/** Everything the device holds, retired entries included: what signing out would destroy. */
 export async function count(): Promise<number> {
   const db = await openChintanDB();
   return db.count('mutations');
+}
+
+/**
+ * What is still going to be sent: the offline banner's "Waiting to sync".
+ * A retired entry is not waiting for anything — its note's screen says what
+ * became of it — so counting it kept the banner up, online, for good.
+ */
+export async function waiting(): Promise<number> {
+  const db = await openChintanDB();
+  return (await db.getAll('mutations')).filter((mutation) => !isDead(mutation)).length;
 }
 
 export async function remove(id: string): Promise<void> {
@@ -114,17 +125,40 @@ export async function remove(id: string): Promise<void> {
   await db.delete('mutations', id);
 }
 
-async function recordFailure(mutation: QueuedMutation, error: unknown): Promise<void> {
+/**
+ * Writes the outcome of sending `sent` — the entry as it was read before the
+ * request — or deletes it on `null`, but only while the stored entry is still
+ * that one. A note's offline keystrokes replace its entry under the same id
+ * with a new idempotency key (`enqueueReplacing`), and one typed while the
+ * older entry's PATCH was on the wire is newer text: deleting by id on
+ * success threw it away, and writing the snapshot back on failure put the
+ * older text over it. Read and write in one transaction, so nothing lands
+ * between them.
+ */
+async function settle(
+  sent: QueuedMutation,
+  next: (stored: QueuedMutation) => QueuedMutation | null,
+): Promise<void> {
   const db = await openChintanDB();
-  const attempts = mutation.attempts + 1;
+  const tx = db.transaction('mutations', 'readwrite');
+  const stored = await tx.store.get(sent.id);
+  if (stored?.idempotencyKey === sent.idempotencyKey) {
+    const written = next(stored);
+    if (written) await tx.store.put(written);
+    else await tx.store.delete(sent.id);
+  }
+  await tx.done;
+}
+
+async function recordFailure(mutation: QueuedMutation, error: unknown): Promise<void> {
   // Giving up silently would be worse than keeping it: the entry stays, with
   // its attempt count, so the UI can show it as needing attention.
-  await db.put('mutations', {
-    ...mutation,
-    attempts,
+  await settle(mutation, (stored) => ({
+    ...stored,
+    attempts: stored.attempts + 1,
     lastAttemptAt: Date.now(),
     lastError: describe(error),
-  });
+  }));
 }
 
 /**
@@ -148,13 +182,12 @@ export function isDead(mutation: QueuedMutation): boolean {
  * away", and the app went on promising a sync that would never come.
  */
 async function markDead(mutation: QueuedMutation, error: unknown): Promise<void> {
-  const db = await openChintanDB();
-  await db.put('mutations', {
-    ...mutation,
+  await settle(mutation, (stored) => ({
+    ...stored,
     attempts: MAX_ATTEMPTS,
     lastAttemptAt: Date.now(),
     lastError: describe(error),
-  });
+  }));
 }
 
 function describe(error: unknown): string {
@@ -210,19 +243,30 @@ async function flushOnce(run: MutationRunner): Promise<FlushResult> {
   const result: FlushResult = { applied: 0, failed: 0, stoppedOffline: false };
 
   for (const mutation of await pending()) {
-    if (isDead(mutation)) {
-      result.failed += 1;
-      continue;
-    }
+    // Already retired: not a failure of this pass, and counting it as one
+    // had the caller refetch every note list once a minute for good.
+    if (isDead(mutation)) continue;
     try {
       await run(mutation);
-      await remove(mutation.id);
+      await settle(mutation, () => null);
       result.applied += 1;
     } catch (error) {
+      // No attempt is counted: the request never reached anyone. A captive
+      // portal that keeps `navigator.onLine` true fails every pass, and
+      // counting those retired an edit in eight minutes of a hotel lobby.
       if (error instanceof ApiError && error.isOffline) {
         result.stoppedOffline = true;
-        await recordFailure(mutation, error);
         break;
+      }
+      // A recording is being filed into the note: the same PATCH is
+      // accepted once it has landed, so this pass leaves the entry as it is.
+      if (error instanceof ApiError && error.isAppendInProgress) continue;
+      // The note is gone, and with it everything an edit to it could mean.
+      // Kept dead, nothing could clear it: no screen opens a deleted note.
+      if (error instanceof ApiError && error.isNotFound) {
+        await settle(mutation, () => null);
+        result.failed += 1;
+        continue;
       }
       if (error instanceof ApiError && isTerminal(error)) {
         await markDead(mutation, error);
@@ -239,8 +283,8 @@ async function flushOnce(run: MutationRunner): Promise<FlushResult> {
 
 /**
  * The statuses no replay can get past: the request itself is wrong (400, 413,
- * 422), forbidden (403), aimed at something that is gone (404), or settled
- * (409).
+ * 422), forbidden (403), or settled (409). A 404 is past them too, but its
+ * entry is removed rather than retired (`flushOnce`).
  *
  * Named rather than "any 4xx but 401", which is what this was. That net also
  * caught 429 — a rate limit, which `ApiError.isRetryable` rightly says to try
@@ -258,7 +302,7 @@ async function flushOnce(run: MutationRunner): Promise<FlushResult> {
  * editor reads it back and shows it as the conflict it is — Keep my edits or
  * Use the newer version (`useNoteEditor`); it is simply not sent again as is.
  */
-const TERMINAL_STATUSES: ReadonlySet<number> = new Set([400, 403, 404, 409, 413, 422]);
+const TERMINAL_STATUSES: ReadonlySet<number> = new Set([400, 403, 409, 413, 422]);
 
 function isTerminal(error: ApiError): boolean {
   return error.kind === 'http' && TERMINAL_STATUSES.has(error.status);

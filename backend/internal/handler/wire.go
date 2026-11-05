@@ -73,6 +73,9 @@ type Note struct {
 	// render its pin glyph from one field.
 	Pinned  bool   `json:"pinned"`
 	PinRank *int64 `json:"pin_rank"`
+	// Color is the row's tint on Home, or "none". Always present, like kind:
+	// storage keeps "" for none so old rows need no backfill.
+	Color string `json:"color"`
 }
 
 // NoteCleaned is the OpenAPI NoteCleaned schema: the whole-note cleaned view.
@@ -158,6 +161,7 @@ func noteOf(n model.NoteIndex) Note {
 		Language:  n.Language,
 		AutoClean: n.AutoClean,
 		Pinned:    n.Pinned(),
+		Color:     wireNoteColor(n.Color),
 	}
 	if n.Pinned() {
 		rank := n.PinRank
@@ -202,6 +206,25 @@ func storedNoteKind(wire string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// The wire spelling of no colour; storage keeps "".
+const wireNoteColorNone = "none"
+
+func wireNoteColor(stored string) string {
+	if stored == "" {
+		return wireNoteColorNone
+	}
+	return stored
+}
+
+// storedNoteColor maps a client's colour to storage; validity is the
+// service's (model.ValidNoteColor), so "none" is the only spelling changed.
+func storedNoteColor(wire string) string {
+	if wire == wireNoteColorNone {
+		return ""
+	}
+	return wire
 }
 
 func notesOf(in []model.NoteIndex) []Note {

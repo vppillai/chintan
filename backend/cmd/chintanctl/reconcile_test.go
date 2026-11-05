@@ -117,6 +117,9 @@ func TestReconcileReportsNewArtifactsWithoutDeletingThem(t *testing.T) {
 	// The shape a schema addition takes: a real capture gains an artifact no
 	// attribute names yet. Deleting it would be data loss, so it is reported.
 	blobs.seed(t, "tenants/tenantA/captures/c1/embeddings.bin", "\x01\x02", "application/octet-stream")
+	// A key derived from the capture's id that its row does not name — the
+	// copy a checklist re-append keeps — is the capture's, and no finding.
+	blobs.seed(t, "tenants/tenantA/captures/c1/clean.prev.txt", "x", "text/plain")
 	blobs.seed(t, "tenants/tenantA/somewhere/else.txt", "x", "text/plain")
 	// An export snapshot is an object no row names and the lifecycle rule
 	// expires; it is not unknown and not a finding (T55-r).

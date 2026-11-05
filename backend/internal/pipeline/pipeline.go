@@ -335,6 +335,9 @@ func (p *Pipeline) runCapture(ctx context.Context, ref CaptureRef) (model.Captur
 
 	if service.CaptureIsTerminal(capture.Status) {
 		log.Info("capture already finished; nothing to do", slog.String("status", string(capture.Status)))
+		if capture.Status == model.StatusAppended {
+			p.clearStampOf(ctx, capture) // its attempt may have died before the clear (finishAppend)
+		}
 		return capture, nil
 	}
 	if audioBytes > 0 && capture.AudioBytes == 0 {
@@ -389,7 +392,14 @@ func (p *Pipeline) runCapture(ctx context.Context, ref CaptureRef) (model.Captur
 		err = fmt.Errorf("pipeline: run ended with status %s and no error: %w", final.Status, errCaptureOrphaned)
 	}
 	if err != nil {
-		obs.CountWithRollup(ctx, "CaptureStageFailures", map[string]string{"Stage": string(capture.Status)})
+		// A stage that ran out of time is not counted: Lambda retries it,
+		// the retry usually files it, and at capture-failures' threshold of
+		// one a single stall paged for a capture that then filed itself.
+		// ProviderTimedOut counts stalls with a threshold of its own, and
+		// the attempts that run out reach capture-dlq.
+		if !isDeadline(err) {
+			obs.CountWithRollup(ctx, "CaptureStageFailures", map[string]string{"Stage": string(capture.Status)})
+		}
 		log.Error("capture pipeline could not complete",
 			slog.String("status", string(final.Status)),
 			slog.String("error", err.Error()))

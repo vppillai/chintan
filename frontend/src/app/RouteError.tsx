@@ -1,6 +1,22 @@
 import { Link, isRouteErrorResponse, useRouteError } from 'react-router';
 
+import { THREAD_KEY } from '@/features/ask/thread.ts';
+
 import { ROUTES } from './routes.ts';
+
+/**
+ * Both ways out end the Ask thread. It lives in `sessionStorage`, which a
+ * reload keeps, and a thread that broke the screen would otherwise be read
+ * back — and re-sent — by the screen being returned to. A question is not a
+ * document; losing one is the cheap side of that trade.
+ */
+function forgetAskThread(): void {
+  try {
+    sessionStorage.removeItem(THREAD_KEY);
+  } catch {
+    /* Storage blocked: there is no thread to come back to either. */
+  }
+}
 
 /**
  * What a render fault looks like instead of nothing.
@@ -32,13 +48,14 @@ export function RouteError() {
       </p>
 
       <div className="screen__actions">
-        <Link className="screen__action" to={ROUTES.home}>
+        <Link className="screen__action" to={ROUTES.home} onClick={forgetAskThread}>
           Back to your notes
         </Link>
         <button
           type="button"
           className="screen__action"
           onClick={() => {
+            forgetAskThread();
             window.location.reload();
           }}
         >
@@ -51,11 +68,15 @@ export function RouteError() {
   );
 }
 
-/** One line a person can quote in a bug report, never a stack trace. */
+/**
+ * One line a person can quote in a bug report: a route's status, or a fixed
+ * sentence. Never the exception's own message — "Cannot read properties of
+ * undefined (reading 'map')" is a stack trace's first line, not a sentence
+ * for the person holding the phone; the console still has it.
+ */
 function describeRouteError(error: unknown): string {
   if (isRouteErrorResponse(error)) {
     return `${String(error.status)} ${error.statusText}`;
   }
-  if (error instanceof Error && error.message) return error.message;
   return 'No further detail was available.';
 }
