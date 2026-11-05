@@ -429,7 +429,18 @@ describe('re-enrolling on launch', () => {
     expect(calls.some((call) => call.method === 'POST')).toBe(false);
   });
 
-  it('leaves a browser that was never turned on alone', async () => {
+  it('subscribes a browser with permission but no record (turned on before the record existed)', async () => {
+    const apis = installPushApis({ permission: 'granted' });
+    const { calls } = mount({ enrolled: [], resync: true });
+    await waitFor(() => {
+      expect(calls.some((call) => call.method === 'POST')).toBe(true);
+    });
+    expect(apis.requestPermission).not.toHaveBeenCalled();
+    expect(localStorage.getItem(PUSH_WANTED_KEY)).toBe('1');
+  });
+
+  it('leaves a browser that was turned off alone', async () => {
+    localStorage.setItem(PUSH_WANTED_KEY, '0');
     const apis = installPushApis({ permission: 'granted' });
     const { calls } = mount({ enrolled: [], resync: true });
     await waitFor(() => {
