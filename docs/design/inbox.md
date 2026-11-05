@@ -175,7 +175,9 @@ those plus the probes.
   (`wantsNoteLanguage` needs an audio key), "Transcribe again" refuses it
   (409, as for expired audio), and the audio download is 404. On the wire the
   capture says `has_audio: false`, so the recordings row shows the transcript
-  and no player.
+  and no player. `POST /v1/captures/text` is the same capture under the
+  app's session rather than a device key — the capture screen's "Type
+  instead" (`capture-ux.md`) — with no device as its source.
 
 An untargeted inbox capture is always routed, cue or no cue, and saying the
 note's name first — "App feedback the split up is slow" — is a supported way

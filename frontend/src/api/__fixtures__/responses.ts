@@ -24,6 +24,7 @@
 import type {
   AskWire,
   CaptureCreatedWire,
+  CaptureTextAcceptedWire,
   CaptureWire,
   DeviceCreatedWire,
   DeviceWire,
@@ -102,6 +103,7 @@ export const notesPage: Page<NoteWire> = {
       ],
       "archived": false,
       "auto_clean": false,
+      "color": "mint",
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
       "kind": "note",
@@ -115,12 +117,13 @@ export const notesPage: Page<NoteWire> = {
       ],
       "title": "Kitchen rebuild",
       "updated_at": "2026-01-01T00:00:00.000000000Z",
-      "version": 3
+      "version": 2
     },
     {
       "aliases": [],
       "archived": false,
       "auto_clean": false,
+      "color": "none",
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
       "kind": "note",
@@ -148,6 +151,7 @@ export const notesPageWithSearchText: Page<NoteWire> = {
       ],
       "archived": false,
       "auto_clean": false,
+      "color": "mint",
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
       "kind": "note",
@@ -162,12 +166,13 @@ export const notesPageWithSearchText: Page<NoteWire> = {
       ],
       "title": "Kitchen rebuild",
       "updated_at": "2026-01-01T00:00:00.000000000Z",
-      "version": 3
+      "version": 2
     },
     {
       "aliases": [],
       "archived": false,
       "auto_clean": false,
+      "color": "none",
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
       "kind": "note",
@@ -221,6 +226,7 @@ export const noteDetail: NoteDetailWire = {
     }
   ],
   "cleaned": null,
+  "color": "mint",
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "kind": "note",
@@ -234,7 +240,7 @@ export const noteDetail: NoteDetailWire = {
   ],
   "title": "Kitchen rebuild",
   "updated_at": "2026-01-01T00:00:00.000000000Z",
-  "version": 3
+  "version": 2
 };
 
 /** POST /v1/notes/pins → 200. The listed notes in the order sent, pin_rank rewritten as position × 1000; one request per drag. No cursor. */
@@ -244,6 +250,7 @@ export const notePinsReordered: Page<NoteWire> = {
       "aliases": [],
       "archived": false,
       "auto_clean": false,
+      "color": "none",
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
       "kind": "note",
@@ -265,6 +272,7 @@ export const notePinsReordered: Page<NoteWire> = {
       ],
       "archived": false,
       "auto_clean": false,
+      "color": "mint",
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
       "kind": "note",
@@ -278,7 +286,7 @@ export const notePinsReordered: Page<NoteWire> = {
       ],
       "title": "Kitchen rebuild",
       "updated_at": "2026-01-01T00:00:00.000000000Z",
-      "version": 4
+      "version": 3
     }
   ]
 };
@@ -297,6 +305,7 @@ export const noteDetailCleaned: NoteDetailWire = {
     "stale": true
   },
   "cleaned_mode": "structured",
+  "color": "none",
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "kind": "note",
@@ -307,7 +316,7 @@ export const noteDetailCleaned: NoteDetailWire = {
   "tags": [],
   "title": "Roof repair",
   "updated_at": "2026-01-01T00:00:00.000000000Z",
-  "version": 4
+  "version": 3
 };
 
 /** GET /v1/notes/{noteId} → 200 for a checklist. kind is checklist and body is one task-list item per line (`- [ ] open`, `- [x] done`). */
@@ -319,6 +328,7 @@ export const noteDetailChecklist: NoteDetailWire = {
   "captures": [],
   "cleaned": null,
   "cleaned_mode": "tasks",
+  "color": "none",
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "kind": "checklist",
@@ -329,7 +339,7 @@ export const noteDetailChecklist: NoteDetailWire = {
   "tags": [],
   "title": "Packing",
   "updated_at": "2026-01-01T00:00:00.000000000Z",
-  "version": 2
+  "version": 1
 };
 
 /** GET /v1/notes?kind=checklist → 200. Only the checklists, filtered before the page is cut like tag: up to `limit` matches, and cursor set only when more matches exist. */
@@ -340,6 +350,7 @@ export const notesPageChecklists: Page<NoteWire> = {
       "archived": false,
       "auto_clean": false,
       "cleaned_mode": "tasks",
+      "color": "none",
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
       "kind": "checklist",
@@ -350,7 +361,7 @@ export const notesPageChecklists: Page<NoteWire> = {
       "tags": [],
       "title": "Packing",
       "updated_at": "2026-01-01T00:00:00.000000000Z",
-      "version": 2
+      "version": 1
     }
   ]
 };
@@ -369,6 +380,7 @@ export const noteDetailChecklistCleaned: NoteDetailWire = {
     "stale": false
   },
   "cleaned_mode": "tasks",
+  "color": "none",
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "kind": "checklist",
@@ -379,7 +391,7 @@ export const noteDetailChecklistCleaned: NoteDetailWire = {
   "tags": [],
   "title": "Packing",
   "updated_at": "2026-01-01T00:00:00.000000000Z",
-  "version": 3
+  "version": 2
 };
 
 /** POST /v1/notes/{noteId}/clean → 202. The worker regenerates the view asynchronously; poll GET /v1/notes/{noteId} for a newer generated_at or an error. */
@@ -399,6 +411,7 @@ export const noteCreated: NoteWire = {
   "aliases": [],
   "archived": false,
   "auto_clean": false,
+  "color": "none",
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "kind": "note",
@@ -831,6 +844,34 @@ export const captureCreated: CaptureCreatedWire = {
     },
     "max_bytes": 4194304,
     "url": "https://example.invalid/presigned"
+  }
+};
+
+/** POST /v1/captures/text → 202. A typed thought, already transcribed; the worker routes, cleans and appends it. */
+export const captureTextAccepted: CaptureTextAcceptedWire = {
+  "capture": {
+    "appended_at": null,
+    "created_at": "2026-01-01T00:00:00.000000000Z",
+    "created_note": false,
+    "duration_ms": null,
+    "error": null,
+    "excerpt": "Call the roofer about the ridge.",
+    "gate": null,
+    "has_audio": false,
+    "has_peaks": false,
+    "has_segments": false,
+    "id": "fixture-id",
+    "language": null,
+    "language_detected": null,
+    "last_progress_at": "2026-01-01T00:00:00.000000000Z",
+    "note_id": null,
+    "retry_after": "2026-01-01T00:00:00.000000000Z",
+    "source": "app",
+    "status": "transcribed",
+    "suggested_note_id": null,
+    "suggested_title": null,
+    "targeted": false,
+    "version": 1
   }
 };
 

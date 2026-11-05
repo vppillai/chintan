@@ -7,7 +7,7 @@ import { queryKeys } from '@/api/queries/keys.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 
 import type { QueuedMutation } from './db.ts';
-import { count, flush } from './queue.ts';
+import { flush, waiting } from './queue.ts';
 import { queuedEditPayload } from './queuedEdits.ts';
 
 /**
@@ -67,7 +67,7 @@ export function useOfflineQueue(): OfflineQueueState {
     queryFn: async () => {
       // Offline: report the depth without burning attempt budgets against a
       // network that is not there.
-      if (typeof navigator !== 'undefined' && !navigator.onLine) return count();
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return waiting();
       const result = await flush((mutation) => runMutation(api, mutation));
 
       /*
@@ -88,7 +88,7 @@ export function useOfflineQueue(): OfflineQueueState {
         void queryClient.invalidateQueries({ queryKey: ['notes'] });
       }
 
-      return count();
+      return waiting();
     },
     /*
      * Always, never paused. The queue lives in IndexedDB, so reading its depth

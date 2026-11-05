@@ -116,7 +116,7 @@
   min-block-size: var(--layout-touch-target-min);
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-full);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--color-muted);
 }
@@ -295,7 +295,7 @@
 }
 
 .recording__filed[data-running] {
-  color: var(--color-accent);
+  color: var(--color-accent-strong);
 }
 
 .recording[data-status='failed'] .recording__filed,

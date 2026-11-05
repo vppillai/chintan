@@ -623,3 +623,47 @@ func TestUpdateNoteRefusesABodyWriteWhileAnAppendIsStamped(t *testing.T) {
 		t.Fatalf("an abandoned stamp %q was carried forward by the save", after.AppendingCapture)
 	}
 }
+
+// A save whose body write landed and whose row write failed is repeated with
+// the same body. That repeat met an unchanged body and returned before
+// deriving the snippet and search text, so the row kept the old ones and
+// search and Ask read text the note no longer had.
+func TestARepeatedSaveAfterALostRowWriteRefreshesTheSearchText(t *testing.T) {
+	ctx := context.Background()
+	store := dynamofake.NewStore()
+	objects := memory.NewObjects()
+	notes := service.NewNotesService(store, objects)
+
+	note, err := notes.CreateNote(ctx, "user1", "Roof", nil)
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	const body = "Rang Ellis; he quoted nine hundred."
+	// The first attempt's body write, and no row write after it.
+	if err := objects.Put(ctx, note.S3MarkdownKey, []byte(body), "text/markdown"); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := notes.UpdateNote(ctx, "user1", note.ID, service.NoteUpdates{Body: stringPtr(body)})
+	if err != nil {
+		t.Fatalf("UpdateNote: %v", err)
+	}
+	if updated.Snippet != body || !strings.Contains(updated.SearchText, "ellis") {
+		t.Fatalf("snippet = %q, search text = %q; want them derived from the body", updated.Snippet, updated.SearchText)
+	}
+}
+
+// A created note's body is the client's text, never a capture marker typed or
+// pasted into it, as every save strips them (CarryCaptureMarkers).
+func TestCreatingANoteWithABodyStripsCaptureMarkers(t *testing.T) {
+	ctx := context.Background()
+	objects := memory.NewObjects()
+	notes := service.NewNotesService(dynamofake.NewStore(), objects)
+	note, err := notes.CreateNoteWithBody(ctx, "user1", "Roof", nil, nil, "", service.CaptureMarker("c_x")+"\nthe gutter")
+	if err != nil {
+		t.Fatalf("CreateNoteWithBody: %v", err)
+	}
+	body, _ := objects.Get(ctx, note.S3MarkdownKey)
+	if strings.Contains(string(body), "chintan:capture") {
+		t.Fatalf("the stored body kept a capture marker: %q", body)
+	}
+}

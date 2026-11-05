@@ -140,8 +140,12 @@ prefixes are under `chintan.`, which sign-out sweeps. Tests:
 so a render fault replaces the outlet, never the document: a heading, a
 sentence saying nothing is lost (notes live on the server, unsent audio in
 IndexedDB), "Back to your notes" and "Reload the app", and one quotable line
-of detail rather than a stack trace. Test: `routing.test.tsx` "a render fault
-never leaves the user with no controls".
+of detail — a route's status, or a fixed sentence, never the exception's own
+message. Both ways out end the Ask thread in `sessionStorage`, which a reload
+keeps, so a thread that broke a screen is not read back into the next one.
+An Ask row that is not a row fails its turn rather than reaching render
+(`applyRow`). Tests: `routing.test.tsx` "a render fault never leaves the
+user with no controls", `RouteError.test.tsx`.
 
 ## History
 

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -133,11 +134,13 @@ func (rt *router) idempotent(next http.HandlerFunc) http.HandlerFunc {
 		// The defer also covers a handler panic, which the same reasoning
 		// applies to.
 		recorded := false
+		// Whatever happened to the request: a caller that hung up retries.
+		bookkeeping := context.WithoutCancel(r.Context())
 		defer func() {
 			if recorded {
 				return
 			}
-			if err := rt.Store.AbandonIdempotent(r.Context(), tenantID, key); err != nil {
+			if err := rt.Store.AbandonIdempotent(bookkeeping, tenantID, key); err != nil {
 				obs.Log(r.Context()).Warn("could not release an idempotency claim; the key stays claimed for the lease",
 					slog.String("error", err.Error()))
 			}
@@ -157,15 +160,13 @@ func (rt *router) idempotent(next http.HandlerFunc) http.HandlerFunc {
 		// tomorrow" the UI promises with the recorded 429 for a day (review
 		// 2026-09-21, T13). The deferred abandon releases the claim instead.
 		if settled(buffered.status) {
-			err := rt.Store.CompleteIdempotent(r.Context(), tenantID, key, buffered.status,
+			err := rt.Store.CompleteIdempotent(bookkeeping, tenantID, key, buffered.status,
 				buffered.header.Get("Content-Type"), buffered.body.Bytes())
-			switch {
-			case err == nil, errors.Is(err, repository.ErrNotFound):
-				// Recorded, or the claim is already gone: either way there is
-				// nothing to release.
-				recorded = true
-			default:
-				obs.Log(r.Context()).Warn("could not record idempotent response; releasing the claim so a retry can run",
+			// Recorded or not, the work is done: a released claim let a
+			// retry do it twice. Kept, it answers 409 for its lease.
+			recorded = true
+			if err != nil && !errors.Is(err, repository.ErrNotFound) {
+				obs.Log(r.Context()).Warn("could not record idempotent response; the claim stays until its lease runs out",
 					slog.String("error", err.Error()))
 			}
 		}

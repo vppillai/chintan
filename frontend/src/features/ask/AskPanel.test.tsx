@@ -134,8 +134,10 @@ function fakeTime() {
   return userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
 }
 
-/** The Ask glyph inside the field: one pressed button, not a Search | Ask segment (round-3 T17). */
+/** "Ask" inside the field: one button, not a Search | Ask segment (round-3 T17). */
 const askToggle = () => screen.getByRole('button', { name: 'Ask' });
+/** Its place while asking: the way back, named for where it goes. */
+const backToSearch = () => screen.getByRole('button', { name: 'Back to search' });
 
 /** Switches the field to Ask and returns it. */
 async function switchToAsk(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
@@ -174,11 +176,13 @@ describe('the field has two modes', () => {
 
     const before = await screen.findByRole('searchbox', { name: /search notes/i });
     expect(before).toHaveAttribute('placeholder', 'Search titles, tags, transcripts');
-    expect(askToggle()).toHaveAttribute('aria-pressed', 'false');
+    // A word, not a glyph with a hover title: a phone has no hover.
+    expect(askToggle()).toHaveTextContent('Ask');
 
     const field = await switchToAsk(user);
     expect(field).toHaveAttribute('placeholder', 'Ask your notes…');
-    expect(askToggle()).toHaveAttribute('aria-pressed', 'true');
+    // The way out is a control of its own, named for where it goes.
+    expect(screen.queryByRole('button', { name: 'Ask' })).toBeNull();
     expect(screen.queryByRole('button', { name: /roof repair/i })).toBeNull();
     expect(screen.queryByRole('group', { name: 'Filter notes' })).toBeNull();
     // The panel is a lazy chunk (round-3 T47), so it lands a tick after the switch.
@@ -186,7 +190,7 @@ describe('the field has two modes', () => {
     expect(location()).toBe('/?mode=ask');
 
     // And back, with the whole library where it was.
-    await user.click(askToggle());
+    await user.click(backToSearch());
     expect(await screen.findByRole('button', { name: /roof repair/i })).toBeInTheDocument();
     expect(screen.getByRole('searchbox', { name: /search notes/i })).toBeInTheDocument();
     expect(location()).toBe('/');
@@ -213,7 +217,7 @@ describe('the field has two modes', () => {
     expect(location()).toBe('/?mode=ask');
 
     mount(server().fetchImpl, '/?mode=ask');
-    expect(screen.getAllByRole('button', { name: 'Ask' }).at(-1)).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getAllByRole('button', { name: 'Back to search' }).at(-1)).toBeInTheDocument();
   });
 
   it('says once what a question costs, and remembers being told', async () => {

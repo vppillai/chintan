@@ -22,12 +22,13 @@ then seven cards, in the order `SettingsScreen.test.tsx` holds them to:
 | Recording & transcription | `LanguageSelect` for `default_language` (auto-detect explained, with the one-line Malayalam advice beneath it) and `Keep recordings for`, a `<select>` over `RETENTION_TIERS = [0, 7, 30, 90, 365]`, the tiers the server stores (`retention.md`). |
 | Appearance | A three-way `Segmented` control, Ink & Paper / Nocturne / System, each with a swatch; applied on the device at once (`useTheme`) and saved like the rest. |
 | Passkeys (`PasskeyCard.tsx`) | The hand-off to the managed login's passkey page and its result (`auth.md`). |
-| Notifications (`NotificationsCard.tsx`) | The one Web Push switch and the four sentences for when it cannot be offered (`push.md`). |
+| Notifications (`NotificationsCard.tsx`) | The one Web Push switch, its "Not reaching this device. Turn on again." hint for a browser that was turned on and is not enrolled, and the four sentences for when it cannot be offered (`push.md`). |
 | Devices & shortcuts (`DevicesCard.tsx`) | Inbox keys: the list, the mint form and the connect recipes (curl, iPhone or Apple Watch Shortcuts, Android HTTP Shortcuts). Folded by default behind a summary that counts keys and flags one expiring soon; `#devices` (`DEVICES_ANCHOR`, the bare `devices`), which About links to, opens it (`inbox.md`). |
-| Your data (`ExportCard.tsx`) | One `DownloadButton`: everything as one JSON file. |
+| Your data (`ExportCard.tsx`) | One `DownloadButton`: the notes and their transcripts as one JSON file, the audio not in it (the lead says so), and a status line when the file stops at a bound. Then Recording downloads, As recorded (WebM) or MP4: kept on this device in `localStorage` (`chintan.downloadFormat`), not in the settings record, because it is about what this device can open; the Recordings tab reads it at each download (note-screen.md, "The Recordings tab"). |
 | About & support | `Usage this month` carrying the month's figure (`formatDollars`) and opening `/usage`; `About <app>`; `Source on GitHub`; and the Version row (`VersionFootnote`). |
 
-Every control saves itself the moment it changes: a change is a whole
+Every control saves itself the moment it changes — Recording downloads to
+the device, everything else to the server: a server change is a whole
 `PUT /v1/settings` (`useSaveSettings`) built on the stored record, so
 nothing is saved before that record has loaded, and what renders after the
 PUT is what the server stored, not what the device sent — the server rounds
@@ -35,7 +36,9 @@ a retention number down to a tier, and the screen shows the rounded value.
 There is no Save button and nothing is ever unsaved. The status line beside
 the title says only what is happening — loading, Saving…, a Saved tick for
 `SAVED_TICK_MS` (2.5 s), or a failure with Try again — and reserves no
-space while it has nothing to say. The daily spend cap is never named here,
+space while it has nothing to say. Offline with nothing loaded (settings are
+not kept on the device) it says "Offline — your settings load when you
+reconnect." rather than loading forever. The daily spend cap is never named here,
 even when the instance has one (`usage-accounting.md`).
 
 ## About
@@ -71,7 +74,7 @@ bug report needs; About adds the instance name when it is not `dev`
 ## Export
 
 `POST /v1/export` (idempotent, `idempotency.md`) answers 202 with an
-`ExportJob` (`id`, `status`, `url`, `expires_at`, `bytes`) and
+`ExportJob` (`id`, `status`, `url`, `expires_at`, `bytes`, `truncated`) and
 `GET /v1/export/{exportId}` reports it. The job shape lets the endpoint
 become asynchronous without a client change; the work runs inline in
 `ExportService.Start`, and the job is `ready` by the time it is returned,
@@ -80,18 +83,21 @@ because a whole personal corpus is a few hundred index reads.
 The file is one JSON document, not an archive. `build` writes:
 `version` (2), `tenant_id`, `exported_at`, the `settings` record,
 `notes` — every active and archived note (`DrainNotes`, at most
-`maxExportNotes` = 2000, `truncated` set when the cap is reached) with its
+`maxExportNotes` = 2000 on each shelf) with its
 index fields, its `body` with the append markers stripped exactly as
 `GET /v1/notes/{id}` strips them, its `cleaned` view (body, mode,
 `generated_at`, `stale`) when it has one, and its `captures` (at most
 `maxExportCapturesPerNote` = 500) — then `unrouted_captures`, the recordings
-that never reached a note, and `artifact_keys`: for every capture the S3
+that never reached a note (the same bound), and `artifact_keys`: for every capture the S3
 keys of its audio, raw, routed and clean text, segments and peaks, so a
 restore can find the binaries the JSON deliberately does not inline
 (`docs/ops/backup-restore.md`). Tests:
 `TestExportEnumeratesNotesRatherThanAnAllowlistOfKinds`,
 `TestExportIncludesACaptureThatNeverReachedANote`,
-`TestExportCarriesTheCleanedViewWhenThereIsOne`.
+`TestExportCarriesTheCleanedViewWhenThereIsOne`. `truncated` is set on the
+document and the job when a shelf, a note's recordings or the unrouted list
+reaches its bound, each judged on its own (`TestExportTruncationIsJudgedPerBound`),
+and the card says the file is not everything.
 
 The document and its job record live at
 `tenants/<tenant>/exports/<id>/{export.json,job.json}`; the id is checked

@@ -75,8 +75,11 @@ token, so the previous one is carried forward. The HTTP client
 `REFRESH_SKEW_MS` (two minutes, `api/tokens.ts`) of expiry and otherwise on the first 401,
 once per request, replaying the same attempt with the same
 `Idempotency-Key`. A refresh that fails because the network is down does not
-clear the session (offline is not unauthenticated); one that Cognito refuses
-does. The call is bounded by `REFRESH_TIMEOUT_MS` (fifteen seconds): the
+clear the session (offline is not unauthenticated), nor does one the token
+endpoint failed — a 5xx, a 429, a 403, a timeout — which says "Couldn't
+reach sign-in. Try again in a moment." and is asked again on the next
+request; only one that Cognito refuses (`invalid_grant`, its 400 read as
+401) does. The call is bounded by `REFRESH_TIMEOUT_MS` (fifteen seconds): the
 client awaits a due refresh before it arms its own request timer, so an
 unanswered token endpoint — a phone woken by a notification before its
 radio is up — would otherwise hold the app's first request open for good;

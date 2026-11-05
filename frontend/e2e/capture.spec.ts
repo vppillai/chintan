@@ -576,16 +576,16 @@ test('leads with the note the router picked, and files into it', async ({ page, 
   // lists the notes too, so the check is scoped to the row.)
   await expect(filing.getByRole('button', { name: 'Reading list' })).toHaveCount(0);
 
+  const answered = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      new URL(response.url()).pathname.endsWith('/v1/captures/cap-routed/target'),
+  );
   await add.click();
 
-  await expect
-    .poll(() =>
-      api.requests.some(
-        (request) =>
-          request.method === 'POST' && request.url === '/v1/captures/cap-routed/target',
-      ),
-    )
-    .toBe(true);
+  const response = await answered;
+  expect(response.status()).toBe(200);
+  expect(((await response.json()) as { note_id: string | null }).note_id).toBe('roof-repair');
 });
 
 test('a suggested new note is offered by the title the router chose', async ({ page, api }) => {

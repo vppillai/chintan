@@ -230,6 +230,12 @@
      live/record lime and read as highlighted, so that theme says it in ink
      (QA 2026-09-21, finding 8). */
   --color-destructive: var(--color-accent-strong);
+  /* A destructive control's fill — Delete, Delete forever, a swipe's Delete
+     — and the text on it. Here the accent; Nocturne's own coral, so Delete
+     is never the record lime. */
+  --color-destructive-fill: var(--color-accent);
+  --color-destructive-pressed: var(--color-accent-strong);
+  --color-on-destructive: var(--color-on-accent);
 
   /* A filing notice (F9): a tray pressed into the page, the opposite of the
      raised note cards under it. Aliases, so the contrast table above holds:
@@ -243,6 +249,20 @@
 
   --color-overlay: rgb(26 25 23 / 38%);
   --color-selection: rgb(194 65 12 / 18%);
+
+  /* Note tints (`NoteColor`): a pastel per name, the row's ground on Home and
+     the wash at the top of the note screen. Each is light enough that ink
+     (≥14.7:1), muted (≥6.8:1), faint (≥4.51:1) and accent-strong (≥5.4:1)
+     hold AA on it (every ratio: docs/design/home.md, "Colour"), and
+     Nocturne's block below keeps each hue as a deep tint. */
+  --color-tint-rose: #ffe5e9;
+  --color-tint-peach: #ffe9d6;
+  --color-tint-sand: #fceed1;
+  --color-tint-lime: #e9f4d7;
+  --color-tint-mint: #d7f8e8;
+  --color-tint-sky: #d6f4ff;
+  --color-tint-lavender: #f1eaff;
+  --color-tint-slate: #e8f0fa;
 
   /* Ink casts on paper: short, soft, barely tinted. Each step is two layers
      — a tight one for the edge and a wide one for the lift — so a card reads
@@ -283,8 +303,10 @@
      muted             8.45       7.72        7.03      4.5 (AA)     pass
      faint             5.54       5.06        4.61      4.5 (AA)     pass
      accent           14.64      13.37       12.18      4.5 (AA)     pass
+     destructive       8.21       7.50        6.83      4.5 (AA)     pass
      line-strong       3.64       3.33        3.03      3.0 (1.4.11) pass
      ground on accent 14.64          —           —      4.5 (AA)     pass
+     ground on destructive 8.21      —           —      4.5 (AA)     pass
 
      token          on ground-deep                        requirement  verdict
      ------------------------------------------------------------------------
@@ -306,6 +328,11 @@
 
    The Nocturne accent clears AA as text on every ground, so `accent-strong`
    is simply the accent — the token exists for parity, not for a second hue.
+
+   `destructive` (#F28B82) is a pastel coral, the one hue here that is
+   neither the record lime nor a grey: a menu's Delete, a failed filing's
+   glyph and the fill of a destructive button. On the note tints it is at
+   least 6.84:1. Ink & Paper says the same thing with its burnt orange.
    ========================================================================== */
 
 [data-theme='nocturne'] {
@@ -326,7 +353,10 @@
   --color-accent-strong: #b8f135;
   --color-on-accent: #0a0c0b;
   --color-accent-soft: rgb(184 241 53 / 14%);
-  --color-destructive: var(--color-ink);
+  --color-destructive: #f28b82;
+  --color-destructive-fill: var(--color-destructive);
+  --color-destructive-pressed: var(--color-destructive);
+  --color-on-destructive: var(--color-ground);
   --color-notice: var(--color-surface);
   --color-notice-line: var(--color-line);
   --color-notice-glyph: var(--color-muted);
@@ -335,6 +365,18 @@
 
   --color-overlay: rgb(10 12 11 / 62%);
   --color-selection: rgb(184 241 53 / 22%);
+
+  /* Note tints, deep: the same hues as Ink & Paper's pastels, at the
+     lightness of `raised`, so ink (≥14.8:1), muted (≥7.0:1) and faint
+     (≥4.61:1) stay AA and the hue is what tells two rows apart. */
+  --color-tint-rose: #2d181b;
+  --color-tint-peach: #2c1a0e;
+  --color-tint-sand: #261d0a;
+  --color-tint-lime: #1b220f;
+  --color-tint-mint: #0d241b;
+  --color-tint-sky: #0c212d;
+  --color-tint-lavender: #201b2e;
+  --color-tint-slate: #1a1f26;
 
   /* Darker and wider than Ink & Paper's: on a near-black page a shadow is
      the only thing that separates one plane from the next. The lift is a
@@ -376,7 +418,10 @@
     --color-accent-strong: #b8f135;
     --color-on-accent: #0a0c0b;
     --color-accent-soft: rgb(184 241 53 / 14%);
-    --color-destructive: var(--color-ink);
+    --color-destructive: #f28b82;
+    --color-destructive-fill: var(--color-destructive);
+    --color-destructive-pressed: var(--color-destructive);
+    --color-on-destructive: var(--color-ground);
     --color-notice: var(--color-surface);
     --color-notice-line: var(--color-line);
     --color-notice-glyph: var(--color-muted);
@@ -385,6 +430,14 @@
 
     --color-overlay: rgb(10 12 11 / 62%);
     --color-selection: rgb(184 241 53 / 22%);
+    --color-tint-rose: #2d181b;
+    --color-tint-peach: #2c1a0e;
+    --color-tint-sand: #261d0a;
+    --color-tint-lime: #1b220f;
+    --color-tint-mint: #0d241b;
+    --color-tint-sky: #0c212d;
+    --color-tint-lavender: #201b2e;
+    --color-tint-slate: #1a1f26;
 
     --shadow-xs: 0 1px 1px rgb(0 0 0 / 40%);
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 45%), 0 2px 8px rgb(0 0 0 / 35%);

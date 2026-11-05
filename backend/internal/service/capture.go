@@ -480,6 +480,7 @@ func (s *CaptureService) RetryCapture(ctx context.Context, userID, captureID str
 	if err != nil {
 		return nil, fmt.Errorf("failed to get capture: %w", err)
 	}
+	prior := capture
 	now := s.now()
 	neverMoved := capture.Status == model.StatusUploaded && capture.Error == ""
 
@@ -503,15 +504,18 @@ func (s *CaptureService) RetryCapture(ctx context.Context, userID, captureID str
 	// device that recorded it, whose resend lands on this row while its link
 	// is live and arrives as a new capture after, so there is nothing a
 	// failed status would let anyone do that delete does not. While the link
-	// could still be used (uploadMayStillLand) it is refused as in flight,
-	// since the upload may yet arrive.
-	if neverMoved && capture.AudioKey != "" {
+	// could still be used (UploadMayStillLand) it is refused as in flight,
+	// since the upload may yet arrive. A failed row that resumes at
+	// `uploaded` — the reaper's verdict on one whose link expired
+	// (reconcile.NeverUploadedVerdict) — is checked the same way, so its
+	// Retry button is not a run against a missing object.
+	if capture.Status == model.StatusUploaded && capture.AudioKey != "" {
 		present, err := s.objects.Exists(ctx, capture.AudioKey)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check the recording's audio: %w", err)
 		}
 		if !present {
-			if uploadMayStillLand(capture, now) {
+			if neverMoved && UploadMayStillLand(capture, now) {
 				return &capture, ErrCaptureInFlight
 			}
 			return &capture, ErrCaptureNeverUploaded
@@ -525,7 +529,7 @@ func (s *CaptureService) RetryCapture(ctx context.Context, userID, captureID str
 	}
 	capture = updated
 
-	if err := s.invokeWorker(ctx, userID, captureID, "retry"); err != nil {
+	if err := s.handOff(ctx, userID, prior, capture, "retry"); err != nil {
 		return nil, err
 	}
 	return &capture, nil
@@ -555,6 +559,7 @@ func (s *CaptureService) RetranscribeCapture(ctx context.Context, userID, captur
 	if err != nil {
 		return nil, fmt.Errorf("failed to get capture: %w", err)
 	}
+	prior := capture
 	now := s.now()
 	if !model.IsTerminalStatus(capture.Status) && !CaptureStuck(capture, now) {
 		return &capture, ErrCaptureInFlight
@@ -610,7 +615,7 @@ func (s *CaptureService) RetranscribeCapture(ctx context.Context, userID, captur
 		return nil, fmt.Errorf("failed to reset capture: %w", err)
 	}
 
-	if err := s.invokeWorker(ctx, userID, captureID, "retranscribe"); err != nil {
+	if err := s.handOff(ctx, userID, prior, updated, "retranscribe"); err != nil {
 		return nil, err
 	}
 	return &updated, nil
@@ -642,6 +647,7 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 	if err != nil {
 		return nil, fmt.Errorf("failed to get capture: %w", err)
 	}
+	prior := capture
 	if capture.NoteID != "" {
 		return nil, ErrCaptureAlreadyTargeted
 	}
@@ -689,7 +695,7 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 		return nil, fmt.Errorf("failed to update capture: %w", err)
 	}
 
-	if err := s.invokeWorker(ctx, userID, captureID, "target"); err != nil {
+	if err := s.handOff(ctx, userID, prior, updated, "target"); err != nil {
 		return nil, err
 	}
 	return &updated, nil
@@ -739,6 +745,26 @@ func (s *CaptureService) invokeWorker(ctx context.Context, userID, captureID, re
 		slog.String("capture_id", captureID),
 		slog.String("reason", reason))
 	return nil
+}
+
+// handOff invokes the worker for a row just written as handed to it, and on
+// a failed invoke writes prior back over it. The written row's fresh
+// LastProgressAt reads as in flight for CaptureStuckAfter, so without the
+// rollback the person's next tap after the error was refused for fifteen
+// minutes with nothing running. Best effort: a rollback that fails is
+// logged, and the stuck rule is the bound it always was.
+func (s *CaptureService) handOff(ctx context.Context, userID string, prior, written model.CaptureIndex, reason string) error {
+	err := s.invokeWorker(ctx, userID, written.ID, reason)
+	if err == nil {
+		return nil
+	}
+	prior.Version = written.Version
+	if _, rerr := s.store.PutCapture(ctx, prior); rerr != nil {
+		obs.Log(ctx).Warn("could not roll the capture back after the worker hand-off failed; it reads as in flight until the stuck rule",
+			slog.String("capture_id", written.ID),
+			slog.String("error", rerr.Error()))
+	}
+	return err
 }
 
 // GetCapture returns a capture by ID.

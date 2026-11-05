@@ -214,6 +214,11 @@ append written but never marked (the worker died between the body write and
 the capture's completion) is retried the same way, its own items standing in
 for the artefact copy it does not have yet (`ownItems`;
 `TestARetryOfAnInterruptedFirstChecklistAppendKeepsASiblingsMergedChild`).
+When none of the recording's old words are left, a regeneration takes it
+that the person removed them and puts nothing back, while the person's own
+Transcribe again writes the new items under the marker
+(`appendOptions.landWithdrawn`;
+`TestRetranscribingAChecklistRecordingWhoseLinesWereDeletedLandsTheNewItems`).
 Only a recording that never had an artefact — appended while the list was
 verbatim — whose new words stand nowhere under its marker, or nowhere in the
 list when its marker is bare, has its paragraph cut and replaced whole; a
@@ -231,7 +236,11 @@ lands in the target in chronological position, its items still ticked. That
 holds until the first save from the Items tab: `serialiseChecklist` writes
 no blank line between recordings, so `CarryCaptureMarkers` finds no
 paragraph boundary to keep a marker at and carries every marker to the end,
-after which delete and move cut nothing (a tick is such a save). A plain
+after which delete and move cut the bare marker and leave the lines (a tick
+is such a save). They do not go by words: the first append's merge may have
+folded a spoken item into one the person typed, and a line the person wrote
+is never taken with a recording
+(`TestDeleteAndMoveOfABareMarkerNeverTakeThePersonsOwnItem`). A plain
 note's marker moves the same way once its paragraph is edited; a checklist
 is simply edited far more often than it is dictated into. A tick follows its
 item's words, and line for line only when no words match and the count holds

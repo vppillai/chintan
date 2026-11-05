@@ -9,10 +9,10 @@ import { PullToRefresh } from './PullToRefresh.tsx';
  * jsdom has TouchEvent but no Touch constructor, so the touches are plain
  * objects on a plain event. The hook reads `clientY` and nothing else.
  */
-function touch(type: string, clientY: number): Event {
+function touch(type: string, clientY: number, clientX = 0): Event {
   const event = new Event(type, { bubbles: true, cancelable: true });
-  Object.defineProperty(event, 'touches', { value: type === 'touchend' ? [] : [{ clientY }] });
-  Object.defineProperty(event, 'changedTouches', { value: [{ clientY }] });
+  Object.defineProperty(event, 'touches', { value: type === 'touchend' ? [] : [{ clientY, clientX }] });
+  Object.defineProperty(event, 'changedTouches', { value: [{ clientY, clientX }] });
   return event;
 }
 
@@ -62,6 +62,22 @@ describe('pull to refresh', () => {
     });
     expect(indicator().dataset['phase']).toBe('idle');
     expect(indicator().style.getPropertyValue('--pull-offset')).toBe('0px');
+  });
+
+  it('leaves a sideways swipe alone, however it drifts down', () => {
+    // Along the chips or across a row at the top of the list: the first
+    // downward pixel used to claim the touch and cancel the swipe.
+    const onRefresh = vi.fn(async () => {});
+    const { container, indicator } = mount(onRefresh);
+    const moves = [touch('touchmove', 101, 4), touch('touchmove', 103, 30), touch('touchmove', 140, 60)];
+    act(() => {
+      container.dispatchEvent(touch('touchstart', 100, 0));
+      for (const move of moves) container.dispatchEvent(move);
+      container.dispatchEvent(touch('touchend', 140, 60));
+    });
+    expect(moves.map((move) => move.defaultPrevented)).toEqual([false, false, false]);
+    expect(indicator().dataset['phase']).toBe('idle');
+    expect(onRefresh).not.toHaveBeenCalled();
   });
 
   it('does nothing for a short pull', () => {

@@ -38,6 +38,7 @@ import { announce } from '@/components/StatusRegion.tsx';
 import { FilingBanner } from '@/features/capture/FilingBanner.tsx';
 import { useLocalUpload } from '@/features/capture/FilingRow.tsx';
 import type { CaptureModel } from '@/features/capture/machine.ts';
+import { useCaptureStore } from '@/features/capture/store.ts';
 import { languageName } from '@/features/settings/languages.ts';
 import { useHorizontalSwipe } from '@/hooks/useHorizontalSwipe.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
@@ -160,7 +161,18 @@ export function NoteDetailScreen() {
     () => () => {
       const id = discardOnLeave.current;
       if (!id) return;
-      void archiveNote.mutateAsync(id).then(() => deleteForever.mutate(id), () => undefined);
+      /*
+       * Not one left to record into: Record from here opens the capture
+       * screen aimed at this note, whose capture row exists only once the
+       * recording is sent. Decided a task later, when the capture screen has
+       * armed its recording (it mounts as this one unmounts); a recording
+       * aimed at the note keeps it.
+       */
+      setTimeout(() => {
+        const { model } = useCaptureStore.getState();
+        if (model.noteId === id && model.state !== 'idle') return;
+        void archiveNote.mutateAsync(id).then(() => deleteForever.mutate(id), () => undefined);
+      }, 0);
     },
     // Once, at unmount; the refs carry the latest answer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -222,7 +234,15 @@ export function NoteDetailScreen() {
 
   // Find in this note: the state lives with the screen so the header's toggle
   // and the bar under the strip — different branches of the tree — share it.
-  const [find, dispatchFind] = useReducer(findReducer, FIND_CLOSED);
+  /*
+   * Opened from a search on Home, the note arrives with the search's first
+   * word (`find` in the route state) and the bar open on it, so the hit is
+   * marked where it is rather than left to be found again. The bar's field
+   * takes no focus for that arrival; the next time the bar is opened by hand
+   * it does.
+   */
+  const [find, dispatchFind] = useReducer(findReducer, location.state, findFromSearch);
+  const [quietFind, setQuietFind] = useState(find.open);
   const findBarId = useId();
   const findInputRef = useRef<HTMLInputElement>(null);
   const noteOpen = Boolean(note);
@@ -359,7 +379,10 @@ export function NoteDetailScreen() {
   }
 
   return (
-    <div className="screen note-screen">
+    <div
+      className="screen note-screen"
+      data-color={(editor.model.draft.color ?? 'none') === 'none' ? undefined : editor.model.draft.color}
+    >
       <PullToRefresh onRefresh={refresh} />
 
       <header className="screen__header screen__header--detail">
@@ -371,6 +394,7 @@ export function NoteDetailScreen() {
           aria-expanded={find.open}
           aria-controls={findBarId}
           onClick={() => {
+            setQuietFind(false);
             dispatchFind({ type: 'toggle' });
           }}
         >
@@ -403,6 +427,20 @@ export function NoteDetailScreen() {
           editor.edit({ title: event.target.value });
         }}
         onBlur={() => void editor.saveNow()}
+        onKeyDown={(event) => {
+          // A title is one line: Enter goes on to the text — the body, or a
+          // checklist's "Add an item" — rather than doing nothing, which
+          // ran "Groceries", "Milk" and "Eggs" together into the title.
+          // Safari ends a composition with an Enter whose isComposing is
+          // false but whose keyCode is 229; that Enter is the IME's, not ours.
+          if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return;
+          const next =
+            document.getElementById('note-body') ??
+            document.querySelector<HTMLElement>('.note-tabpanel [aria-label="Add an item"]');
+          if (!next) return;
+          event.preventDefault();
+          next.focus();
+        }}
       />
 
       <NoteMeta
@@ -441,6 +479,7 @@ export function NoteDetailScreen() {
         dispatchFind={dispatchFind}
         findBarId={findBarId}
         findInputRef={findInputRef}
+        quietFind={quietFind}
       />
 
       {/*
@@ -483,6 +522,7 @@ function NoteViews({
   dispatchFind,
   findBarId,
   findInputRef,
+  quietFind,
 }: {
   note: NoteDetailWire;
   editor: NoteEditor;
@@ -495,6 +535,8 @@ function NoteViews({
   dispatchFind: (action: FindAction) => void;
   findBarId: string;
   findInputRef: RefObject<HTMLInputElement | null>;
+  /** The bar was opened by a search carried from Home, so its field does not take focus. */
+  quietFind: boolean;
 }) {
   const [chosenTab, selectTab] = useNoteTab(note.id);
   // A checklist has no Cleaned tab (R8-F8: Tidy up list in the ⋮ writes the
@@ -630,6 +672,7 @@ function NoteViews({
               active={find.active}
               total={find.total}
               inputRef={findInputRef}
+              focusOnOpen={!quietFind}
               disabled={!searchable}
               hint={searchable ? undefined : 'Search works in Text and Cleaned.'}
               onQueryChange={(query) => {
@@ -960,4 +1003,13 @@ function SaveIndicator({ editor }: { editor: ReturnType<typeof useNoteEditor> })
       )}
     </p>
   );
+}
+
+/**
+ * The find bar's first state: open on the word a search on Home carried in
+ * the route state (`NoteRow`), else closed.
+ */
+function findFromSearch(state: unknown): FindState {
+  const query = (state as { find?: unknown } | null)?.find;
+  return typeof query === 'string' && query !== '' ? { ...FIND_CLOSED, open: true, query } : FIND_CLOSED;
 }

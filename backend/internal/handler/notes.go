@@ -49,6 +49,8 @@ type noteUpdateRequest struct {
 	// Pinned puts the note in Home's Pinned group (last among them) or takes
 	// it out. Reordering the group is POST /v1/notes/pins.
 	Pinned *bool `json:"pinned"`
+	// Color tints the note's row on Home: "none" or one of model.NoteColors.
+	Color *string `json:"color"`
 }
 
 // notePinsRequest is the OpenAPI NotePinsRequest schema: the caller's pinned
@@ -163,30 +165,12 @@ func (rt *router) createNote(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	note, err := rt.Notes.CreateNoteWithTags(r.Context(), userID, req.Title, req.Aliases, req.Tags)
+	// The body and the kind go in with the create, so a failure leaves no
+	// empty plain note for the client's retry to add a second to.
+	note, err := rt.Notes.CreateNoteWithBody(r.Context(), userID, req.Title, req.Aliases, req.Tags, kind, req.Body)
 	if err != nil {
 		fail(w, r, err)
 		return
-	}
-
-	// A body or a kind supplied at creation is written through the same path
-	// an edit takes, so there is one place that maintains the snippet and the
-	// meta mirror.
-	if req.Body != "" || kind != "" {
-		version := note.Version
-		updates := service.NoteUpdates{ExpectedVersion: &version}
-		if req.Body != "" {
-			updates.Body = &req.Body
-		}
-		if kind != "" {
-			updates.Kind = &kind
-		}
-		updated, err := rt.Notes.UpdateNote(r.Context(), userID, note.ID, updates)
-		if err != nil {
-			fail(w, r, err)
-			return
-		}
-		note = updated
 	}
 
 	writeJSON(w, http.StatusCreated, noteOf(note))
@@ -246,6 +230,18 @@ func (rt *router) updateNote(w http.ResponseWriter, r *http.Request) {
 	if req.CleanedMode != nil {
 		mode := model.NoteCleanMode(*req.CleanedMode)
 		updates.CleanMode = &mode
+	}
+	if req.Color != nil {
+		// Refused here, as kind is, rather than through fail: the service
+		// checks it too, for a caller that is not this handler.
+		// "" is storage's spelling of none, not the wire's: the document
+		// lists `none`, so "" is refused like any other unknown name.
+		color := storedNoteColor(*req.Color)
+		if *req.Color == "" || !model.ValidNoteColor(color) {
+			httperr.BadRequest(w, r, service.ErrInvalidNoteColor.Error())
+			return
+		}
+		updates.Color = &color
 	}
 	if req.Kind != nil {
 		kind, ok := storedNoteKind(*req.Kind)

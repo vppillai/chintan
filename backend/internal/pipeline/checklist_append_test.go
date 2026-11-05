@@ -460,7 +460,7 @@ func TestASecondRecordingAboutAnExistingParentJoinsIt(t *testing.T) {
 		t.Fatalf("body = %q, want %q", body, want)
 	}
 	// The interrupted-attempt check sees the merged body as written.
-	if written, err := h.pipeline.paragraphInNote(ctx, "tenants/user1/notes/list1/note.md", "c_1", "- [ ] Costco\n  - [ ] Chicken\n- [ ] Milk\n- [ ] Eggs", nil, cleanup.ItemsFromLines("Costco\n  Chicken\nMilk\nEggs")); err != nil || !written {
+	if written, err := h.pipeline.paragraphInNote(ctx, "tenants/user1/notes/list1/note.md", "c_1", "- [ ] Costco\n  - [ ] Chicken\n- [ ] Milk\n- [ ] Eggs", nil, cleanup.ItemsFromLines("Costco\n  Chicken\nMilk\nEggs"), false); err != nil || !written {
 		t.Errorf("paragraphInNote after the merge = %v, %v; want written", written, err)
 	}
 	// Regenerating c_0 (Costco › Meat again) keeps the merged Chicken.

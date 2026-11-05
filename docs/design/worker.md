@@ -211,23 +211,35 @@ only trace. Two things stand between a capture and that.
   last written before `service.CaptureStuckAfter` ago
   (`repository.StuckCaptures`, a filtered Scan over the table, like the
   sweep's), skips any inside its append lease (`service.CaptureStuck`) and
-  any `uploaded` row whose recording has not landed (`Objects.Exists`; an
+  any `uploaded` row whose recording has not landed while its upload link
+  could still be used (`Objects.Exists`, `service.UploadMayStillLand`; an
   upload in flight is not a stuck capture, and the server's Retry refuses
-  it on the same rule), leaves alone one a concurrent delivery owns (the
+  it on the same rule), marks failed one whose link has expired with the
+  fixed sentence `The recording never finished uploading.`
+  (`reconcile.NeverUploadedVerdict`; its Retry answers 409, the bytes are on
+  the device that recorded them; not counted in `CaptureReaped`, since an
+  upload the app abandoned is not a stalled pipeline), leaves alone one a concurrent delivery owns (the
   run returns nil with a pending status only by conceding),
   runs the pipeline once for each — a resume is idempotent: every stage's
   artefact is on the row, and the append has its claim and its marker —
   and marks failed, under the row's version and only while it is still
   pending, any the run left pending, with the fixed sentence `Filing did
   not finish. Retry to try again.` (`reconcile.Verdict`).
+  A pass starts no run with less than thirteen minutes of its invocation
+  left (`reconcile.runBudget`: two transcriptions, a cleanup and an append),
+  and a run its own deadline cut is not failed — the fail's store calls
+  refuse the done context — so the next pass resumes it
+  (`TestRunStopsAtItsTimeBudgetAndFailsNothingItCut`).
   `CaptureReaped{Outcome=finished|failed}` counts the two outcomes; the
   `capture-reaped` alarm reads `failed`
   (`TestRunFinishesOrFailsEveryStuckCapture`,
   `TestRunDoesNotFailACaptureSomeoneElseMoved`,
   `TestRunLeavesACaptureAConcurrentDeliveryOwns`,
-  `TestRunLeavesAnUploadedCaptureWhoseRecordingHasNotLanded`). A capture is therefore
-  either finished or wearing a Retry button within half an hour of
-  stalling, whatever stalled it.
+  `TestRunLeavesAnUploadedCaptureWhoseRecordingHasNotLanded`,
+  `TestRunFailsAnUploadedCaptureWhoseLinkHasExpired`). A capture is therefore
+  either finished or marked failed within an hour of stalling, whatever
+  stalled it: fifteen minutes to read as stuck and fifteen to the next pass,
+  twenty for an append's lease, thirty-five for an upload's link.
 
 ## The spend cap
 

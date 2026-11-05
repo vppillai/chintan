@@ -1,16 +1,22 @@
 import { test as base, type Page, type Route } from '@playwright/test';
+import { createHash } from 'node:crypto';
 
 import type {
   CaptureCreatedWire,
+  CaptureTargetWire,
   CaptureWire,
+  DeviceWire,
   NoteCleanQueuedWire,
   NoteCleanedWire,
+  NoteColor,
   NoteCreateWire,
   NoteDetailWire,
   NoteWire,
   Page as PageWire,
   PresignedDownloadWire,
   ProblemWire,
+  PushSubscribeWire,
+  PushSubscriptionWire,
   RecordingUrlsWire,
   SearchHitWire,
   SettingsWire,
@@ -60,6 +66,12 @@ export interface ApiState {
   auth: AuthState;
   /** What `PUT /v1/settings` last stored, as `GET` returns it. */
   settings: SettingsWire;
+  /** The instance's VAPID public key, or null for the contract's 404 (no pair yet). */
+  pushKey: string | null;
+  /** The tenant's push subscriptions, as `GET /v1/push/subscriptions` lists them. */
+  pushSubscriptions: PushSubscriptionWire[];
+  /** Every `POST /v1/push/subscriptions` body, in order. */
+  pushPosts: PushSubscribeWire[];
 }
 
 /**
@@ -224,6 +236,9 @@ export function freshState(): ApiState {
       default_language: 'en',
       daily_spend_cap_micros: 0,
     },
+    pushKey: null,
+    pushSubscriptions: [],
+    pushPosts: [],
     offline: false,
     dropNoteGets: 0,
     conflictOnce: false,
@@ -515,6 +530,23 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         capture.last_progress_at = new Date().toISOString();
       }
       await json(route, capture && withRetryAfter(capture), 202);
+      return;
+    }
+
+    // A capture waiting on the user, sent where they chose: back into the
+    // pipeline's append stage with its target set, as the real server does.
+    const targetMatch = /^\/v1\/captures\/([^/]+)\/target$/.exec(path);
+    if (targetMatch && method === 'POST') {
+      const capture = state.captures.find((item) => item.id === targetMatch[1]);
+      if (!capture) {
+        await problem(route, 404, { title: 'Not found' });
+        return;
+      }
+      const body = (request.postDataJSON() ?? {}) as CaptureTargetWire;
+      capture.note_id = 'note_id' in body ? body.note_id : null;
+      capture.status = 'appending';
+      capture.last_progress_at = new Date().toISOString();
+      await json(route, withRetryAfter(capture) satisfies CaptureWire);
       return;
     }
 
@@ -866,6 +898,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
           note.pinned = body['pinned'];
           note.pin_rank = body['pinned'] ? 1000 * pinnedCount : null;
         }
+        if (typeof body['color'] === 'string') note.color = body['color'] as NoteColor;
         if (Array.isArray(body['tags'])) note.tags = body['tags'] as string[];
         if (typeof body['language'] === 'string') {
           // The empty string means "inherit again", which the wire spells as absence.
@@ -915,6 +948,9 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
           cleanup: { cost_micros: 11_842, calls: 50, input_tokens: 61_022, output_tokens: 13_131 },
         },
         days: [{ date: today, cost_micros: 40_791, calls: 118, audio_seconds: 1391.2 }],
+        // The month's facts, so /usage draws them (and the a11y sweep reads them).
+        api: { requests: 1_204 },
+        storage: { recordings: 50, audio_seconds: 1391.2, audio_bytes: 9_800_000, notes: 6, approximate: false },
         // The instance's AWS month to date, as the daily worker task recorded it (D6b).
         aws: {
           month_micros: 3_120_000,
@@ -925,15 +961,48 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       return;
     }
 
+    // ---- Devices -------------------------------------------------------
+    // No inbox devices on the instance under test; You's Devices card says so.
+    if (path === '/v1/devices' && method === 'GET') {
+      await json(route, { items: [] } satisfies { items: DeviceWire[] });
+      return;
+    }
+
     // ---- Web Push ------------------------------------------------------
-    // The instance under test has no VAPID pair, as a fresh deploy does not
-    // until the owner makes one: the key is the contract's 404 and the
-    // Notifications card says so.
+    // By default the instance under test has no VAPID pair, as a fresh
+    // deploy does not until the owner makes one: the key is the contract's
+    // 404 and the Notifications card says so. A spec that sets `pushKey`
+    // gets the key and a subscription list it can watch being written.
     if (path === '/v1/push/key') {
+      if (state.pushKey) {
+        await json(route, { public_key: state.pushKey });
+        return;
+      }
       await problem(route, 404, {
         title: 'Not found',
         detail: 'notifications are not configured on this instance',
       });
+      return;
+    }
+    if (path === '/v1/push/subscriptions') {
+      if (method === 'POST') {
+        const body = request.postDataJSON() as PushSubscribeWire;
+        state.pushPosts.push(body);
+        const created: PushSubscriptionWire = {
+          // The server's id: the first sixteen hex characters of the
+          // endpoint's SHA-256, which the browser computes for its own row.
+          id: createHash('sha256').update(body.endpoint).digest('hex').slice(0, 16),
+          endpoint_host: new URL(body.endpoint).host,
+          label: body.label ?? '',
+          created_at: new Date().toISOString(),
+          last_success_at: null,
+          failures: 0,
+        };
+        state.pushSubscriptions.push(created);
+        await json(route, created, 201);
+        return;
+      }
+      await json(route, { items: state.pushSubscriptions } satisfies PageWire<PushSubscriptionWire>);
       return;
     }
 
@@ -961,7 +1030,11 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       return;
     }
 
-    await json(route, { items: [] });
+    // An endpoint no stub answers is a 404, as the real API says of a route it
+    // does not have. A blanket `{"items":[]}` read as an empty page to a list
+    // and as a malformed row to everything else, so a screen fed the wrong
+    // shape passed instead of failing where it could be seen.
+    await problem(route, 404, { title: 'Not found' });
   });
 
   /*

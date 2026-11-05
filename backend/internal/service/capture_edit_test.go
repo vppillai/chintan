@@ -1017,3 +1017,26 @@ func TestDeleteCaptureAfterTypingBelowTheParagraphKeepsTheTypedText(t *testing.T
 		t.Errorf("body = %q, want the user's text untouched: %q", got, body)
 	}
 }
+
+// A Transcribe again clears the transcript keys from the row until the new
+// ones are written; a delete in between went by the row and left the old
+// transcript, segments and clean artefact in the bucket for good.
+func TestDeleteCaptureUnlinksTheKeysItsRowNoLongerNames(t *testing.T) {
+	h := newEditHarness(t)
+	note := h.note("u1", "Target", "")
+	c := h.appended("u1", note.ID, "c_1", "2026-01-01T10:00:00.000000000Z")
+	derived := []string{c.RawKey, c.RoutedKey, c.CleanKey, c.SegmentsKey}
+	c.Status = model.StatusFailed
+	c.RawKey, c.RoutedKey, c.CleanKey, c.SegmentsKey = "", "", "", ""
+	if _, err := h.store.PutCapture(h.ctx, c); err != nil {
+		t.Fatalf("PutCapture: %v", err)
+	}
+	if err := h.captures.DeleteCapture(h.ctx, "u1", "c_1"); err != nil {
+		t.Fatalf("DeleteCapture: %v", err)
+	}
+	for _, key := range derived {
+		if h.objectExists(key) {
+			t.Errorf("%s outlived its capture", key)
+		}
+	}
+}

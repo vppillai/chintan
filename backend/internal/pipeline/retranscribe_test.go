@@ -156,7 +156,7 @@ func TestRetranscribingAVerbatimListRecordingAfterAnItemsTabSavePutsTheNewWordsU
 		t.Fatal(err)
 	}
 	const text = "- [ ] milk eggs and butter"
-	if written, err := h.pipeline.paragraphInNote(ctx, note.S3MarkdownKey, "c_1", text, nil, cleanup.ItemsFromLines("milk eggs and butter")); err != nil || written {
+	if written, err := h.pipeline.paragraphInNote(ctx, note.S3MarkdownKey, "c_1", text, nil, cleanup.ItemsFromLines("milk eggs and butter"), false); err != nil || written {
 		t.Errorf("paragraphInNote before the write = %v, %v; want not written: a bare marker with none of the words is not this attempt's", written, err)
 	}
 

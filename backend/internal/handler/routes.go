@@ -79,6 +79,9 @@ func (rt *router) routes() {
 	// the gateway's fixed 30-second integration ceiling.
 	rt.handle("GET "+p+"/captures", rt.listCaptures)
 	rt.handle("POST "+p+"/captures", rt.beginCapture, idempotent())
+	// A typed thought: the inbox's text route under the session, for the
+	// app's "Type instead" on /capture.
+	rt.handle("POST "+p+"/captures/text", rt.captureText, idempotent(), body(MaxInboxTextRequestBytes))
 	rt.handle("GET "+p+"/captures/{captureId}", rt.getCapture)
 	rt.handle("POST "+p+"/captures/{captureId}/target", rt.setCaptureTarget, idempotent())
 	rt.handle("POST "+p+"/captures/{captureId}/retry", rt.retryCapture, idempotent())

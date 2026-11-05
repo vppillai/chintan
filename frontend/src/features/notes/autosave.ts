@@ -12,7 +12,7 @@
  *    automatic clobber in either direction.
  */
 
-import type { CleanedMode, NoteUpdateWire } from '@/api/schema.ts';
+import type { CleanedMode, NoteColor, NoteUpdateWire } from '@/api/schema.ts';
 
 export type SaveState =
   | 'clean'
@@ -75,6 +75,13 @@ export interface NoteDraft {
    * before the field existed still typechecks; readers default to `'note'`.
    */
   kind?: 'note' | 'checklist';
+  /**
+   * The row's tint, set from Details. On the draft so it rides the note's own
+   * PATCH with its version — and the offline queue with it. Optional so a
+   * draft built before the field existed still typechecks; readers default
+   * to `'none'`.
+   */
+  color?: NoteColor;
 }
 
 export interface EditorModel {
@@ -219,6 +226,7 @@ export function patchFor(model: EditorModel): NoteUpdateWire {
     ...(draft.cleaned_mode !== undefined && draft.cleaned_mode !== server.cleaned_mode
       ? { cleaned_mode: draft.cleaned_mode }
       : {}),
+    ...((draft.color ?? 'none') !== (server.color ?? 'none') ? { color: draft.color ?? 'none' } : {}),
   };
 }
 
@@ -283,7 +291,8 @@ function draftsEqual(a: NoteDraft, b: NoteDraft): boolean {
     (a.kind ?? 'note') === (b.kind ?? 'note') &&
     Boolean(a.auto_clean) === Boolean(b.auto_clean) &&
     Boolean(a.verbatim) === Boolean(b.verbatim) &&
-    (a.cleaned_mode ?? '') === (b.cleaned_mode ?? '')
+    (a.cleaned_mode ?? '') === (b.cleaned_mode ?? '') &&
+    (a.color ?? 'none') === (b.color ?? 'none')
   );
 }
 

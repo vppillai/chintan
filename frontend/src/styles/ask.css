@@ -39,7 +39,7 @@
 .ask__cost-dismiss {
   min-block-size: var(--layout-touch-target-min);
   padding-inline: var(--space-2);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--color-muted);
   text-decoration: underline;

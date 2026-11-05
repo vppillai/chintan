@@ -59,6 +59,10 @@ export interface QueuedEdit {
   /** Attempted as far as it ever will be. `error` says why it stopped. */
   dead: boolean;
   error: string | null;
+  /** The PATCH body held, for a direct save that will supersede the entry. */
+  body: NoteUpdateWire | null;
+  /** The entry's idempotency key: which entry that save may forget. */
+  key: string;
 }
 
 /** `null` means the server has it — the entry is removed only on success. */
@@ -67,7 +71,13 @@ export async function queuedEditFor(noteId: string): Promise<QueuedEdit | null> 
   const entry = await db.get('mutations', queuedEditId(noteId));
   if (!entry) return null;
   const dead = isDead(entry);
-  return { pending: !dead, dead, error: entry.lastError };
+  return {
+    pending: !dead,
+    dead,
+    error: entry.lastError,
+    body: queuedEditPayload(entry)?.body ?? null,
+    key: entry.idempotencyKey,
+  };
 }
 
 /**
@@ -83,8 +93,18 @@ export async function queuedEditBody(noteId: string): Promise<NoteUpdateWire | n
   return entry ? (queuedEditPayload(entry)?.body ?? null) : null;
 }
 
-/** Forgets a note's queued edit, once a direct save has superseded it. */
-export async function clearQueuedEdit(noteId: string): Promise<void> {
+/**
+ * Forgets a note's queued edit, once a direct save has superseded it — only
+ * the entry under `key`, when one is named: an offline keystroke queued while
+ * that save was on the wire is newer text the save never carried. True when
+ * the entry is gone.
+ */
+export async function clearQueuedEdit(noteId: string, key?: string): Promise<boolean> {
   const db = await openChintanDB();
-  await db.delete('mutations', queuedEditId(noteId));
+  const tx = db.transaction('mutations', 'readwrite');
+  const stored = await tx.store.get(queuedEditId(noteId));
+  const gone = !stored || key === undefined || stored.idempotencyKey === key;
+  if (stored && gone) await tx.store.delete(queuedEditId(noteId));
+  await tx.done;
+  return gone;
 }

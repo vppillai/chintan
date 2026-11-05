@@ -42,6 +42,10 @@ type ExportJob struct {
 	URL       string `json:"url,omitempty"`
 	ExpiresAt string `json:"expires_at,omitempty"`
 	Bytes     int64  `json:"bytes,omitempty"`
+	// Truncated says the file stops at a bound (maxExportNotes on a shelf,
+	// maxExportCapturesPerNote on a note or on the unrouted list), so the
+	// app can say so before the person keeps it as their backup.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // exportArtifact is the value of the artifact tag on both export objects. The
@@ -163,7 +167,7 @@ func (s *ExportService) Start(ctx context.Context, userID string) (ExportJob, er
 		return ExportJob{}, fmt.Errorf("export: write payload: %w", err)
 	}
 
-	job := ExportJob{ID: exportID, Status: ExportReady, Bytes: int64(len(payload))}
+	job := ExportJob{ID: exportID, Status: ExportReady, Bytes: int64(len(payload)), Truncated: doc.Truncated}
 	if err := s.writeJob(ctx, userID, job); err != nil {
 		return ExportJob{}, err
 	}
@@ -220,7 +224,7 @@ func (s *ExportService) writeJob(ctx context.Context, userID string, job ExportJ
 	}
 	// The URL and its expiry are minted per read, never stored: a persisted
 	// presigned URL outlives the request that was authorised to hold it.
-	stored := ExportJob{ID: job.ID, Status: job.Status, Bytes: job.Bytes}
+	stored := ExportJob{ID: job.ID, Status: job.Status, Bytes: job.Bytes, Truncated: job.Truncated}
 	body, err := json.Marshal(stored)
 	if err != nil {
 		return fmt.Errorf("export: encode job: %w", err)
@@ -254,7 +258,10 @@ func (s *ExportService) build(ctx context.Context, userID string) (exportDocumen
 		ExportedAt: model.FormatTime(s.now()),
 		Settings:   settings,
 		Artifacts:  map[string]exportKeys{},
-		Truncated:  len(active)+len(archived) >= maxExportNotes,
+		// Each shelf is drained to its own bound, so each is judged on
+		// its own; their sum against one bound flagged a complete export
+		// of 1,200 active and 900 archived notes.
+		Truncated: len(active) >= maxExportNotes || len(archived) >= maxExportNotes,
 	}
 
 	for _, note := range append(append([]model.NoteIndex{}, active...), archived...) {
@@ -282,6 +289,7 @@ func (s *ExportService) build(ctx context.Context, userID string) (exportDocumen
 			return exportDocument{}, fmt.Errorf("export: list captures: %w", err)
 		}
 		entry.Captures = captures
+		doc.Truncated = doc.Truncated || len(captures) >= maxExportCapturesPerNote
 		for _, c := range captures {
 			doc.Artifacts[c.ID] = exportKeys{
 				Audio:    c.AudioKey,
@@ -306,6 +314,7 @@ func (s *ExportService) build(ctx context.Context, userID string) (exportDocumen
 		return exportDocument{}, fmt.Errorf("export: list unrouted captures: %w", err)
 	}
 	doc.Captures = unrouted
+	doc.Truncated = doc.Truncated || len(unrouted) >= maxExportCapturesPerNote
 	for _, c := range unrouted {
 		doc.Artifacts[c.ID] = exportKeys{
 			Audio:    c.AudioKey,

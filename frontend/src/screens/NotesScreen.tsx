@@ -12,9 +12,7 @@ import type { NoteWire } from '@/api/schema.ts';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
 import { Wordmark } from '@/components/Wordmark.tsx';
 import { useAskThread } from '@/features/ask/useAskThread.ts';
-import { PasskeyNudge } from '@/features/auth/PasskeyNudge.tsx';
 import { FilingRow } from '@/features/capture/FilingRow.tsx';
-import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
 import { groupByDay, splitPinned } from '@/features/notes/groups.ts';
 import { mergeResults, rankLocal } from '@/features/search/localSearch.ts';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue.ts';
@@ -37,6 +35,36 @@ export { chipScrollBy } from './library/LibraryField.tsx';
 const AskPanel = lazy(() =>
   import('@/features/ask/AskPanel.tsx').then((m) => ({ default: m.AskPanel })),
 );
+
+/*
+ * So are the offer of a recording a killed tab stranded, which has something
+ * to say only after a crash, and the passkey nudge, which a device sees until
+ * it has one: each arrives a moment after Home's first paint rather than in
+ * every launch's download.
+ */
+const PasskeyNudge = lazy(() =>
+  import('@/features/auth/PasskeyNudge.tsx').then(
+    (m) => ({ default: m.PasskeyNudge }),
+    () => ({ default: Nothing }),
+  ),
+);
+const ResumePrompt = lazy(() =>
+  import('@/features/capture/ResumePrompt.tsx').then(
+    (m) => ({ default: m.ResumePrompt }),
+    () => ({ default: Nothing }),
+  ),
+);
+
+/*
+ * What either is when its chunk cannot be fetched — the connection dropped
+ * between Home's paint and the fetch. Neither is Home's to fail over: thrown,
+ * the lazy chunk's rejection replaced the whole library with the route's
+ * fault screen. A stranded recording stays on disk and is offered on the
+ * next launch.
+ */
+function Nothing(): null {
+  return null;
+}
 
 /**
  * The library. Home.
@@ -203,10 +231,27 @@ export function NotesScreen() {
    */
   const settled = useDebouncedValue(trimmed, SERVER_SEARCH_DEBOUNCE_MS);
   const server = useSearch(settled, { enabled: online && view === 'active' });
-  const hits = useMemo(
-    () => mergeResults(local, server.data?.items ?? []),
-    [local, server.data],
-  );
+  /*
+   * The server searches every active note and knows nothing of the chips, so
+   * under a tag or Checklists chip its hits are held to the same filter the
+   * list is, read from the device's copy of each note. Before, a server hit
+   * from another tag joined the filtered results. A hit the device holds no
+   * copy of cannot be checked, and is left out while a chip is pressed.
+   */
+  const remote = useMemo(() => {
+    const items = server.data?.items ?? [];
+    if (!tag && !kind) return items;
+    const known = new Map([...(cached.data ?? []), ...notes].map((note) => [note.id, note]));
+    return items.filter((hit) => {
+      const note = known.get(hit.note_id);
+      return (
+        note !== undefined &&
+        (!tag || (note.tags ?? []).includes(tag)) &&
+        (!kind || (note.kind ?? 'note') === kind)
+      );
+    });
+  }, [server.data, tag, kind, cached.data, notes]);
+  const hits = useMemo(() => mergeResults(local, remote), [local, remote]);
   const serverUnavailable = view === 'active' && (!online || server.isError);
   // Still waiting on the server: either the debounce has not let the word
   // through yet, or the request is in flight.
@@ -311,8 +356,10 @@ export function NotesScreen() {
       {!asking && !searching && view === 'active' && (
         <>
           {/* Only once there is a note (round-3 T56): the first screen is about the first recording. */}
-          {notes.length > 0 && <PasskeyNudge />}
-          <ResumePrompt />
+          <Suspense fallback={null}>
+            {notes.length > 0 && <PasskeyNudge />}
+            <ResumePrompt />
+          </Suspense>
           <FilingRow />
         </>
       )}

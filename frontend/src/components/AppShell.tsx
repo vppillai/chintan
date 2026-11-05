@@ -16,6 +16,7 @@ import { useResendOnReconnect } from '@/features/capture/useResendOnReconnect.ts
 import { useKeyboardInset } from '@/hooks/useKeyboardInset.ts';
 import { OfflineBanner } from '@/offline/OfflineBanner.tsx';
 import { UpdatePrompt } from '@/pwa/UpdatePrompt.tsx';
+import { usePushResync } from '@/pwa/usePushResync.ts';
 import { usePushWakeup } from '@/pwa/usePushWakeup.ts';
 
 import { BannerRecord } from './BannerRecord.tsx';
@@ -87,6 +88,10 @@ export function AppShell() {
   usePushWakeup();
 
   const screen = screenForPath(location.pathname);
+  // A notification subscription the server lost is replaced on launch, so a
+  // phone does not go quiet until someone opens You. Not on the capture
+  // screen, whose Record shortcut's one request must stay the recording's own.
+  usePushResync(auth.phase === 'signed-in' && screen !== 'capture');
   /*
    * The screen is said as it lands. A hold locked on the tab bar arrives at
    * the capture screen mid-take: the news is that it carries on without the

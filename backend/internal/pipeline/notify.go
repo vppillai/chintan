@@ -116,7 +116,11 @@ func (p *Pipeline) notify(ctx context.Context, capture model.CaptureIndex) {
 				log.Warn("could not remove a gone push subscription", slog.String("subscription_id", sub.ID), slog.String("error", derr.Error()))
 			}
 			log.Info("push subscription gone; removed", slog.String("subscription_id", sub.ID), slog.Int("status", status))
-			obs.Count(ctx, "PushSubscriptionsPruned", nil)
+			// Alarmed: after this the tenant may have no subscription left,
+			// and from then on every filing is silent with nothing failing
+			// to count. The app re-enrols on its next launch; the mail says
+			// to open it on that device.
+			obs.CountWithRollup(ctx, "PushSubscriptionsPruned", nil)
 			continue
 		default:
 			sub.Failures++

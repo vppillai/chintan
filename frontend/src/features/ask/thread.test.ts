@@ -9,7 +9,6 @@ import type { AskWire } from '@/api/schema.ts';
 import { ASK_POLL_TIMEOUT_MS } from '@/api/queries.ts';
 
 import {
-  ASK_NOTE_TAG,
   HISTORY_ANSWER_LIMIT,
   HISTORY_BYTES_BUDGET,
   HISTORY_LIMIT,
@@ -27,14 +26,12 @@ import {
   loadThread,
   nameSources,
   newTurn,
-  noteFromThread,
   resendTurn,
   resumeTurn,
   saveThread,
-  sourceLabels,
-  sourcesOf,
   type AskTurn,
 } from './thread.ts';
+import { ASK_NOTE_TAG, noteFromThread, sourceLabels, sourcesOf } from './panelThread.ts';
 
 /**
  * The generated row, with its sources told apart. The contract generator
@@ -115,6 +112,17 @@ describe('a turn takes the server’s row', () => {
     });
     expect(applyRow(turn, { ...askFailed, error: null }).error).toMatch(/could not be fetched/);
     expect(failTurn(turn, NOT_SENT_MESSAGE)).toMatchObject({ status: 'failed', error: NOT_SENT_MESSAGE });
+  });
+
+  it('fails the turn on a 2xx that is not a row, rather than throwing', () => {
+    // A captive portal's page, a proxy, a deploy between two shapes.
+    const turn = newTurn('k1', 'q');
+    for (const body of [{ items: [] }, null, { ...askPending, sources: undefined }]) {
+      expect(applyRow(turn, body as unknown as AskWire)).toMatchObject({
+        status: 'failed',
+        error: LOST_MESSAGE,
+      });
+    }
   });
 
   it('is answered, not failed, when the notes do not say', () => {

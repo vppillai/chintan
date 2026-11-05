@@ -63,6 +63,18 @@ a failure with no audio to lose does not ask.
 
 The manifest's "Record a thought" shortcut opens `/capture` and records at once.
 
+"Type instead", under the controls while a take is younger than
+`DISCARD_CONFIRM_AFTER_MS` or after a microphone failure with nothing
+buffered, is for when speaking is not possible: the take is discarded and
+the screen becomes a field (`TypedThought.tsx`) under the same target
+chooser, aimed where the recording was. Send is `POST /v1/captures/text`,
+the device inbox's text capture under the session (`inbox.md`): it starts at
+`transcribed` and the worker routes, cleans and appends it as a transcript,
+so it is filed by the same rules and shows on Home's filing tray, or the
+note's banner, as a recording does; the screen then leaves as Send does.
+Offline it says "Typing a thought needs a connection.", since nothing typed
+is kept on the device.
+
 ## Recording into a note, and coming back
 
 `?note=` seeds the target at `start`; the chooser pill (`TargetChooser.tsx`)
@@ -70,7 +82,17 @@ can move it until Send reads it. With no note chosen the pill reads "Chintan
 decides", and so does the first option of its list, above the recent notes: no
 target means the router files it, possibly into a note that exists — the hint
 under it says "add this to my roof note". A chosen note reads "Into ⟨title⟩".
-There is no option that forces a new note. A retarget is written to the
+The sheet opens with a field, "Find or name a note": typed into, the list is
+every note the device holds whose title, alias or tag has it, not only the
+recent twenty, and when no note has that title the first option is "New note
+“⟨typed⟩”", which makes the note (`POST /v1/notes`) and aims the recording
+at it. Offline the field only finds ("New note needs a connection."). A note
+made this way is discarded — archived, then purged, as an untouched
+placeholder is — when another target is picked or the screen is left with
+nothing aimed into it, once the server says it is still empty with no
+capture; a take recording or uploading into it, or a capture already filed,
+keeps it. The sheet (`TargetChooserSheet.tsx`) and the `MoveSheet`s are
+chunks of their own, loaded when opened. A retarget is written to the
 capture record so a recording resumed after a reload goes where it was last
 aimed.
 
@@ -307,7 +329,9 @@ putting it away would hide a recording that is in no note yet — answering is
 its way off the screen. This device's failed upload keeps "Discard" as a
 word, never an ×: it deletes the audio, and an × here means "put away". The
 row's swipe tray (Dismiss) and "Clear all" are the other ways to put a
-receipt away.
+receipt away. Under the excerpt a receipt offers "Wrong note?", which opens
+the Recordings tab's `MoveSheet` for every capture the receipt names, out of
+its note; the poll then draws the receipt under the note they went to.
 
 One receipt is a row. Two or more fold into one summary row, "3 filed into 2
 notes ›" — a button with `aria-expanded` that opens the receipts in place —
@@ -387,10 +411,14 @@ on the wire with nobody watching, so it gets a receipt like any routed one.
 ### The poll
 
 A recording is appended by the worker, not by the client that is watching,
-so the app asks. `usePendingCaptures` makes one request,
+so the app asks. Each tick of `usePendingCaptures` is one request,
 `GET /v1/captures?status=all&limit=20` (`CAPTURE_LIST_LIMIT`), filtered on
 the client by `isFilingRelevant` rather than four server-side filters in
-parallel. Its cadence is `capturePollInterval`, a ladder keyed on how long
+parallel. When that page has a cursor — more than twenty captures —
+`status=failed` and `status=needs_target` are asked as well, on mount, focus
+and an invalidation of `captures` but not on the poll's ticks (neither status
+moves on its own), so a capture waiting on the user is never paged out of
+Home by newer ones; one of the two failing costs only its own rows. Its cadence is `capturePollInterval`, a ladder keyed on how long
 ago anything moving last made progress (`last_progress_at`, else
 `created_at`); the youngest progress decides, so one capture still moving
 keeps the poll brisk however long another has been stuck beside it:

@@ -928,6 +928,40 @@ paths:
         '500': { $ref: '#/components/responses/ServerError' }
         '503': { $ref: '#/components/responses/NotConfigured' }
 
+  /v1/captures/text:
+    post:
+      tags: [captures]
+      summary: File a typed thought
+      description: |
+        The app's "Type instead" on the capture screen: the capture
+        `/v1/inbox/text` makes for a device, made under the user's session.
+        The text is written where the transcript would be, the capture
+        starts at `transcribed` with `has_audio: false`, and the worker
+        routes, cleans and appends it as it would a transcript — into
+        `note_id` when one is given, else wherever routing decides.
+        1 to 20,000 characters.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InboxText' }
+      responses:
+        '202':
+          description: The text is stored and the pipeline is running.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InboxAccepted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/SpendCapped' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/NotConfigured' }
+
   /v1/captures/{captureId}:
     parameters:
       - $ref: '#/components/parameters/CaptureId'
@@ -1771,7 +1805,7 @@ components:
 
     Note:
       type: object
-      required: [id, title, updated_at, version, archived, kind, pinned, pin_rank]
+      required: [id, title, updated_at, version, archived, kind, pinned, pin_rank, color]
       properties:
         id: { type: string }
         title: { type: string, maxLength: 200 }
@@ -1873,6 +1907,8 @@ components:
             in this order (a tie broken by the more recently pinned first),
             then the rest by `updated_at`, and the cursor pages across the
             two tiers unchanged. Rewritten by `POST /v1/notes/pins`.
+        color:
+          $ref: '#/components/schemas/NoteColor'
 
     NoteCleaned:
       type: object
@@ -2052,6 +2088,20 @@ components:
             still moves. At most fifty notes are pinned (409 `you can pin up
             to fifty notes`). The order within the group is
             `POST /v1/notes/pins`.
+        color:
+          $ref: '#/components/schemas/NoteColor'
+
+    NoteColor:
+      type: string
+      enum: [none, rose, peach, sand, lime, mint, sky, lavender, slate]
+      description: |
+        The tint of the note's row on Home and of its screen's header, by
+        name; each client maps a name to a pastel in a light theme and a deep
+        tint of the same hue in a dark one. `none` is no tint, and what every
+        note reads until one is chosen. Always present on a `Note`. Set
+        through `NoteUpdate.color`; any other value is 400 `color must be
+        none, rose, peach, sand, lime, mint, sky, lavender or slate`. Like a
+        pin it is not an edit: `updated_at` stays, `version` moves.
 
     NotePinsRequest:
       type: object
@@ -2790,3 +2840,9 @@ components:
         url: { type: string, format: uri, nullable: true }
         expires_at: { type: string, format: date-time, nullable: true }
         bytes: { type: integer, nullable: true }
+        truncated:
+          type: boolean
+          description: >-
+            The file stops at a bound — 2,000 notes on a shelf, 500
+            recordings on a note or unfiled — and is not the whole account.
+            Absent when the file is complete.
