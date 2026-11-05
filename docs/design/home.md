@@ -155,7 +155,7 @@ A note can wear one of eight pastel tints — rose, peach, sand, lime, mint,
 sky, lavender, slate — or none (`NoteColor` in `openapi.yaml`; the stored
 name is `color`, data-model.md). Colour… on a row's ⋮ opens a small dialog
 (`components/ColorPicker.tsx`, `ColorDialog`) holding the picker: nine
-44 px swatches, "No colour" first, native radios named by the colour, the
+44 px swatches (a dot and a name), "No colour" first, native radios named by the colour, the
 current one ringed in ink. A choice applies at once and the status region
 says "Colour: Rose"; Done or Escape closes. It is one `PATCH {version,
 color}` (`useColorNote`), shown before the server answers and put back if
@@ -169,30 +169,44 @@ Details has the same picker and carries a colour through the offline queue
 The tint fills the whole card (`.note-row[data-color]`, `home.css`), not a
 band at its edge. Both were tried at 360 px in both themes: a pastel band
 beside a raised card barely registers in Ink & Paper and vanishes in
-Nocturne, where the tints are deep, while a filled card is found at a
-glance and still reads as one list because only the ground changes —
-title, snippet, time, tags and meta keep their colours, and a tag chip's
-hairline steps up to `line-strong` so it survives the tint. Each name is a
-pair of tokens (`--color-tint-<name>`, `tokens.css`): a pastel in Ink &
-Paper and a deep tint of the same hue at the lightness of `raised` in
-Nocturne. Contrast, WCAG 2.2, computed:
+Nocturne, while a filled card is found at a glance and still reads as one
+list because only the ground changes — title, snippet, time, tags and meta
+keep their roles, and a tag chip's hairline steps up to `faint` so it
+survives the tint. Each name is a pair of tokens (`--color-tint-<name>`,
+`tokens.css`), the same eight hues spread round the OKLCH wheel: a pastel
+at L 0.90, C 0.06 in Ink & Paper and a muted mid-dark at L 0.35, C 0.065 in
+Nocturne (slate at 60% of that chroma, so it reads as blue-grey beside sky).
 
-| Tint | Ink & Paper | ink | muted | faint | accent-strong | Nocturne | ink | muted | faint |
-|---|---|---|---|---|---|---|---|---|---|
-| rose | `#ffe5e9` | 14.75 | 6.84 | 4.51 | 5.45 | `#2d181b` | 15.21 | 7.19 | 4.71 |
-| peach | `#ffe9d6` | 14.96 | 6.93 | 4.57 | 5.53 | `#2c1a0e` | 15.17 | 7.17 | 4.70 |
-| sand | `#fceed1` | 15.30 | 7.09 | 4.67 | 5.65 | `#261d0a` | 15.15 | 7.16 | 4.70 |
-| lime | `#e9f4d7` | 15.38 | 7.13 | 4.70 | 5.68 | `#1b220f` | 14.92 | 7.05 | 4.62 |
-| mint | `#d7f8e8` | 15.46 | 7.16 | 4.72 | 5.71 | `#0d241b` | 14.88 | 7.04 | 4.61 |
-| sky | `#d6f4ff` | 15.26 | 7.07 | 4.66 | 5.64 | `#0c212d` | 15.05 | 7.12 | 4.67 |
-| lavender | `#f1eaff` | 15.02 | 6.96 | 4.59 | 5.55 | `#201b2e` | 15.21 | 7.19 | 4.72 |
-| slate | `#e8f0fa` | 15.29 | 7.08 | 4.67 | 5.65 | `#1a1f26` | 15.09 | 7.13 | 4.68 |
+A tint at the lightness of the plain card measures 1.00–1.06:1 from it,
+and in Nocturne such tiles read as black and cannot be told apart. So the
+tints differ from the card by lightness and chroma both, and since a
+ground that visible does not keep the theme's `faint` (and in Nocturne
+`muted`) at AA, a tinted card and a tinted note screen swap in their own:
+`--color-on-tint-muted` and `--color-on-tint-faint` (Ink & Paper: `muted`
+itself and `#625b4d`; Nocturne: `#c4ccc8` and `#aab4ae`).
+"vs card" is the tint against `raised`; in Ink & Paper it stays under
+1.25:1 by design — a light pastel cannot be much darker and stay a pastel —
+and the hue carries the difference. Contrast, WCAG 2.2, computed:
 
-`faint` is the binding constraint in both themes, which is why the pastels
-are this pale and the deep tints this dark. The focus ring is ink, outside
-the card. `e2e/colors.spec.ts` sets a colour from the row and from Details,
-reloads, and runs axe's contrast rule over every tint and the open picker in
-both themes.
+| Tint | Ink & Paper | vs card | ink | muted | faint | accent-strong | Nocturne | vs card | ink | muted | faint | destructive |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| rose | `#ffced3` | 1.24 | 12.57 | 5.82 | 4.81 | 4.64 | `#572b31` | 1.40 | 10.66 | 7.14 | 5.49 | 4.90 |
+| peach | `#fed4b9` | 1.22 | 12.83 | 5.94 | 4.91 | 4.74 | `#543016` | 1.41 | 10.56 | 7.08 | 5.44 | 4.85 |
+| sand | `#edddb1` | 1.20 | 13.03 | 6.04 | 4.99 | 4.82 | `#483909` | 1.45 | 10.26 | 6.87 | 5.28 | 4.71 |
+| lime | `#d1e7bd` | 1.17 | 13.28 | 6.15 | 5.08 | 4.91 | `#2f411b` | 1.47 | 10.11 | 6.77 | 5.20 | 4.64 |
+| mint | `#b8ebd6` | 1.17 | 13.30 | 6.16 | 5.09 | 4.91 | `#0b4534` | 1.49 | 9.99 | 6.69 | 5.14 | 4.59 |
+| sky | `#b3e8fb` | 1.18 | 13.26 | 6.14 | 5.08 | 4.90 | `#004253` | 1.48 | 10.05 | 6.73 | 5.17 | 4.62 |
+| lavender | `#e7d5ff` | 1.21 | 12.85 | 5.95 | 4.92 | 4.75 | `#423156` | 1.40 | 10.60 | 7.10 | 5.46 | 4.87 |
+| slate | `#d1dff7` | 1.19 | 13.06 | 6.05 | 5.00 | 4.83 | `#2f3b4f` | 1.45 | 10.29 | 6.89 | 5.30 | 4.73 |
+
+muted and faint are the `on-tint` values. The picker does not show the
+wash: each swatch is a solid dot of the colour at full strength
+(`--color-dot-<name>`, OKLCH L 0.60, C 0.12, the same in both themes and
+at least 3.2:1 on every ground of either theme) beside its name, in a grid of 44 px
+targets; the checked one is ringed in ink and its name set in bold. The
+focus ring is ink, outside the card. `e2e/colors.spec.ts` sets a colour
+from the row and from Details, reloads, and runs axe's contrast rule over
+every tint and the open picker in both themes.
 
 ## Deleting
 

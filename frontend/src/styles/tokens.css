@@ -146,6 +146,19 @@
   --color-swatch-nocturne: #0a0c0b;
   --color-swatch-nocturne-line: #f2f5f3;
 
+  /* The colour picker's dots: each note colour at full strength (OKLCH
+     L 0.60, C 0.12; slate 0.054), the same in both themes so a swatch says
+     "rose" even where the card tint is only a wash. At least 3.2:1 on every
+     ground of either theme. Read only by `.color-picker__swatch`. */
+  --color-dot-rose: #bc5f6d;
+  --color-dot-peach: #b66b31;
+  --color-dot-sand: #9c7c0a;
+  --color-dot-lime: #688e3b;
+  --color-dot-mint: #099672;
+  --color-dot-sky: #008fb3;
+  --color-dot-lavender: #916cba;
+  --color-dot-slate: #6e81a1;
+
   --z-content: 1;
   --z-sheet: 20;
   --z-bottom-bar: 30;
@@ -251,18 +264,23 @@
   --color-selection: rgb(194 65 12 / 18%);
 
   /* Note tints (`NoteColor`): a pastel per name, the row's ground on Home and
-     the wash at the top of the note screen. Each is light enough that ink
-     (≥14.7:1), muted (≥6.8:1), faint (≥4.51:1) and accent-strong (≥5.4:1)
-     hold AA on it (every ratio: docs/design/home.md, "Colour"), and
-     Nocturne's block below keeps each hue as a deep tint. */
-  --color-tint-rose: #ffe5e9;
-  --color-tint-peach: #ffe9d6;
-  --color-tint-sand: #fceed1;
-  --color-tint-lime: #e9f4d7;
-  --color-tint-mint: #d7f8e8;
-  --color-tint-sky: #d6f4ff;
-  --color-tint-lavender: #f1eaff;
-  --color-tint-slate: #e8f0fa;
+     the wash at the top of the note screen. OKLCH L 0.90, C 0.06 (slate
+     0.036), hues spread round the wheel: the first set sat at L 0.95 to keep
+     plain `faint` at AA and came out 1.01–1.06:1 from a plain card, which
+     nobody could see. So a tinted card carries its own muted and faint
+     (`on-tint-*`, read by home.css): ink ≥12.5:1, muted ≥5.8:1, faint
+     ≥4.8:1, accent-strong ≥4.6:1 (every ratio: docs/design/home.md,
+     "Colour"). */
+  --color-tint-rose: #ffced3;
+  --color-tint-peach: #fed4b9;
+  --color-tint-sand: #edddb1;
+  --color-tint-lime: #d1e7bd;
+  --color-tint-mint: #b8ebd6;
+  --color-tint-sky: #b3e8fb;
+  --color-tint-lavender: #e7d5ff;
+  --color-tint-slate: #d1dff7;
+  --color-on-tint-muted: var(--color-muted);
+  --color-on-tint-faint: #625b4d;
 
   /* Ink casts on paper: short, soft, barely tinted. Each step is two layers
      — a tight one for the edge and a wide one for the lift — so a card reads
@@ -332,7 +350,7 @@
    `destructive` (#F28B82) is a pastel coral, the one hue here that is
    neither the record lime nor a grey: a menu's Delete, a failed filing's
    glyph and the fill of a destructive button. On the note tints it is at
-   least 6.84:1. Ink & Paper says the same thing with its burnt orange.
+   least 4.59:1. Ink & Paper says the same thing with its burnt orange.
    ========================================================================== */
 
 [data-theme='nocturne'] {
@@ -366,17 +384,22 @@
   --color-overlay: rgb(10 12 11 / 62%);
   --color-selection: rgb(184 241 53 / 22%);
 
-  /* Note tints, deep: the same hues as Ink & Paper's pastels, at the
-     lightness of `raised`, so ink (≥14.8:1), muted (≥7.0:1) and faint
-     (≥4.61:1) stay AA and the hue is what tells two rows apart. */
-  --color-tint-rose: #2d181b;
-  --color-tint-peach: #2c1a0e;
-  --color-tint-sand: #261d0a;
-  --color-tint-lime: #1b220f;
-  --color-tint-mint: #0d241b;
-  --color-tint-sky: #0c212d;
-  --color-tint-lavender: #201b2e;
-  --color-tint-slate: #1a1f26;
+  /* Note tints, deep: the same hues as Ink & Paper's pastels at OKLCH
+     L 0.35, C 0.065 (slate 0.039) — 1.40–1.49:1 from a plain card, where the
+     first set (at the lightness of `raised`) was 1.00–1.02:1 and read as
+     black. On that ground plain faint falls to 3.1:1, so a tinted card
+     lifts its muted and faint (`on-tint-*`): ink ≥10.0:1, muted ≥6.7:1,
+     faint ≥5.1:1, destructive ≥4.59:1. */
+  --color-tint-rose: #572b31;
+  --color-tint-peach: #543016;
+  --color-tint-sand: #483909;
+  --color-tint-lime: #2f411b;
+  --color-tint-mint: #0b4534;
+  --color-tint-sky: #004253;
+  --color-tint-lavender: #423156;
+  --color-tint-slate: #2f3b4f;
+  --color-on-tint-muted: #c4ccc8;
+  --color-on-tint-faint: #aab4ae;
 
   /* Darker and wider than Ink & Paper's: on a near-black page a shadow is
      the only thing that separates one plane from the next. The lift is a
@@ -430,14 +453,16 @@
 
     --color-overlay: rgb(10 12 11 / 62%);
     --color-selection: rgb(184 241 53 / 22%);
-    --color-tint-rose: #2d181b;
-    --color-tint-peach: #2c1a0e;
-    --color-tint-sand: #261d0a;
-    --color-tint-lime: #1b220f;
-    --color-tint-mint: #0d241b;
-    --color-tint-sky: #0c212d;
-    --color-tint-lavender: #201b2e;
-    --color-tint-slate: #1a1f26;
+    --color-tint-rose: #572b31;
+    --color-tint-peach: #543016;
+    --color-tint-sand: #483909;
+    --color-tint-lime: #2f411b;
+    --color-tint-mint: #0b4534;
+    --color-tint-sky: #004253;
+    --color-tint-lavender: #423156;
+    --color-tint-slate: #2f3b4f;
+    --color-on-tint-muted: #c4ccc8;
+    --color-on-tint-faint: #aab4ae;
 
     --shadow-xs: 0 1px 1px rgb(0 0 0 / 40%);
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 45%), 0 2px 8px rgb(0 0 0 / 35%);
