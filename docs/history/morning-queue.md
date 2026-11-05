@@ -496,3 +496,21 @@ You tapped a new-note notification and the app said the note was not here. The n
 **Found on the way:** bursts of real 404s after cold starts come from the idle body prefetch re-asking for notes deleted elsewhere (PR17-4), and a second read follows every real 404 about a second later (PR17-5). Both small, both queued.
 
 **For you:** nothing. The three standing items are unchanged.
+
+## 4 Nov — round 18: five blind reviews, notifications, colours, MP4
+
+You asked for a double-blind review on the new model plus three fixes. Five reviewers read the app independently: Opus 5.5 and Fable 5.1 here, and Gemini 4 Argon, Grok 4.5 and Muse Wonder through the Cursor CLI. Their findings were reconciled into one list, weighted by how many raised each independently, and every item was reproduced before it was fixed. Eight PRs merged, each with its own adversarial review.
+
+**Notifications (#265).** Chrome dropped your phone's push subscription on 7 October; the worker pruned it as designed; the app never re-enrolled, and turning the switch on would have re-sent the dead one. The app now re-enrols on launch when permission is still granted, the switch replaces a dead subscription, You says "Not reaching this device" when it happens, and a new alarm fires the hour a subscription is pruned. Open the app once on your phone; if the card says "Not reaching this device", turn notifications on.
+
+**Note colours and MP4 (#266).** Eight pastel tints plus none, each tuned for both themes with contrast checked, set from the row's ⋮ (Colour…) or Details. Downloads can be MP4 (You → Your data), converted on the phone in a lazily loaded piece of code; the review caught that Safari's encoder would have produced silent files on iPhone, now fixed. Please download one recording as MP4 on your phone and confirm it plays.
+
+**What the reviews found and what was fixed**
+- Data loss (#268): the offline queue could drop an edit made during a save; tapping Record from a new note deleted it; a Cognito hiccup signed you out; a malformed Ask reply could crash Home; failed recordings could fall off Home's list. All fixed with tests that fail on the old code.
+- Backend (#267): a retried capture could append twice; uploads that never landed sat pending forever; the purge could destroy a note restored mid-sweep; Transcribe again on a checklist could land nothing. Fixed. A proposed change to checklist delete was dropped in review because it could have removed items you typed yourself.
+- UX (#272): type a thought on /capture when you can't speak; "Wrong note?" on a filed receipt; search needs every word and opens the note at the match; Ask is labelled; four contrast failures fixed, including coral instead of lime for destructive actions in dark.
+- Ops (#269) and security (#270): CI job timeouts, Playwright skipped for backend-only changes, the frontend no longer deploys ahead of its backend, the Go toolchain and frontend audit advisories cleared.
+
+**Cost.** You asked: the AWS bill is about $1.04 a month, two-thirds of it monitoring; provider spend for your own use is about 8 cents a month. Nothing worth trimming. Restricting CloudTrail to one region would have saved 7 cents and stopped recording IAM changes, so it was not applied.
+
+**Your call, not built:** note history with restore, merging two notes, playback speed, sharing audio files into the app, keeping the Ask thread across sessions.
