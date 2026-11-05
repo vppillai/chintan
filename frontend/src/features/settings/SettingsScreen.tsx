@@ -27,7 +27,7 @@ import { formatDollars } from './usage.ts';
  * be showed "45 days" while the audio went on day 30: the
  * choice is now one of the five, and what is shown is what is stored.
  */
-export const RETENTION_TIERS = [0, 7, 30, 90, 365] as const;
+const RETENTION_TIERS = [0, 7, 30, 90, 365] as const;
 
 /**
  * The theme segments. "Follow system" is the preference's full name (it is
