@@ -178,7 +178,12 @@ service answers 404 or 410 after the browser rotated, expired or dropped it
 data. Once per session the shell (`usePushResync`, mounted in `AppShell`,
 not on the capture screen) checks: with permission already granted, a
 browser that remembers being turned on or holds a subscription, and that
-the server's list does not include, is re-enrolled through the same
+the server's list does not include, is re-enrolled. The memory is
+`chintan.push.wanted` in localStorage, '1' on and '0' off; a browser with no
+record but with permission granted counts as on, since only the card's
+switch asks for permission — that covers a browser turned on before the
+record existed and since dropped by its push service. Such a browser is
+re-enrolled through the same
 `enrolThisBrowser` — a fresh subscription, which needs no tap once
 permission is granted, and the POST. Nothing is fetched for a browser
 without permission or never turned on. Permission the browser itself

@@ -108,14 +108,19 @@ async function subscribeThisBrowser(publicKey: string): Promise<PushSubscription
 
 /**
  * Whether the person turned notifications on in this browser and has not
- * turned them off: remembered per device, so a subscription the browser or
- * the push service dropped is noticed even when nothing of it is left here.
+ * turned them off: remembered per device ('1' on, '0' off), so a
+ * subscription the browser or the push service dropped is noticed even when
+ * nothing of it is left here. A browser with no record but with permission
+ * granted counts as on: only the card's switch asks for permission, so it
+ * was turned on here, before this record existed.
  */
 export const PUSH_WANTED_KEY = 'chintan.push.wanted';
 
 export function pushWanted(): boolean {
   try {
-    return localStorage.getItem(PUSH_WANTED_KEY) === '1';
+    const wanted = localStorage.getItem(PUSH_WANTED_KEY);
+    if (wanted !== null) return wanted === '1';
+    return notificationPermission() === 'granted';
   } catch {
     // Storage blocked: only a subscription still held says it was wanted.
     return false;
@@ -124,8 +129,7 @@ export function pushWanted(): boolean {
 
 export function setPushWanted(wanted: boolean): void {
   try {
-    if (wanted) localStorage.setItem(PUSH_WANTED_KEY, '1');
-    else localStorage.removeItem(PUSH_WANTED_KEY);
+    localStorage.setItem(PUSH_WANTED_KEY, wanted ? '1' : '0');
   } catch {
     // Quota or private mode; the held subscription still counts as wanted.
   }
