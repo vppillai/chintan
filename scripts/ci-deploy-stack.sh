@@ -84,7 +84,7 @@ ALLOWED_ORIGIN="${ALLOWED_ORIGIN:-$SITE_ORIGIN}"
 # rather than from an environment variable so a hand run needs nothing extra.
 ACCOUNT_ID="$(aws_cli sts get-caller-identity --query Account --output text)"
 [ -n "$ACCOUNT_ID" ] || die "could not resolve the AWS account id"
-REGION="$(aws_cli configure get region 2>/dev/null || printf '%s' "${AWS_REGION:-${AWS_DEFAULT_REGION:-}}")"
+REGION="$(aws_region)"
 [ -n "$REGION" ] || die "could not resolve the AWS region"
 PASSKEY_RP_ID="chintan-${INSTANCE}-${ENVIRONMENT}-${ACCOUNT_ID}.auth.${REGION}.amazoncognito.com"
 if [ "${#PASSKEY_RP_ID}" -gt 63 ]; then
@@ -113,7 +113,7 @@ args=(
 )
 
 # Optional parameters declared in the instance config: AlarmEmail,
-# MonthlyBudgetUSD, RetentionDays and the rest. Absent means "keep the template
+# MonthlyBudgetUSD, LogRetentionDays and the rest. Absent means "keep the template
 # default", so an untouched config still deploys.
 have_alarm_email=0
 if [ -n "${EXTRA_PARAMETERS:-}" ]; then

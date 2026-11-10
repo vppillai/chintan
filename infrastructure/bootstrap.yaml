@@ -729,7 +729,7 @@ Resources:
               #
               # That argument holds only for environments that have rules.
               # `staging` and `production` are restricted to protected branches
-              # and production waits for a reviewer; `build` has none, so a
+              # and neither has a reviewer; `build` has no rule at all, so a
               # workflow on any branch that declares `environment: build` can
               # assume whatever trusts it. It therefore trusts GitHubBuildRole
               # below, which can upload artifacts and read stack outputs and

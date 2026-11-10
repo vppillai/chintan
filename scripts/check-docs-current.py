@@ -2,8 +2,9 @@
 """Fail when a current document narrates history.
 
 The documents that describe the system as it is — docs/design (not its dated
-specs/), docs/ops, README.md, CLAUDE.md, the instance configs and the header
-comment of every scripts/*.sh — may not carry a round id, a backlog id, a pull
+specs/), docs/ops, README.md, CLAUDE.md, the READMEs under scripts/ and
+infrastructure/, the instance configs and the header comment of every
+scripts/*.sh — may not carry a round id, a backlog id, a pull
 request number, an ISO date or the phrases that date a sentence ("no longer",
 "used to", "until 20xx"). History belongs in docs/backlog.md and docs/history/;
 a document may link there once, in a final line that starts with "History:",
@@ -38,6 +39,9 @@ def default_paths():
     yield from sorted((ROOT / "docs" / "ops").glob("*.md"))
     yield ROOT / "README.md"
     yield ROOT / "CLAUDE.md"
+    yield ROOT / "scripts" / "dev" / "README.md"
+    yield ROOT / "scripts" / "qa" / "README.md"
+    yield ROOT / "infrastructure" / "agent-policies" / "README.md"
     yield from sorted((ROOT / "config" / "instances").glob("*.yaml"))
     yield from sorted((ROOT / "scripts").glob("*.sh"))
 

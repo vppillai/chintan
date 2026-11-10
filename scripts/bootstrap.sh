@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Deploy one Chintan instance stack from a workstation.
+# Deploy one Chintan instance stack from a workstation (one with the AWS CLI and
+# Go; scripts/build-lambda.sh builds the two packages).
 #
 # The normal deploy path is CI (scripts/deploy.sh, driven by
 # .github/workflows/deploy-backend.yaml). This script exists for the two cases CI
@@ -25,7 +26,8 @@
 #                       (default: ORIGIN/<repo name>, the GitHub Pages form; a
 #                       custom-domain instance passes its origin here too)
 #   --environment ENV   prod | staging | dev   (default: prod)
-#   --repo OWNER/NAME   GitHub repository (default: resolved with gh)
+#   --repo OWNER/NAME   GitHub repository (default: resolved with gh, which a
+#                       copy of the tree without a git remote cannot do)
 #   --apply             execute; without it, print the plan and change nothing
 
 # shellcheck source-path=SCRIPTDIR source=lib/common.sh
@@ -177,6 +179,8 @@ if ! confirm_apply "$APPLY" "deploy $STACK in $REGION"; then
     exit 0
 fi
 
+# Expanded as ${a[@]+"${a[@]}"} below: an empty array under `set -u` is an
+# unbound variable before bash 4.4, which is what macOS ships.
 ROLE_ARGS=()
 if [ -n "${CFN_DEPLOY_ROLE_ARN:-}" ]; then
     ROLE_ARGS=(--role-arn "$CFN_DEPLOY_ROLE_ARN")
@@ -195,7 +199,7 @@ aws_cli cloudformation deploy \
     "LambdaCodeKey=$S3_KEY" \
     "WorkerCodeKey=$WORKER_S3_KEY" \
     "SiteBaseUrl=$SITE_BASE_URL" \
-    "${ROLE_ARGS[@]}" \
+    ${ROLE_ARGS[@]+"${ROLE_ARGS[@]}"} \
     --tags Application=Chintan Project=chintan \
     "Instance=$INSTANCE" "Environment=$ENVIRONMENT"
 
@@ -207,7 +211,4 @@ ENDPOINT="$(stack_output "$STACK" ApiEndpoint)"
 log ""
 ok "API endpoint: $ENDPOINT"
 log ""
-info "still required before the instance works:"
-dim "  aws ssm put-parameter --type SecureString --name /chintan/${INSTANCE}/groq_api_key --value ..."
-dim "  aws ssm put-parameter --type SecureString --name /chintan/${INSTANCE}/llm_api_key  --value ..."
-dim "  scripts/invite-user.sh --instance ${INSTANCE} --environment ${ENVIRONMENT} --email you@example.com --apply"
+info "next: scripts/doctor.sh --instance ${INSTANCE} --region ${REGION}"

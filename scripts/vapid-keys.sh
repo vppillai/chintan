@@ -16,8 +16,9 @@
 # scripts/setup.sh and scripts/bootstrap.sh run this with --apply for every
 # instance whose config leaves `web_push` on (the default), so a new instance
 # gets its pair when it is stood up. It needs credentials that may write under
-# /chintan/<instance>/ — the owner's; the agent role is denied SSM writes
-# (infrastructure/agent-policies).
+# /chintan/<instance>/. The agent role's policy allows ssm:PutParameter there
+# and denies reading a value back (infrastructure/agent-policies); this script
+# reads names only.
 #
 # The pair is a P-256 key as RFC 8292 wants it: the private scalar (32 bytes)
 # and the uncompressed public point (65 bytes, leading 0x04), each base64url
