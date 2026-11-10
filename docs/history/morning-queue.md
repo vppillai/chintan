@@ -514,3 +514,22 @@ You asked for a double-blind review on the new model plus three fixes. Five revi
 **Cost.** You asked: the AWS bill is about $1.04 a month, two-thirds of it monitoring; provider spend for your own use is about 8 cents a month. Nothing worth trimming. Restricting CloudTrail to one region would have saved 7 cents and stopped recording IAM changes, so it was not applied.
 
 **Your call, not built:** note history with restore, merging two notes, playback speed, sharing audio files into the app, keeping the Ask thread across sessions.
+
+## 10 Nov — round 19: a full review, typed text that could vanish, v0.6.0
+
+You asked for a review of the code, the docs and the app, and to fix and improve what it found. Three reviewers read the backend, the frontend and the docs, scripts and CI independently; each finding was reproduced before it was fixed; each pull request had its own adversarial reviewer. Four round PRs and five dependency PRs merged; the release is tagged `v0.6.0`.
+
+**Typed text and recordings' paragraphs (#281).** The largest piece. Text typed just before leaving a note was lost when the save made on leaving was refused; one note screen served every note, so an edit could land in the wrong one; a thought typed on the capture screen had no draft. All fixed. The review of the fix ran seven rounds and found a real defect in each of the first six, several of them a silent overwrite of newer text, so the rules are now written down in `offline.md` and pinned by tests: an edit the device holds is always shown, is sent only on the version it was made over, and once refused is sent again only when you tap. On the way it found one that was live: pinning or colouring a note from Home after a recording had landed in it, then typing in it, overwrote the recording's paragraph. Fixed.
+
+**Backend (#282).** No critical or high finding; the note-body write paths held under about 1.4 million randomised cases. Fixed: a settings save from a second device reverting retention and language (with the app half in #286); a save landing while a recording was being deleted or moved writing the paragraph back; a note's 51st recording being unreachable; five smaller ones. Deleting many recordings at once now waits its turn instead of refusing most of them.
+
+**Recorder and shell (#286).** A notification tap no longer reloads a window that is recording; one failed write to the phone's storage no longer stops the recorder; the Update prompt stays away while recording or uploading; a selection's deletes go one at a time. The launch download fell from 623 to 593 kB.
+
+**Docs, scripts, CI (#283).** The design docs were accurate; the false statements were in the ops text and script comments, now corrected. The disaster-restore and rollback runbooks are rewritten and true. Two teardown scripts that would have stopped half way are fixed by reading (they cannot be run to test). The merge drivers stop on a conflict they cannot settle and on a worktree holding unpushed commits. The deploy jobs have timeouts and CI lints its workflows.
+
+**For you**
+1. Open the app once on your phone so it takes the new version.
+2. New wording, yours to change: "That edit did not save — Your last edit to this note is only on this device. Send it again, or drop it and keep the note as it was saved." with "Drop my edit" and "Send it again".
+3. Phone checks nobody here could make: tap a notification with the app closed on the iPhone (PR19-95); a notification tap while recording.
+4. Decisions logged, not made: a restore path that keeps sign-ins and passkeys (PR19-98); the leftover KMS grant in the bootstrap stack, which needs `setup.sh --apply` (PR19-61); the stale driver copies in `.agent-tools/`.
+5. The standing items are unchanged: the Malayalam clips, the screen-lock check, the MP4 playback check.
