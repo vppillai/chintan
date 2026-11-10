@@ -89,8 +89,8 @@ export function SettingsScreen() {
    * the stored record into a draft exactly once, so a value the server had
    * coerced stayed on screen as typed.
    */
-  const draft: SettingsWire =
-    (save.isPending || save.isError) && save.variables ? save.variables : (stored ?? DEFAULTS);
+  const unsaved = (save.isPending || save.isError) && save.variables ? save.variables : null;
+  const draft: SettingsWire = { ...(stored ?? DEFAULTS), ...unsaved };
 
   const [savedTick, setSavedTick] = useState(false);
   const tickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -104,7 +104,7 @@ export function SettingsScreen() {
 
   const { mutate } = save;
   const commit = useCallback(
-    (next: SettingsWire) => {
+    (next: Partial<SettingsWire>) => {
       setSavedTick(false);
       mutate(next, { onSuccess: showSaved });
     },
@@ -112,13 +112,17 @@ export function SettingsScreen() {
   );
 
   /**
-   * Applies a change and saves it at once. Nothing is saved before the stored
-   * record has arrived: a PUT replaces the whole record, and one built on the
-   * defaults would overwrite settings this device had not yet read.
+   * Applies a change and saves it at once. The PUT names only what was
+   * changed here — this field, and any whose own PUT is still in the air or
+   * failed — and the server keeps the rest as stored. The whole record used
+   * to go, so a device whose copy was a week old put back the retention and
+   * language another device had since changed, by saving a theme. Nothing is
+   * saved before the stored record has arrived, since the controls would be
+   * showing the defaults.
    */
   const change = (patch: Partial<SettingsWire>): void => {
     if (!stored) return;
-    commit({ ...draft, ...patch });
+    commit({ ...unsaved, ...patch });
   };
 
   const themeLabelId = useId();
@@ -148,7 +152,7 @@ export function SettingsScreen() {
                 type="button"
                 className="settings-status__action"
                 onClick={() => {
-                  commit(draft);
+                  if (unsaved) commit(unsaved);
                 }}
               >
                 Try again
