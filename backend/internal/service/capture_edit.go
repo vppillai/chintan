@@ -56,8 +56,9 @@ var errNoteBusy = errors.New("a recording is being added to the note")
 // or ClearNoteAppend hands it back.
 //
 // check sees each read of the row before the stamp is written: an error ends
-// the attempt, and wait re-reads without stamping, which is how the worker
-// sits out another capture's stamp.
+// the attempt, and wait re-reads without stamping, which is how a writer
+// sits out another capture's stamp. Whoever waits bounds the wait: the loop
+// gives up only on MaxIndexRefreshAttempts lost races with no wait between.
 func StampNoteForBodyWrite(ctx context.Context, store repository.Store, userID, noteID, captureID string, now func() time.Time, check func(model.NoteIndex) (wait bool, err error)) error {
 	for conflicts := 0; ; {
 		note, err := store.GetNote(ctx, userID, noteID)
@@ -67,6 +68,11 @@ func StampNoteForBodyWrite(ctx context.Context, store repository.Store, userID, 
 		if wait, err := check(note); err != nil {
 			return err
 		} else if wait {
+			// The bound is on races lost in a row. Siblings waiting on one
+			// stamp wake together when it clears, one wins and the rest lose
+			// a race each; counted across the waits, the tail of a selection
+			// of ten ran out of attempts while it was only queueing.
+			conflicts = 0
 			continue
 		}
 		_, err = store.StampNoteAppend(ctx, userID, noteID, captureID, note.Version, now())
@@ -99,7 +105,7 @@ const (
 // would go with it), so the request is refused for the person to repeat.
 func (s *CaptureService) stampNote(ctx context.Context, userID, noteID, captureID string) error {
 	giveUp := time.Now().Add(noteBusyWait)
-	return StampNoteForBodyWrite(ctx, s.store, userID, noteID, captureID, s.now, func(note model.NoteIndex) (bool, error) {
+	check := func(note model.NoteIndex) (bool, error) {
 		if note.AppendingCapture == captureID || !AppendInProgress(note, s.now()) {
 			return false, nil
 		}
@@ -113,7 +119,16 @@ func (s *CaptureService) stampNote(ctx context.Context, userID, noteID, captureI
 		case <-time.After(noteBusyPoll):
 			return true, nil
 		}
-	})
+	}
+	for {
+		err := StampNoteForBodyWrite(ctx, s.store, userID, noteID, captureID, s.now, check)
+		// A run of lost races inside the window is the same queue seen
+		// another way: siblings whose turns are shorter than the loop's own
+		// two calls take the row again before this one sees their stamp.
+		if !errors.Is(err, repository.ErrVersionConflict) || !time.Now().Before(giveUp) {
+			return err
+		}
+	}
 }
 
 // clearNoteStamp hands back a stamp whose body write did not happen. Best

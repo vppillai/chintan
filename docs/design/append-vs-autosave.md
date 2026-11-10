@@ -76,7 +76,11 @@ race made deterministic.
    the request path wait too, more briefly (`stampNote`, `noteBusyWait`,
    3 s): the Recordings tab deletes or moves a selection as one request per
    recording, all at once, and each sibling sits out the stamp of the one
-   before it. They never stamp over: a stamp that has stood longer than
+   before it; a stamp race lost to a sibling is part of the same queue and
+   is repeated for as long as the window lasts. The siblings run one at a
+   time inside that window, so a selection larger than fits in it — past a
+   dozen or so recordings at a few store calls a turn — has its tail
+   refused with the busy-note answer, for the person to repeat. They never stamp over: a stamp that has stood longer than
    that was left by a writer that died before its refresh, and the delete or
    move is refused at once (409 for the delete, the move's "nothing was
    changed; try again") until that writer's retry or the lease clears it.

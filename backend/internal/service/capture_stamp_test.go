@@ -202,21 +202,45 @@ func TestASecondDeleteArrivingInsideTheFirstWaitsItsTurn(t *testing.T) {
 	h.unstamped("u1", note.ID)
 }
 
+// slowRow adds a round trip's delay to the two calls of the stamp loop, so
+// that siblings woken by one cleared stamp read the free row together and
+// all but one lose the race for it, as they do against a real table.
+type slowRow struct {
+	repository.Store
+	lag time.Duration
+}
+
+func (s slowRow) GetNote(ctx context.Context, tenantID, noteID string) (model.NoteIndex, error) {
+	time.Sleep(s.lag)
+	return s.Store.GetNote(ctx, tenantID, noteID)
+}
+
+func (s slowRow) StampNoteAppend(ctx context.Context, tenantID, noteID, captureID string, version int64, at time.Time) (model.NoteIndex, error) {
+	time.Sleep(s.lag)
+	return s.Store.StampNoteAppend(ctx, tenantID, noteID, captureID, version, at)
+}
+
+// A whole selection at once: every delete queues behind the others' stamps
+// and each loses a stamp race most times one clears. The loop counted those
+// losses across its waits and gave up at five, so of ten deletes several
+// answered a version conflict while they were only waiting their turn.
 func TestDeletingASelectionOfOneNotesRecordingsAtOnceDeletesThemAll(t *testing.T) {
 	h := newEditHarness(t)
-	ids := []string{"c_1", "c_2", "c_3", "c_4"}
+	ids := make([]string, 12)
 	var body []string
-	for _, id := range ids {
-		body = append(body, CaptureMarker(id)+"\nDictation "+id+".")
+	for i := range ids {
+		ids[i] = fmt.Sprintf("c_%02d", i)
+		body = append(body, CaptureMarker(ids[i])+"\nDictation "+ids[i]+".")
 	}
 	note := h.note("u1", "Kitchen", "typed intro\n\n"+strings.Join(body, "\n\n"))
 	for i, id := range ids {
-		h.appended("u1", note.ID, id, fmt.Sprintf("2026-01-01T1%d:00:00.000000000Z", i))
+		h.appended("u1", note.ID, id, fmt.Sprintf("2026-01-01T10:%02d:00.000000000Z", i))
 	}
 
+	captures := NewCaptureService(slowRow{h.store, 5 * time.Millisecond}, h.objects).WithNoteCreator(h.notes)
 	errs := make(chan error, len(ids))
 	for _, id := range ids {
-		go func() { errs <- h.captures.DeleteCapture(h.ctx, "u1", id) }()
+		go func() { errs <- captures.DeleteCapture(h.ctx, "u1", id) }()
 	}
 	for range ids {
 		if err := <-errs; err != nil {
@@ -228,6 +252,46 @@ func TestDeletingASelectionOfOneNotesRecordingsAtOnceDeletesThemAll(t *testing.T
 	}
 	if after := h.unstamped("u1", note.ID); strings.Contains(after.SearchText, "dictation") {
 		t.Errorf("search text still holds deleted words: %q", after.SearchText)
+	}
+}
+
+// conflictingStamps answers the first n stamps with a version conflict.
+type conflictingStamps struct {
+	repository.Store
+	n int
+}
+
+func (s *conflictingStamps) StampNoteAppend(ctx context.Context, tenantID, noteID, captureID string, version int64, at time.Time) (model.NoteIndex, error) {
+	if s.n > 0 {
+		s.n--
+		return model.NoteIndex{}, repository.ErrVersionConflict
+	}
+	return s.Store.StampNoteAppend(ctx, tenantID, noteID, captureID, version, at)
+}
+
+// The loop's bound is on races lost in a row: a wait in between means the
+// writer is queueing behind others, not failing, and starts the count again.
+func TestStampNoteForBodyWriteCountsLostRacesBetweenWaitsNotAcrossThem(t *testing.T) {
+	h := newEditHarness(t)
+	note := h.note("u1", "Kitchen", "typed")
+	lost := 2 * (MaxIndexRefreshAttempts - 1)
+	store := &conflictingStamps{Store: h.store, n: lost}
+	reads := 0
+	err := StampNoteForBodyWrite(h.ctx, store, "u1", note.ID, "c_1", time.Now, func(model.NoteIndex) (bool, error) {
+		reads++
+		return reads == MaxIndexRefreshAttempts, nil // one wait, half way through the losses
+	})
+	if err != nil {
+		t.Fatalf("StampNoteForBodyWrite = %v after %d lost races with a wait between the halves, want the stamp", err, lost)
+	}
+	if got := h.get("u1", note.ID).AppendingCapture; got != "c_1" {
+		t.Errorf("stamp = %q, want c_1", got)
+	}
+
+	// With no wait between them the same bound still ends the attempt.
+	store.n = MaxIndexRefreshAttempts
+	if err := StampNoteForBodyWrite(h.ctx, store, "u1", note.ID, "c_1", time.Now, func(model.NoteIndex) (bool, error) { return false, nil }); !errors.Is(err, repository.ErrVersionConflict) {
+		t.Errorf("StampNoteForBodyWrite = %v after %d races lost in a row, want the conflict", err, MaxIndexRefreshAttempts)
 	}
 }
 
