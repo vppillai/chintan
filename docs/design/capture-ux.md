@@ -72,8 +72,11 @@ the device inbox's text capture under the session (`inbox.md`): it starts at
 `transcribed` and the worker routes, cleans and appends it as a transcript,
 so it is filed by the same rules and shows on Home's filing tray, or the
 note's banner, as a recording does; the screen then leaves as Send does.
-Offline it says "Typing a thought needs a connection.", since nothing typed
-is kept on the device.
+Offline it says "Typing a thought needs a connection.". The text is kept in
+`sessionStorage` (`chintan.typedThought`, cleared by sign-out) as it is
+typed, so Back, a discarded page or a walk to find a signal brings it back
+when Type instead is next opened; Send removes it, and Cancel over a
+non-blank field asks "Discard what you typed?" first.
 
 ## Recording into a note, and coming back
 
@@ -219,7 +222,8 @@ server.
   back; a denied request (a hidden document, a battery policy) is ignored,
   because the lock is a robustness measure, not a precondition.
 - **An unsent recording is offered back.** `ResumePrompt`, on Home,
-  reads the unconfirmed captures once on boot (`unconfirmedCaptures`) and
+  reads the unconfirmed captures each time it mounts (`unconfirmedCaptures`,
+  a local read — so Stop, then Back, shows the take it left behind) and
   offers the oldest — "You have an unsent recording from 3 minutes ago", its
   length, "2 more waiting" — with Send and Discard. Send is `uploadCapture`
   with the stored `serverCaptureId`, so the server answers a resumed create
@@ -228,7 +232,9 @@ server.
   exactly one place. The recording the store is sending, has sent or has
   failed to send is excluded by its id, or the prompt would offer to resend
   the upload the filing row is showing one row below; a recording left at
-  `review` is not excluded — the prompt is the way back to it.
+  `review` is not excluded — the prompt is the way back to it, and its Send
+  or Discard resets the store, which would otherwise open "Ready to send"
+  over a buffer that is gone.
 - **A reconnect resends once.** `useResendOnReconnect` (in `AppShell`)
   watches `useOnline`; on an offline → online transition it calls the store's
   `send` once for a recording that `awaitsConnection`: `failed` with a
