@@ -3,7 +3,8 @@
 The scripts an agent round is driven with: the worktree mirror, the merge
 drivers, the conflict resolver and the ruleset on `main`. `CLAUDE.md` at the
 root is the one-page version: toolchains, gates, the merge rule, the gotchas.
-CI shellchecks and shfmt-checks every `*.sh` here.
+CI shellchecks and shfmt-checks every `*.sh` here. `--help` on each prints its
+header; apart from `protect-main.sh` none has a dry run.
 
 ## The round, in order
 
@@ -27,10 +28,13 @@ CI shellchecks and shfmt-checks every `*.sh` here.
    files; after every rebase the driver reruns `backlog-view.py` and commits
    `docs/backlog-open.md` if it changed, since a clean merge of the ledger
    alone leaves the view stale), wait for `CI passed`,
-   squash-merge, pull main, drop the worktree. It STOPs — never merges — on a
-   failing or still-pending check. `stack-merge.sh "<bottom>,<upper>…:<kind>"`
+   squash-merge, pull main, drop the worktree (a worktree holding uncommitted
+   or untracked files is kept and named). It STOPs — never merges — on a
+   failing or still-pending check, on a worktree holding unpushed commits, and
+   on a conflict the resolver does not settle. `stack-merge.sh "<bottom>,<upper>…:<kind>"`
    merges stacked pull requests bottom-up, retargeting the uppers to `main`
-   first and rebuilding each onto the fresh main. Run a driver detached
+   first and rebuilding each onto the fresh main with the same rebase and the
+   same STOPs. Neither driver has a dry run. Run a driver detached
    (`nohup … > <scratchpad>/log 2>&1 &`) and poll its log; a Mac that sleeps
    kills it.
 5. **Queue.** The round closes with a docs pull request: backlog rows
@@ -67,13 +71,14 @@ the Mac's browser through `ssh -L 5173:localhost:5173 -L 8787:127.0.0.1:8787 orb
 ## The gate
 
 `protect-main.sh` is the merge rule (README → Operate → Release flow) as code:
-the ruleset on `main` and the `production` environment, no reviewers, no
-bypass, no force-push, no deletion. The status check is strict — the head must be at main's current tip — because
+the ruleset on `main`, no reviewers, no bypass, no force-push, no deletion.
+The `production` environment is `scripts/setup.sh`'s (no reviewer unless
+`--reviewer` asked for one). The status check is strict — the head must be at main's current tip — because
 nothing else tests the tree that lands: no push-to-main CI run, no deploy-time
 test. The cost is one CI run (~9 minutes, Playwright's wall clock) per queued
 pull request each time main moves under it; `merge-seq.sh` pays it by updating
 the branch and polling again.
-Dry-run by default; `--apply` creates or updates both and prints before/after.
+Dry-run by default; `--apply` creates or updates the ruleset and prints before/after.
 Run it after every edit to it. It needs the Mac's `gh` (the repository admin);
 the VM's `gh` is a different account.
 
@@ -97,4 +102,6 @@ keeps both sides of `docs/backlog.md`, `docs/history/reviews/README.md`,
 `frontend/src/styles/index.css` and `frontend/src/components/Icon.tsx`
 (dropping lines that appear on both sides and a second table header), takes
 main's contract fixtures (CI regenerates and diffs them, so a wrong pick fails
-loudly), and exits 2 on anything else so the driver STOPs.
+loudly), and exits 2 on anything else — another file, or one of those deleted
+or added on one side only — so the driver STOPs. `--self-test` proves both
+answers in a scratch repository, and CI runs it.

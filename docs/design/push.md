@@ -105,8 +105,9 @@ it, and the configs sharing a name must agree, since they share the path),
 and `scripts/bootstrap.sh --apply` for its instance before the deploy, so the
 first cold start already has the pair; `scripts/doctor.sh` reports a missing
 one. `web_push: false` makes all three leave the pair alone — neither created
-nor deleted. It needs credentials that may write SSM, which the agent role
-may not. Only `--rotate` replaces a pair, because a new pair
+nor deleted. It needs credentials that may write under `/chintan/<name>/`: the
+agent role's policy allows the write and denies reading a value back
+(`infrastructure/agent-policies`). Only `--rotate` replaces a pair, because a new pair
 invalidates every subscription, and the push service says so with 401 or
 403 (RFC 8292 §4.2), never 404 or 410, so the rows stay and their
 `failures` climb; the worker does not prune on 403, because a misconfigured
