@@ -768,3 +768,27 @@ test('offline on a 360 px phone, the banner mic leaves the offline pill on one l
   expect(pillBox.x + pillBox.width).toBeLessThanOrEqual(micBox.x);
   await context.setOffline(false);
 });
+
+/**
+ * The Cleaned and Recordings panels are chunks of their own. One that cannot
+ * be fetched — a page the worker does not control yet, and a deploy or a
+ * lost connection since — is said in its own panel; thrown to the route's
+ * boundary it took the note, its text and the strip with it.
+ */
+test.describe('a tab whose code cannot be fetched', () => {
+  test.use({ serviceWorkers: 'block' });
+  test('says so in its panel and leaves the note standing', async ({ page }) => {
+    await page.route(/(Recordings|CleanedPanel)-[^/]*\.js$/, (route) => route.abort());
+    await page.goto('/notes/roof-repair');
+    await expect(page.getByRole('textbox', { name: 'Note body' })).toHaveValue(/Ridge tiles/);
+
+    for (const name of [/^Recordings/, 'Cleaned']) {
+      await page.getByRole('tab', { name }).click();
+      await expect(page.getByRole('tabpanel')).toHaveText('This tab could not be loaded. Reload the app to try again.');
+      await expect(page.getByText('This screen could not be drawn')).toHaveCount(0);
+    }
+
+    await page.getByRole('tab', { name: 'Text' }).click();
+    await expect(page.getByRole('textbox', { name: 'Note body' })).toHaveValue(/Ridge tiles/);
+  });
+});

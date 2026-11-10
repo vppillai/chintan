@@ -148,7 +148,8 @@ describe('the Cleaned tab', () => {
     const user = userEvent.setup();
     const api = server();
     await screen.findByRole('tab', { name: 'Cleaned', selected: true });
-    expect(screen.getByText('No cleaned view yet')).toBeInTheDocument();
+    // The panel is a chunk of its own, so it is a beat behind its tab.
+    expect(await screen.findByText('No cleaned view yet')).toBeInTheDocument();
     expect(screen.getByText(/rewritten into headings and lists/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Generate' }));
