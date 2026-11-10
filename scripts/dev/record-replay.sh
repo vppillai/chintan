@@ -16,6 +16,11 @@
 #   CHINTAN_INSTANCE  the instance whose key is read    (default: dev)
 #   CHINTAN_RUNS      how many times each prompt is run  (default: 3)
 #   AWS_PROFILE       a profile that may read the key    (default: the VM's default)
+case "${1:-}" in -h | --help)
+    awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+    exit 0
+    ;;
+esac
 set -euo pipefail
 cd "$(dirname "$0")/../../backend"
 RUNS=${CHINTAN_RUNS:-3}

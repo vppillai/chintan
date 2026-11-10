@@ -16,7 +16,7 @@ produce live under `docs/history/reviews/<date>/`.
 
 ## Environment
 
-Everything that used to be a personal path is a variable:
+Every path is a variable:
 
 | Variable | Meaning | Default |
 |---|---|---|

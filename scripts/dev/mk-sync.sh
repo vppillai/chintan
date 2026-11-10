@@ -8,6 +8,11 @@
 #   CHINTAN_WT_ROOT   where the worktrees live  (default: three levels up from this script)
 #   CHINTAN_SYNC_OUT  where to write the script (default: the current directory)
 #   CHINTAN_ORB       the ssh destination        (default: ubuntu@orb)
+case "${1:-}" in -h | --help)
+    awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+    exit 0
+    ;;
+esac
 set -eu
 T=$(cd "$(dirname "$0")" && pwd)
 WT_ROOT=${CHINTAN_WT_ROOT:-$(cd "$T/../../.." && pwd)}

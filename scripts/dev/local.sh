@@ -8,6 +8,11 @@
 #   CHINTAN_LOCAL_TOKEN       the one bearer it accepts        (default local-dev-token)
 #   CHINTAN_LOCAL_TRANSCRIPT  what every recording "says"      (default: a sentence)
 #   CHINTAN_LOCAL_RECORDINGS  a replay directory for the model (default: none, the fakes answer)
+case "${1:-}" in -h | --help)
+    awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+    exit 0
+    ;;
+esac
 set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 ADDR=${CHINTAN_LOCAL_ADDR:-127.0.0.1:8787}
