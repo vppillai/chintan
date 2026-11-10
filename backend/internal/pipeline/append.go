@@ -258,38 +258,24 @@ func (p *Pipeline) stampNoteAppend(ctx context.Context, tenantID, noteID, captur
 	// time and the wait ends when the other stamp clears, not when the wall
 	// clock says so.
 	giveUpWaiting := p.now().Add(p.cfg.AppendStampWait)
-	conflicts := 0
-	for {
-		note, err := p.cfg.Store.GetNote(ctx, tenantID, noteID)
-		if err != nil {
-			return err
-		}
+	return service.StampNoteForBodyWrite(ctx, p.cfg.Store, tenantID, noteID, captureID, p.now, func(note model.NoteIndex) (bool, error) {
 		if !service.NoteIsActive(note) {
 			// The row run() checked may be as old as the transcription
 			// (Pipeline.destination), and a note trashed since is caught here,
 			// on the read the stamp needs anyway, before a word is written.
-			return service.ErrNoteArchived
+			return false, service.ErrNoteArchived
 		}
-		if p.anotherAppendInFlight(note, captureID) && p.now().Before(giveUpWaiting) {
-			// Another capture's paragraph is going into this body right now.
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(p.cfg.AppendStampPoll):
-			}
-			continue
+		if !p.anotherAppendInFlight(note, captureID) || !p.now().Before(giveUpWaiting) {
+			return false, nil
 		}
-		_, err = p.cfg.Store.StampNoteAppend(ctx, tenantID, noteID, captureID, note.Version, p.now())
-		if err == nil {
-			return nil
+		// Another capture's paragraph is going into this body right now.
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(p.cfg.AppendStampPoll):
+			return true, nil
 		}
-		if !errors.Is(err, repository.ErrVersionConflict) {
-			return err
-		}
-		if conflicts++; conflicts >= maxIndexRefreshAttempts {
-			return err
-		}
-	}
+	})
 }
 
 // anotherAppendInFlight reports whether the row carries a different capture's
@@ -337,7 +323,6 @@ func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *m
 	refreshed, err := service.RefreshNoteIndex(ctx, p.cfg.Store, p.cfg.Objects, tenantID, note.ID, service.RefreshOptions{
 		Now:         p.now,
 		RequireBody: true,
-		Attempts:    maxIndexRefreshAttempts,
 	})
 	if err != nil {
 		return *capture, fmt.Errorf("pipeline: refresh note index: %w", err)

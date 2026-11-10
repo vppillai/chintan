@@ -192,7 +192,7 @@ func (rt *router) getNote(w http.ResponseWriter, r *http.Request) {
 
 	// The captures come with the detail, in the same tenant-keyed reads as
 	// the note itself (service.GetNoteDetail).
-	out := NoteDetail{Note: noteOf(detail.NoteIndex), Body: detail.Body, Captures: capturesOf(detail.Captures.Items), Cleaned: cleanedOf(detail.NoteIndex)}
+	out := NoteDetail{Note: noteOf(detail.NoteIndex), Body: detail.Body, Captures: capturesOf(detail.Captures), Cleaned: cleanedOf(detail.NoteIndex)}
 	writeJSON(w, http.StatusOK, out)
 }
 

@@ -346,6 +346,23 @@ describe('retry and errors', () => {
     });
   });
 
+  it('promises no retry in the sentence for a request that timed out', async () => {
+    // Shown only once the client's own attempts are spent; "It will be
+    // retried" was true of no surface that printed it.
+    const fetchImpl = vi.fn<typeof fetch>(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'));
+          });
+        }),
+    );
+    const { client } = build(fetchImpl, stubRefresher(async (t) => t));
+
+    const error = await client.request('/v1/notes', { retry: NO_RETRY, timeoutMs: 5 }).catch((e) => e);
+    expect((error as ApiError).userMessage).toBe('That took too long. Try again.');
+  });
+
   it('reports a network failure as offline, not as a server error', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () => {
       throw new TypeError('Failed to fetch');

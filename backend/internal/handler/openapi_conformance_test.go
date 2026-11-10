@@ -623,6 +623,7 @@ func statusScenarios() map[string]scenario {
 
 		// ---- notes
 		"GET /v1/notes -> 200":  get("/v1/notes", "user1"),
+		"GET /v1/notes -> 400":  get("/v1/notes?limit=0", "user1"),
 		"GET /v1/notes -> 401":  get("/v1/notes", ""),
 		"POST /v1/notes -> 201": send(http.MethodPost, "/v1/notes", "user1", map[string]any{"title": "A note"}),
 		"POST /v1/notes -> 400": send(http.MethodPost, "/v1/notes", "user1", map[string]any{"title": ""}),
@@ -1018,6 +1019,7 @@ func statusScenarios() map[string]scenario {
 
 		// ---- captures
 		"GET /v1/captures -> 200":  get("/v1/captures", "user1"),
+		"GET /v1/captures -> 400":  get("/v1/captures?status=bogus", "user1"),
 		"GET /v1/captures -> 401":  get("/v1/captures", ""),
 		"POST /v1/captures -> 201": send(http.MethodPost, "/v1/captures", "user1", map[string]any{"content_type": "audio/webm"}),
 		"POST /v1/captures -> 400": send(http.MethodPost, "/v1/captures", "user1", map[string]any{}),
@@ -1148,6 +1150,7 @@ func statusScenarios() map[string]scenario {
 			})
 			return h.do(t, http.MethodGet, "/v1/captures/"+c.ID+"/download?kind=audio", "user1", nil).Code
 		},
+		"GET /v1/captures/{captureId}/download -> 400": get("/v1/captures/c_1/download?kind=bogus", "user1"),
 		"GET /v1/captures/{captureId}/download -> 401": get("/v1/captures/c_1/download?kind=audio", ""),
 		"GET /v1/captures/{captureId}/download -> 404": get("/v1/captures/missing/download?kind=audio", "user1"),
 		"DELETE /v1/captures/{captureId} -> 204": func(t *testing.T) int {

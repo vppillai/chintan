@@ -101,7 +101,10 @@ export class ApiError extends Error {
       case 'network':
         return 'No connection, so that did not reach the server.';
       case 'timeout':
-        return 'That took too long. It will be retried.';
+        // Shown once the client's own retries are spent, so nothing more is
+        // promised: a caller that does go on retrying (the note editor's
+        // queue) says so itself.
+        return 'That took too long. Try again.';
       case 'cancelled':
         return 'Cancelled.';
       case 'http':

@@ -410,14 +410,14 @@ func (s *CaptureService) IngestAudio(ctx context.Context, userID string, req Cap
 	return stored, nil
 }
 
-// discardEmptyRow is the compensation for an object write that failed after
-// its row landed. A delete that fails too is said aloud (R7-13's standard):
+// discardEmptyRow is the compensation for an object write or a hand-off that
+// failed after its row landed. A delete that fails too is said aloud (R7-13's standard):
 // silently, the row sits at uploaded until the stuck-capture sweep fails it,
 // and the sweep's refusal of a retry (R7-11) then has nothing in the logs
 // to explain it.
 func (s *CaptureService) discardEmptyRow(ctx context.Context, userID, captureID string) {
 	if err := s.store.DeleteCapture(ctx, userID, captureID); err != nil {
-		obs.Log(ctx).Warn("could not remove the capture row after its object write failed; the stuck-capture sweep will fail it",
+		obs.Log(ctx).Warn("could not remove the capture row after its ingest failed; the stuck-capture sweep takes it",
 			slog.String("capture_id", captureID),
 			slog.String("error", err.Error()))
 	}
@@ -457,6 +457,20 @@ func (s *CaptureService) IngestText(ctx context.Context, userID string, req Capt
 	}
 	logCaptureCreated(ctx, stored, "text/plain")
 	if err := s.invokeWorker(ctx, userID, stored.ID, "inbox-text"); err != nil {
+		// The request answers an error and the client sends the text again as
+		// a new capture. A row left at transcribed would be filed by the
+		// reaper a quarter of an hour on, beside that second one, so the
+		// thought would be in the notes twice. Should the hand-off have been
+		// delivered after all, a worker that starts after this finds no row
+		// and ends quietly (pipeline.runCapture). One that was already past
+		// its append claim files the text anyway, beside the retry: an
+		// invoke that reports a fault and delivers leaves no way to tell.
+		if derr := deleteObjectIfPresent(ctx, s.objects, rawKey); derr != nil {
+			obs.Log(ctx).Warn("could not remove the text of a capture whose hand-off failed",
+				slog.String("capture_id", stored.ID),
+				slog.String("error", derr.Error()))
+		}
+		s.discardEmptyRow(ctx, userID, stored.ID)
 		return model.CaptureIndex{}, err
 	}
 	return stored, nil

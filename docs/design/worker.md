@@ -57,7 +57,7 @@ any other event source is logged and dropped
 
 | `task` | Sender | Schedule | Handler |
 |---|---|---|---|
-| *(none: a capture)* | S3, or the API with a `reason` | — | `Pipeline.RunUpload` / `Run` |
+| *(none: a capture)* | S3, or the API with a `reason` | — | `Worker.Handle` → `Pipeline.runCapture` |
 | `clean-note` | the API, or the worker itself after an append | — | `Worker.handleCleanNote` (prompts.md) |
 | `ask` | the API | — | `Worker.handleAsk` (ask.md) |
 | `regenerate-note` | the API or `chintanctl regenerate` | — | `Worker.handleRegenerateNote` (regenerate.md) |
@@ -139,7 +139,11 @@ the same loop resuming from the row's artefacts.
 ## Retries, exactly-once and the dead-letter queue
 
 The return value is the whole protocol: `nil` means done — finished,
-failed on its own terms, or conceded to another delivery — and an error
+failed on its own terms, conceded to another delivery, or deleted (an
+invocation from the API or the reaper whose capture has no row, and a
+delivery whose write lost to a delete, both end here: the sender read the
+row before it sent the payload, so a missing one is the person's delete) —
+and an error
 means an infrastructure fault interrupted the work. On an error Lambda
 retries the same payload twice (`MaximumRetryAttempts: 2`) within six
 hours (`MaximumEventAgeInSeconds: 21600`) and then writes it, with the

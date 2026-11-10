@@ -491,7 +491,10 @@ type Settings struct {
 	DailySpendCapMicros int64  `json:"daily_spend_cap_micros"`
 }
 
-// SettingsUpdate is the PUT /v1/settings request body.
+// SettingsUpdate is the PUT /v1/settings request body: the fields to change.
+// A field left out keeps its stored value, which is why each is a pointer —
+// a device whose copy of the record is a week old and which sends only the
+// theme it changed cannot put back a retention another device has since set.
 //
 // It accepts daily_spend_cap_micros and cleanup_mode and ignores both.
 // decodeJSON refuses unknown fields, so dropping either from the schema would
@@ -501,19 +504,25 @@ type Settings struct {
 // not take: the cap is the instance's, and per-capture cleanup has been
 // faithful for everyone since 2026-09-27.
 type SettingsUpdate struct {
-	CleanupMode         string `json:"cleanup_mode"`
-	RetentionDays       int    `json:"retention_days"`
-	Theme               string `json:"theme"`
-	DefaultLanguage     string `json:"default_language"`
-	DailySpendCapMicros int64  `json:"daily_spend_cap_micros"`
+	CleanupMode         string  `json:"cleanup_mode"`
+	RetentionDays       *int    `json:"retention_days"`
+	Theme               *string `json:"theme"`
+	DefaultLanguage     *string `json:"default_language"`
+	DailySpendCapMicros int64   `json:"daily_spend_cap_micros"`
 }
 
-func (u SettingsUpdate) settings() model.Settings {
-	return model.Settings{
-		RetentionDays:   u.RetentionDays,
-		Theme:           model.Theme(u.Theme),
-		DefaultLanguage: u.DefaultLanguage,
+// over returns stored with the fields this update names laid over it.
+func (u SettingsUpdate) over(stored model.Settings) model.Settings {
+	if u.RetentionDays != nil {
+		stored.RetentionDays = *u.RetentionDays
 	}
+	if u.Theme != nil {
+		stored.Theme = model.Theme(*u.Theme)
+	}
+	if u.DefaultLanguage != nil {
+		stored.DefaultLanguage = *u.DefaultLanguage
+	}
+	return stored
 }
 
 func settingsOf(s model.Settings, spendCapMicros int64) Settings {

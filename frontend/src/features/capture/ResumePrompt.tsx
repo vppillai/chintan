@@ -33,9 +33,9 @@ export function ResumePrompt() {
   const { data } = useQuery({
     queryKey: queryKeys.unsentCaptures(),
     queryFn: () => unconfirmedCaptures(useCaptureStore.getState().model.localId),
-    // Read once on boot. Nothing else creates entries behind the app's back:
-    // a live capture drives this state itself.
-    staleTime: Infinity,
+    // Read on every mount of Home: a local read, and a take left at review
+    // (Stop, then Back) is on disk with nothing else on Home to say so.
+    staleTime: 0,
     retry: false,
   });
 
@@ -59,6 +59,17 @@ export function ResumePrompt() {
     (isCaptureBusy(active) || active.state === 'uploaded' || active.state === 'failed')
       ? active.localId
       : null;
+  /*
+   * The store's own take, sent or discarded from here, is no longer the
+   * store's: left at `review` over a pruned buffer, the next Record opened
+   * "Ready to send" on a recording that could only fail as empty.
+   */
+  const forget = (record: StoredCapture): void => {
+    const store = useCaptureStore.getState();
+    // Only a take waiting at review: one the capture screen has meanwhile
+    // sent is the store's again, mid-upload.
+    if (store.model.localId === record.localId && store.model.state === 'review') store.reset();
+  };
   const stranded = (data ?? []).filter((record) => record.localId !== owned);
   const oldest = stranded[0];
   if (!oldest) return null;
@@ -88,6 +99,7 @@ export function ResumePrompt() {
     );
     setBusy(null);
     setError(failed);
+    if (!failed) forget(record);
     refresh();
   };
 
@@ -154,7 +166,10 @@ export function ResumePrompt() {
           const target = pendingDiscard;
           setPendingDiscard(null);
           if (!target) return;
-          void discardCapture(target.localId).then(refresh);
+          void discardCapture(target.localId).then(() => {
+            forget(target);
+            refresh();
+          });
         }}
       />
     </>

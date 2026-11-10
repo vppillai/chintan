@@ -62,18 +62,6 @@ func (rt *router) listCaptures(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// note_id is not in the contract but the note detail view uses it, and a
-	// note's captures are a genuinely cheaper query than the tenant's.
-	if noteID := r.URL.Query().Get("note_id"); noteID != "" {
-		got, err := rt.Captures.ListCapturesForNote(r.Context(), userID, noteID, opts)
-		if err != nil {
-			fail(w, r, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, page(capturesOf(got.Items), got.Cursor))
-		return
-	}
-
 	got, err := rt.Captures.ListCaptures(r.Context(), userID, filter, opts)
 	if err != nil {
 		fail(w, r, err)

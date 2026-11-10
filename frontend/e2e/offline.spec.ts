@@ -671,3 +671,77 @@ test('a queued edit refused as a conflict can be dropped for the newer version, 
   });
   expect(queued).toBe(0);
 });
+
+/**
+ * Type, then Back inside the autosave's debounce, while the note has moved
+ * on elsewhere — a recording filed into it is enough. The save made on
+ * leaving is answered 409 with no screen left to show it, and the text was
+ * nowhere: not on the server, not in the queue, no prompt on return (review
+ * round 19, FE-1). It is parked, the flush retires it, and the note reopens
+ * on the conflict prompt with the text.
+ */
+test('text typed just before Back is offered back when the save on leaving was refused', async ({
+  page,
+  api,
+}) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /roof repair/i }).click();
+  const body = page.getByRole('textbox', { name: 'Note body' });
+  await expect(body).not.toHaveValue('');
+
+  api.conflictOnce = true;
+  api.checkVersion = true;
+  await body.fill('Typed on the way out.');
+  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+
+  await page.getByRole('button', { name: /roof repair/i }).click();
+  await expect(page.getByText(/this note changed elsewhere/i)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('textbox', { name: 'Note body' })).toHaveValue('Typed on the way out.');
+
+  // Neither button, and Back: nothing is written until the user chooses.
+  // The prompt left unanswered used to re-park the text on the server's
+  // current version, and the flush wrote it over the newer copy.
+  const theirs = api.notes['roof-repair']?.body;
+  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+  await page.reload();
+  await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
+  expect(api.notes['roof-repair']?.body).toBe(theirs);
+
+  await page.getByRole('button', { name: /roof repair/i }).click();
+  await expect(page.getByText(/this note changed elsewhere/i)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('textbox', { name: 'Note body' })).toHaveValue('Typed on the way out.');
+  await page.getByRole('button', { name: 'Keep my edits' }).click();
+  await expect
+    .poll(() => api.notes['roof-repair']?.body, { timeout: 20_000 })
+    .toBe('Typed on the way out.');
+});
+
+/**
+ * An edit the server will never take, typed just before Back: parked, and
+ * asked about on the next visit rather than sent again on every one — with a
+ * way to drop it, which typing it away used to be.
+ */
+test('an edit refused on its merits on the way out is asked about, and can be dropped', async ({
+  page,
+  api,
+}) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /roof repair/i }).click();
+  const body = page.getByRole('textbox', { name: 'Note body' });
+  await expect(body).not.toHaveValue('');
+  const saved = api.notes['roof-repair']?.body;
+
+  api.rejectPatch = { status: 413, detail: 'That note is too long to store.' };
+  await body.fill('Typed on the way out.');
+  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+
+  await page.getByRole('button', { name: /roof repair/i }).click();
+  await expect(page.getByText('That edit did not save')).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('textbox', { name: 'Note body' })).toHaveValue('Typed on the way out.');
+  await page.getByRole('button', { name: 'Drop my edit' }).click();
+  await expect(page.getByRole('textbox', { name: 'Note body' })).toHaveValue(saved ?? '');
+  await expect(page.getByText('That edit did not save')).toHaveCount(0);
+});

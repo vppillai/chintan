@@ -70,10 +70,13 @@ Top to bottom, inside the shell's one scroll region (`.app__main`):
 - **The drawer** (`NoteDrawer.tsx`): Details or Share, rendered only while one
   is open. Outside the panels, so it is there on every tab.
 
-`NoteViews` is keyed by the note's id: the strip's memory and the panels'
-state belong to one note, and "Open <title>" after a move walks from one note
-to another without remounting the screen. The Find state is not keyed — a
-query carried into the next note is one the user may want there too.
+The screen is keyed by the note's id (`NoteDetailScreen` renders
+`NoteScreen` under `key={id}`): "Open <title>" after a move walks from one
+note to another on the same route, and one instance serving both carried the
+first note's editor — its pending edit, or its save's late answer — into the
+second. Keyed, the walk unmounts the first note, whose editor flushes what
+was typed (`offline.md`, "A save nobody is left to see"), and every panel starts
+fresh.
 
 ## Arriving
 
