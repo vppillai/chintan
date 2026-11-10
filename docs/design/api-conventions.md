@@ -81,8 +81,11 @@ a cross-origin page could not read it (`TestEveryProblemCarriesTheCorrelationID`
   lease and what is replayed are idempotency.md's.
 - `Content-Type: application/json` on a body; `X-Correlation-Id` when the
   caller has one. The client's default timeout is `DEFAULT_TIMEOUT_MS`
-  (15 s). These four names are what `middleware.AllowedRequestHeaders`
-  advertises, and the CORS test below holds both lists to them.
+  (15 s). A JSON body sent while the page is hidden goes with `keepalive`
+  when it fits (`KEEPALIVE_MAX_BYTES`), so the note editor's flush on
+  switching apps is finished by the browser if the page is frozen. These
+  four names are what `middleware.AllowedRequestHeaders` advertises, and
+  the CORS test below holds both lists to them.
 
 ## Bodies and bounds
 

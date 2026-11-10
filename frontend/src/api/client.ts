@@ -64,11 +64,26 @@ export interface RequestOptions {
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export function newIdempotencyKey(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  // Contract requires 8–128 chars. Only reached on ancient WebViews.
-  return `idem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  return crypto.randomUUID();
+}
+
+/** Under the 64 KiB the browser allows the bodies of all its keepalive requests together. */
+const KEEPALIVE_MAX_BYTES = 60_000;
+
+/**
+ * Whether a request is sent with `keepalive`: a JSON body that leaves while
+ * the page is hidden. That is the note editor's flush on switching apps, and
+ * iOS may freeze or discard the page before an ordinary fetch completes; a
+ * keepalive one is finished by the browser. Only where the body fits, since
+ * one over the allowance is refused outright rather than sent.
+ */
+function outlivesPage(body: BodyInit | undefined): boolean {
+  return (
+    typeof body === 'string' &&
+    typeof document !== 'undefined' &&
+    document.visibilityState === 'hidden' &&
+    new TextEncoder().encode(body).length <= KEEPALIVE_MAX_BYTES
+  );
 }
 
 function buildUrl(
@@ -241,6 +256,7 @@ export class ApiClient {
         method,
         headers,
         ...(body === undefined ? {} : { body }),
+        ...(outlivesPage(body) ? { keepalive: true } : {}),
         signal: controller.signal,
         credentials: 'omit',
       });
