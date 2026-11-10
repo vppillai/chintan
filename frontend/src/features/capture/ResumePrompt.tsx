@@ -66,7 +66,9 @@ export function ResumePrompt() {
    */
   const forget = (record: StoredCapture): void => {
     const store = useCaptureStore.getState();
-    if (store.model.localId === record.localId) store.reset();
+    // Only a take waiting at review: one the capture screen has meanwhile
+    // sent is the store's again, mid-upload.
+    if (store.model.localId === record.localId && store.model.state === 'review') store.reset();
   };
   const stranded = (data ?? []).filter((record) => record.localId !== owned);
   const oldest = stranded[0];

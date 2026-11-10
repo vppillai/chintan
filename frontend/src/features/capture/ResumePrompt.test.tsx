@@ -222,6 +222,21 @@ describe('a take left at review: Stop, then Back (review round 19, FE-5)', () =>
     });
   });
 
+  it('leaves the store alone when the take sent is not its own', async () => {
+    const user = userEvent.setup();
+    await saveCaptureRecord(stranded());
+    await appendChunk('cap-a', 0, new Blob(['webm bytes'], { type: 'audio/webm' }));
+    useCaptureStore.setState({ model: { ...atReview, localId: 'cap-live' } });
+    await mount(serverWith('appended'));
+
+    await user.click(await screen.findByRole('button', { name: 'Send' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: 'Unsent recording' })).toBeNull();
+    });
+    expect(useCaptureStore.getState().model).toMatchObject({ state: 'review', localId: 'cap-live' });
+  });
+
   it('Discard from the prompt takes the take from the store', async () => {
     const user = userEvent.setup();
     await saveCaptureRecord(stranded());
