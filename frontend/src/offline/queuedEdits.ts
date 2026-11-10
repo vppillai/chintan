@@ -24,6 +24,23 @@ import { isDead } from './queue.ts';
 export interface QueuedEditPayload {
   noteId: string;
   body: NoteUpdateWire;
+  /** Set on an entry parked already refused; see `ParkedPrompt`. */
+  prompt?: ParkedPrompt;
+}
+
+/**
+ * What the editor knew when it parked an edit the server had refused, for the
+ * prompt the next visit shows. Kept with the entry because the editor that
+ * reads it back has been loaded from the server's newer copy, and can no
+ * longer tell what that copy added to the text the edit was made over.
+ */
+export interface ParkedPrompt {
+  /** The paragraph the server's copy added after the last-saved body, if that is all it did. */
+  addition: string | null;
+  /** Whether a recording was filed into the note under the edit. */
+  recording: boolean;
+  /** Refused on its merits, or left under "Couldn't save": asked about, not re-sent, when the note has not moved. */
+  refused: boolean;
 }
 
 /**
@@ -63,6 +80,7 @@ export interface QueuedEdit {
   body: NoteUpdateWire | null;
   /** The entry's idempotency key: which entry that save may forget. */
   key: string;
+  prompt?: ParkedPrompt | undefined;
 }
 
 /** `null` means the server has it — the entry is removed only on success. */
@@ -77,6 +95,7 @@ export async function queuedEditFor(noteId: string): Promise<QueuedEdit | null> 
     error: entry.lastError,
     body: queuedEditPayload(entry)?.body ?? null,
     key: entry.idempotencyKey,
+    prompt: queuedEditPayload(entry)?.prompt,
   };
 }
 

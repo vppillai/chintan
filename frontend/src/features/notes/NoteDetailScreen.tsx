@@ -948,6 +948,37 @@ function SaveIndicator({ editor }: { editor: ReturnType<typeof useNoteEditor> })
     const addition = theirs?.addition ?? null;
     const mustConfirm = recording && addition === null;
     const confirmed = discardConfirmedFor === theirs?.version;
+    /*
+     * An edit the server would not take, kept on the device when the screen
+     * was left: nothing changed elsewhere, so the prompt says what did
+     * happen, and its two buttons are the same two ways out.
+     */
+    if (theirs?.refused) {
+      return (
+        <div className="save-conflict" role="alert">
+          <p className="save-conflict__title">That edit did not save</p>
+          <p className="save-conflict__body">
+            Your last edit to this note is only on this device. Send it again, or drop it and keep the note as it
+            was saved.
+          </p>
+          <div className="save-conflict__actions">
+            <button type="button" className="save-conflict__action" onClick={editor.takeTheirs}>
+              Drop my edit
+            </button>
+            <button
+              type="button"
+              className="save-conflict__action"
+              onClick={() => {
+                editor.keepMine();
+                void editor.saveNow();
+              }}
+            >
+              Send it again
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="save-conflict" role="alert">
         <p className="save-conflict__title">{SAVE_LABELS.conflict}</p>

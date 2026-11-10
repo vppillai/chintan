@@ -4,9 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { queryKeys } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
-import { openChintanDB } from '@/offline/db.ts';
-import { enqueueReplacing, MAX_ATTEMPTS } from '@/offline/queue.ts';
-import { queuedEditBody, queuedEditId } from '@/offline/queuedEdits.ts';
+import { enqueueReplacing } from '@/offline/queue.ts';
+import { queuedEditBody, queuedEditFor, queuedEditId } from '@/offline/queuedEdits.ts';
 import { flushTasks, onAFakeClock } from '@/test/clock.ts';
 import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
@@ -925,56 +924,100 @@ describe('a save refused after the screen has gone keeps the text (review round 
    * its refusal used to be committed into a reducer nobody renders — a
    * conflict prompt or "Couldn't save" on a screen that no longer exists —
    * and the typed text was nowhere. It is parked in the queue instead, where
-   * the next visit reads it back.
+   * the next visit reads it back: retired when the server has refused it,
+   * so nothing but the user's own tap sends it again; live when the failure
+   * may pass.
    */
+  const typed = { version: NOTE.version, body: 'Ellis quoted nine hundred pounds.' };
+
   it.each([
-    ['a 409 against a copy that moved on', 409],
-    ['a refusal on its merits', 413],
-    ['a session that expired', 401],
-  ])('parks the PATCH on %s', async (_name, status) => {
+    ['a 409 against a copy that moved on', 409, { dead: true, prompt: { addition: null, recording: false, refused: false } }],
+    ['a refusal on its merits', 413, { dead: true, prompt: { addition: null, recording: false, refused: true } }],
+    ['a session that expired', 401, { pending: true }],
+  ])('parks the PATCH on %s', async (_name, status, parked) => {
     const { wrapper } = refusing(status, { ...NOTE, version: 7, body: 'Someone else wrote this.' });
     const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
     act(() => {
-      view.result.current.edit({ body: 'Ellis quoted nine hundred pounds.' });
+      view.result.current.edit({ body: typed.body });
     });
     view.unmount();
 
     await waitFor(async () => {
-      expect(await queuedEditBody(NOTE.id)).toEqual({
-        version: NOTE.version,
-        body: 'Ellis quoted nine hundred pounds.',
-      });
+      expect(await queuedEditFor(NOTE.id)).toMatchObject({ body: typed, ...parked });
     });
   });
 
-  it('parks a draft left on screen under "Couldn’t save"', async () => {
+  it.each([
+    ['a 503 through the client’s retries', () => Promise.resolve(problem(503))],
+    [
+      'a request that never answers',
+      (init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'));
+          });
+        }),
+    ],
+  ])('parks the PATCH live on %s, for the flush to send', async (_name, answer) => {
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) =>
+      (init?.method ?? 'GET') === 'PATCH'
+        ? answer(init)
+        : new Response(JSON.stringify(NOTE), { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TestProviders api={testApiContext(fetchImpl)}>{children}</TestProviders>
+    );
+    await onAFakeClock(async () => {
+      const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+      act(() => {
+        view.result.current.edit({ body: typed.body });
+      });
+      view.unmount();
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+    await waitFor(async () => {
+      expect(await queuedEditFor(NOTE.id)).toMatchObject({ body: typed, pending: true });
+    });
+  });
+
+  it('parks a draft left on screen under "Couldn’t save", retired, with a field queued before it', async () => {
+    // A title queued offline on an earlier visit; the note reads as queued.
+    await enqueueReplacing({
+      id: queuedEditId(NOTE.id),
+      kind: 'updateNote',
+      payload: { noteId: NOTE.id, body: { version: NOTE.version, title: 'Roof repair — Ellis' } },
+    });
     const { wrapper } = refusing(413);
-    const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+    const view = renderHook(() => useNoteEditor({ ...NOTE, title: 'Roof repair — Ellis' }), { wrapper });
     act(() => {
-      view.result.current.edit({ body: 'Ellis quoted nine hundred pounds.' });
+      view.result.current.edit({ body: typed.body });
     });
     await act(async () => {
       await view.result.current.saveNow();
     });
     expect(view.result.current.model.state).toBe('error');
-    expect(await queuedEditBody(NOTE.id), 'on screen it is the user’s to retry').toBeNull();
+    expect(await queuedEditBody(NOTE.id), 'on screen it is the user’s to retry').not.toHaveProperty('body');
 
     view.unmount();
     await waitFor(async () => {
-      expect(await queuedEditBody(NOTE.id)).toMatchObject({ body: 'Ellis quoted nine hundred pounds.' });
+      expect(await queuedEditFor(NOTE.id)).toMatchObject({
+        body: { ...typed, title: 'Roof repair — Ellis' },
+        dead: true,
+        prompt: { refused: true },
+      });
     });
   });
 
   it('forgets a parked PATCH the server turns out to hold, with no conflict prompt', async () => {
     // A PATCH that timed out on the way back was parked; its second sending
     // lost the version check to its first and was retired.
-    const entry = await enqueueReplacing({
+    await enqueueReplacing({
       id: queuedEditId(NOTE.id),
       kind: 'updateNote',
-      payload: { noteId: NOTE.id, body: { version: NOTE.version, body: 'Ellis quoted nine hundred pounds.' } },
+      payload: { noteId: NOTE.id, body: typed },
+      retired: true,
     });
-    await (await openChintanDB()).put('mutations', { ...entry, attempts: MAX_ATTEMPTS });
-    const landed = { ...NOTE, version: NOTE.version + 1, body: 'Ellis quoted nine hundred pounds.' };
+    const landed = { ...NOTE, version: NOTE.version + 1, body: typed.body };
     const { wrapper, queryClient } = refusing(409, landed);
 
     const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
@@ -990,9 +1033,30 @@ describe('a save refused after the screen has gone keeps the text (review round 
   });
 });
 
-describe('a save the server could not answer is queued, as the screen says (FE-8)', () => {
-  it('queues a PATCH answered 503 through the client’s retries, and reads "Saved on this device"', async () => {
-    const { wrapper } = refusing(503);
+describe('a save the server could not answer, with the note still open (FE-8)', () => {
+  /*
+   * On screen a 5xx is a failure the user acts on, with the text still in
+   * the editor: "Couldn't save" and a Try again that sends. Nothing is
+   * queued — a queued copy raced the editor's own next save and came back
+   * as a conflict with the user's older text.
+   */
+  it('says so, queues nothing, and Try again sends once the server is back', async () => {
+    let down = true;
+    const patches: Record<string, unknown>[] = [];
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      if ((init?.method ?? 'GET') !== 'PATCH') {
+        return new Response(JSON.stringify(NOTE), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (down) return problem(503);
+      patches.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(JSON.stringify({ ...NOTE, version: NOTE.version + 1 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TestProviders api={testApiContext(fetchImpl)}>{children}</TestProviders>
+    );
     await onAFakeClock(async () => {
       const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
       act(() => {
@@ -1000,13 +1064,42 @@ describe('a save the server could not answer is queued, as the screen says (FE-8
       });
       await act(() => vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 20_000));
       await waitFor(() => {
-        expect(view.result.current.model.state).toBe('queued');
+        expect(view.result.current.model.state).toBe('error');
       });
+      expect(await queuedEditBody(NOTE.id)).toBeNull();
+
+      down = false;
+      await act(async () => {
+        await view.result.current.saveNow();
+      });
+      expect(view.result.current.model.state).toBe('saved');
     });
-    expect(await queuedEditBody(NOTE.id)).toEqual({
-      version: NOTE.version,
-      body: 'Ellis quoted nine hundred pounds.',
+    expect(patches).toEqual([{ version: NOTE.version, body: 'Ellis quoted nine hundred pounds.' }]);
+  });
+});
+
+describe('a title queued offline and then cleared', () => {
+  it('is not put back by the entry it replaces', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      if ((init?.method ?? 'GET') === 'PATCH') throw new TypeError('Failed to fetch');
+      return new Response(JSON.stringify(NOTE), { status: 200, headers: { 'content-type': 'application/json' } });
     });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TestProviders api={testApiContext(fetchImpl)}>{children}</TestProviders>
+    );
+    await onAFakeClock(async () => {
+      const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+      for (const title of ['Roof repair — Ellis', '']) {
+        act(() => {
+          view.result.current.edit({ title, body: `Body under “${title}”.` });
+        });
+        await act(() => vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 20_000));
+        await waitFor(() => {
+          expect(view.result.current.model.state).toBe('queued');
+        });
+      }
+    });
+    expect(await queuedEditBody(NOTE.id)).toEqual({ version: NOTE.version, body: 'Body under “”.' });
   });
 });
 

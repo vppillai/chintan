@@ -98,27 +98,40 @@ capture upload resumes from the audio on disk. Each entry carries the
 partly succeeded replays rather than double-applies.
 
 **One entry per note.** The editor (`useNoteEditor`) catches an offline
-`ApiError` and calls `enqueueReplacing` under `queuedEditId(noteId)` =
-`updateNote:<id>`, folding the new fields over whatever body is already held
-(`queuedEditBody`): a PATCH carries the whole note, so three offline edits are
-one write made three times. The held entry gives the field names and the
-draft their values (`heldFields`), so a tag added offline and removed again
-is sent as removed, not as the held tag.
+`ApiError` and parks the PATCH (`park`): `enqueueReplacing` under
+`queuedEditId(noteId)` = `updateNote:<id>`, over whatever body is already
+held (`queuedEditBody`): a PATCH carries the whole note, so three offline
+edits are one write made three times. The held entry gives the field names
+and the draft their values (`heldFields`), so a tag added offline and removed
+again is sent as removed, and a title cleared since is left out. The
+replacement keeps `createdAt` (the order of intent) and mints a fresh key (a
+different payload under the same key would replay the earlier response). The
+editor then patches its caches as a landed save would, at the same version,
+so the note reopened offline shows the edit and the next keystroke builds on
+it.
 
-**What else is parked.** A timeout and a 5xx are queued the same way — the
-client's own retries are spent, the flush goes on retrying, and the screen
-reads "Saved on this device — will sync". So is any save that fails once the
-note screen has gone (Back inside the debounce, a blur's save still on the
-wire) — a 409, a 4xx, a 401 after a failed refresh — and a draft left under
-"Couldn't save" or the conflict prompt: nobody is there to act on the
-failure, and the draft would otherwise go with the screen. The next visit
-reads the entry back as below. A parked PATCH whose first sending did land
-loses its version check; read back, the server's copy already has every
-field it names (`holdsAll`), so the entry is forgotten with no prompt. The replacement keeps `createdAt` (the order of
-intent) and mints a fresh key (a different payload under the same key would
-replay the earlier response). The editor then patches its caches as a landed
-save would, at the same version, so the note reopened offline shows the
-edit and the next keystroke builds on it.
+**A save nobody is left to see.** With the note open, any failure but
+offline is a state on screen — "Couldn't save" with Try again, or the
+conflict prompt — and nothing is queued: the text is in the editor. Once the
+screen has gone (Back inside the debounce, a blur's save still on the wire)
+the draft exists nowhere else, so the PATCH is parked, under the version the
+save carried:
+
+- A timeout, a 5xx or a 401 after a failed refresh may pass later: a live
+  entry, sent by the flush. One whose first sending did land loses the
+  version check and is retired; read back, the server's copy has every field
+  it names (`holdsAll`) and it is forgotten with no prompt.
+- A 409, or a refusal on the edit's merits (`isTerminal`), is parked already
+  retired (`retired`, at the attempt ceiling) with what the prompt needs
+  (`ParkedPrompt`: the paragraph the server's copy added, whether a
+  recording was filed, whether it was a refusal). The flush never sends it;
+  only a tap on the prompt does.
+- A draft left on screen under "Couldn't save" or the conflict prompt is
+  parked retired the same way as the screen unmounts. A prompt that was
+  itself read back from the queue is not: the editor has by then been loaded
+  from the server's newer copy, a PATCH stamped with that version would be
+  accepted over it, and the entry already holds the text — it stays, and the
+  next visit asks again.
 
 **The flush** (`queue.flush`, run by `useOfflineQueue`) walks entries oldest
 first and never overlaps itself: a reconnect and a window focus landing
@@ -147,7 +160,13 @@ it loaded, and that never changes, so replaying it is eight guaranteed
 conflicts for an outcome settled at the first. The entry stays; back online,
 the editor reads the held body, fetches the server's copy and shows the
 conflict prompt — Keep my edits, or Use the newer version
-(`append-vs-autosave.md`). Keep sends the held body on the newer version;
+(`append-vs-autosave.md`) — with the recording warning and "Keep my edits and
+add the recording" when the entry was parked with them. When the server has
+not moved, an entry that ran out of attempts is sent once more on its
+version; one parked as refused is asked about instead — "That edit did not
+save", Send it again or Drop my edit — so an edit the server will never take
+is neither re-sent on every visit nor impossible to drop. Try again under a
+retired entry's "did not save" runs the read-back again. Keep sends the held body on the newer version;
 either choice clears the entry (`clearQueuedEdit`). A direct save made online
 while an entry is still pending sends the held fields under its own
 (`queuedEditFor` carries the body), since it clears the entry once it lands:

@@ -75,7 +75,7 @@ The screen is keyed by the note's id (`NoteDetailScreen` renders
 note to another on the same route, and one instance serving both carried the
 first note's editor — its pending edit, or its save's late answer — into the
 second. Keyed, the walk unmounts the first note, whose editor flushes what
-was typed (`offline.md`, "What else is parked"), and every panel starts
+was typed (`offline.md`, "A save nobody is left to see"), and every panel starts
 fresh.
 
 ## Arriving

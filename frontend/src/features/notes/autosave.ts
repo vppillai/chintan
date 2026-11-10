@@ -114,6 +114,12 @@ export interface EditorModel {
     addition: string | null;
     /** Whether a recording was filed into the note since this draft was loaded. */
     recording: boolean;
+    /**
+     * Not a conflict: the server refused my edit on a note that has not
+     * moved, and the edit was kept on the device. The same two ways out —
+     * send it again, or drop it for the server's copy — under their own words.
+     */
+    refused?: boolean;
   } | null;
 }
 
@@ -138,6 +144,7 @@ export type EditorEvent =
       message: string;
       addition?: string | null;
       recording?: boolean;
+      refused?: boolean;
       /**
        * My side, when it is not what the editor holds: a queued edit the
        * server refused, read back from the queue (`useNoteEditor`).
@@ -417,6 +424,7 @@ export function editorReducer(model: EditorModel, event: EditorEvent): EditorMod
           version: event.version,
           addition: event.addition ?? null,
           recording: event.recording ?? false,
+          ...(event.refused ? { refused: true } : {}),
         },
       };
 
