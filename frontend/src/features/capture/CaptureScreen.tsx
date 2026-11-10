@@ -31,7 +31,12 @@ const TypedThought = lazy(() =>
 // Likewise: only a take that is listened back to needs its player, and that
 // is after Stop. The service worker precaches the chunk.
 const ReviewPlayer = lazy(() =>
-  import('./ReviewPlayer.tsx').then((module) => ({ default: module.ReviewPlayer })),
+  import('./ReviewPlayer.tsx').then(
+    (module) => ({ default: module.ReviewPlayer }),
+    // The chunk could not be fetched — offline before the worker cached it,
+    // or a deploy since. Listening back is lost; Send and Discard are not.
+    () => ({ default: () => <div className="capture__waveform" /> }),
+  ),
 );
 
 /**
