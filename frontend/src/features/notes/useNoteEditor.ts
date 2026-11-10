@@ -29,6 +29,7 @@ import {
   patchFor,
   reconcileQueued,
   sameText,
+  typedSince,
   type EditorEvent,
   type EditorModel,
   type NoteDraft,
@@ -299,6 +300,34 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     }
   }, [note, commit]);
 
+  /*
+   * An edit the device still holds for the note is what the editor shows, on
+   * the version the edit was made over — whatever copy it was loaded from.
+   *
+   * `park` writes the held text into the device's copy, but Home's list and
+   * body prefetch replace that copy with the server's, and the editor then
+   * opened on the server's text with the held edit out of sight: one
+   * keystroke with no connection replaced the entry's text with the server's
+   * plus a word, and the edit was gone without ever being shown again. Shown,
+   * new typing extends it; and stamped with the entry's version, a save from
+   * here is refused if the note has moved, which is the prompt, rather than
+   * accepted over a copy the held text never saw. Only into an editor with
+   * nothing of its own: a draft being typed is left to its own save.
+   */
+  const heldBody = queued.data?.body;
+  useEffect(() => {
+    if (!note || !heldBody) return;
+    const current = latest.current;
+    const settled = current.state === 'clean' || current.state === 'saved';
+    if (!settled || inFlight.current || timer.current) return;
+    if (current.version === heldBody.version && holdsAll(current.draft, heldBody)) return;
+    commit({
+      type: 'reset',
+      draft: { ...current.draft, ...draftFields(heldBody) },
+      version: heldBody.version,
+    });
+  }, [note, heldBody, commit]);
+
   /**
    * Writes the PATCH to the device's queue instead of the server, and says
    * whether it is there. Without `refused` the flush sends it when the
@@ -558,16 +587,22 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
          * shape of every append — the paragraph is offered as an addition to
          * the draft, so neither side has to be thrown away.
          */
+        // Against what a held entry was made over, when the draft extends
+        // one: the editor was then loaded from the held text, not the note's.
+        const base = queued.data?.base ?? {
+          body: current.saved.body,
+          captures: [...knownCaptures.current],
+        };
         const recording =
           theirs.captures?.some(
-            (capture) => capture.status === 'appended' && !knownCaptures.current.has(capture.id),
+            (capture) => capture.status === 'appended' && !base.captures.includes(capture.id),
           ) ?? false;
         await fail({
           type: 'conflict',
           theirs: draftFrom(theirs),
           version: theirs.version,
           message: 'This note changed somewhere else while you were editing.',
-          addition: additionTo(current.saved.body, theirs.body),
+          addition: additionTo(base.body, theirs.body),
           recording,
         });
         return;
@@ -739,11 +774,14 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     if (state !== 'clean' && state !== 'saved' && state !== 'queued') return;
     let gone = false;
     void (async () => {
+      if (!(await queuedEditFor(note.id))?.dead) return;
+      const theirs = await api
+        .getNote(note.id)
+        .catch((error: unknown) => (error instanceof ApiError && error.isNotFound ? 404 : null));
+      // Read after the fetch, which can take as long as the connection likes:
+      // the entry and the editor are judged as they are now.
       const entry = await queuedEditFor(note.id);
       const held = entry?.dead ? entry.body : null;
-      const theirs = held
-        ? await api.getNote(note.id).catch((error: unknown) => (error instanceof ApiError && error.isNotFound ? 404 : null))
-        : null;
       if (gone || !entry || !held || !theirs) return;
       // The note is gone, and with it everything the edit could mean: the
       // flush never sends a retired entry, so nothing else would remove it.
@@ -763,6 +801,9 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
         return;
       }
       const current = latest.current;
+      // A save of the draft's own is on the wire, or has already been
+      // answered with the prompt: its answer is the one that counts.
+      if (current.state === 'saving' || current.state === 'conflict') return;
       const moved = theirs.version > held.version;
       const refused = !moved && (entry.refused ?? false);
       // What the entry was parked over, or — for one an older build queued —
@@ -770,7 +811,11 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
       const base = entry.base ?? { body: current.saved.body, captures: [...knownCaptures.current] };
       commit({
         type: 'conflict',
-        draft: { ...current.draft, ...draftFields(held) },
+        // The held text, under whatever has been typed since the editor
+        // showed it: the fetch above is a round trip on any connection, the
+        // field is editable throughout, and the held body written over it
+        // discarded a sentence typed in that moment.
+        draft: { ...current.draft, ...draftFields(held), ...typedSince(current) },
         theirs: draftFrom(theirs),
         version: theirs.version,
         message: 'This note changed somewhere else while you were editing.',
@@ -813,9 +858,18 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     // the effect has copied the resolution across still sees `conflict` and
     // sends nothing — the same-tick hazard `edit()` guards against.
     takeTheirs: useCallback(() => {
+      const theirs = latest.current.theirs;
       commit({ type: 'takeTheirs' });
-      void forgetQueued();
-    }, [commit, forgetQueued]),
+      if (!note || !theirs) return;
+      // Nothing is held any more, said at once: until the delete below has
+      // run, the editor would be handed the held text again.
+      queryClient.setQueryData(queryKeys.queuedEdit(note.id), null);
+      // And the device's copy is the one just taken, not the dropped draft
+      // `park` left there under the entry's version.
+      void forgetQueued().then(() => {
+        recordSavedNote(queryClient, withDraft({ ...note, version: theirs.version }, theirs.draft));
+      });
+    }, [commit, forgetQueued, note, queryClient]),
     keepMine: useCallback(() => {
       commit({ type: 'keepMine' });
     }, [commit]),

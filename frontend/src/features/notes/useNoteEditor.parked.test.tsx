@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { queryKeys, useNote } from '@/api/queries.ts';
+import { queryKeys, useColorNote, useNote, usePinNote } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { enqueueReplacing } from '@/offline/queue.ts';
 import { queuedEditFor, queuedEditId } from '@/offline/queuedEdits.ts';
@@ -41,7 +41,10 @@ const capture = (id: string) =>
 const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The device opened the note at v3; the server holds `stored`. */
-function session(stored: NoteDetailWire, refuse: { patch?: number; get?: number; dark?: boolean } = {}) {
+function session(
+  stored: NoteDetailWire,
+  refuse: { patch?: number; get?: number; dark?: boolean; slowGetMs?: number } = {},
+) {
   const sent: Record<string, unknown>[] = [];
   const failing = { ...refuse };
   const json = (body: unknown, status = 200) =>
@@ -52,6 +55,7 @@ function session(stored: NoteDetailWire, refuse: { patch?: number; get?: number;
   const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
     if (failing.dark) throw new TypeError('Failed to fetch');
     if ((init?.method ?? 'GET') !== 'PATCH') {
+      if (failing.slowGetMs) await settle(failing.slowGetMs);
       return failing.get ? json({ type: 'about:blank', title: 'Refused', status: failing.get }, failing.get) : json(stored);
     }
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -59,6 +63,8 @@ function session(stored: NoteDetailWire, refuse: { patch?: number; get?: number;
     if (failing.patch) return json({ type: 'about:blank', title: 'Refused', status: failing.patch }, failing.patch);
     if (body['version'] !== stored.version) return json({ type: 'about:blank', title: 'Conflict', status: 409 }, 409);
     if (typeof body['body'] === 'string') stored.body = body['body'];
+    if (typeof body['pinned'] === 'boolean') stored.pinned = body['pinned'];
+    if (typeof body['color'] === 'string') stored.color = body['color'] as NonNullable<NoteDetailWire['color']>;
     stored.version += 1;
     const { body: _body, captures: _captures, ...row } = stored;
     return json(row);
@@ -91,9 +97,13 @@ function session(stored: NoteDetailWire, refuse: { patch?: number; get?: number;
       view.result.current.edit({ body });
     });
     view.unmount();
-    await waitFor(async () => {
-      expect(await queuedEditFor(NOTE.id)).not.toBeNull();
-    });
+    // Long enough for the client's own retries when nothing answers.
+    await waitFor(
+      async () => {
+        expect(await queuedEditFor(NOTE.id)).not.toBeNull();
+      },
+      { timeout: 6_000 },
+    );
   };
   /** A pass of the flusher, and time for anything it started. */
   const flush = async () => {
@@ -104,7 +114,7 @@ function session(stored: NoteDetailWire, refuse: { patch?: number; get?: number;
   const refetched = () => {
     queryClient.setQueryData(queryKeys.note(NOTE.id), structuredClone(stored));
   };
-  return { open, typeAndLeave, flush, refetched, sent, failing, stored, queryClient };
+  return { open, typeAndLeave, flush, refetched, sent, failing, stored, queryClient, wrapper };
 }
 
 describe('a parked conflict is never sent without the user’s choice', () => {
@@ -254,29 +264,214 @@ describe('a parked text is never paired with a version newer than the copy it wa
     expect(server.sent, 'a retired entry is not sent').toHaveLength(before);
     expect(server.stored.body).toBe('Start.\n\nFirst dictated paragraph.');
   }, 15_000);
+});
 
-  it('an offline save over a retired entry keeps it retired on its version, even from an editor on the server’s copy', async () => {
+describe('an edit the device holds is what the editor shows, whatever copy it was loaded from', () => {
+  it('typing with no connection extends a retired edit the device’s copy no longer shows', async () => {
     const server = session({ ...NOTE, version: 4, body: 'Written on the other device.' });
     await server.typeAndLeave('Start. Mine.');
-    // The device has since read the server's copy; the prompt was never seen.
+    // Home is visited online: the list row, then the body prefetch, replace
+    // the device's copy with the server's. Then a tunnel.
     server.refetched();
     server.failing.dark = true;
+
     const view = server.open();
+    // The held text, not the server's: typed over the server's, the entry
+    // became "Written on the other device. Typed offline." and "Mine." was
+    // gone without having been shown again.
     await waitFor(() => {
-      expect(view.result.current.model.draft.body).toBe('Written on the other device.');
+      expect(view.result.current.model.draft.body).toBe('Start. Mine.');
     });
     act(() => {
-      view.result.current.edit({ body: 'Written on the other device. And by me.' });
+      view.result.current.edit({ body: 'Start. Mine. Typed offline.' });
     });
-    await settle(AUTOSAVE_DELAY_MS + 3_500);
-
-    expect(await queuedEditFor(NOTE.id)).toMatchObject({ dead: true, refused: false, body: { version: 3 } });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+    // Still retired, a conflict, on the version the first edit was made
+    // over; nothing is sent when the connection returns.
+    await waitFor(
+      async () => {
+        expect(await queuedEditFor(NOTE.id)).toMatchObject({
+          dead: true,
+          refused: false,
+          body: { version: 3, body: 'Start. Mine. Typed offline.' },
+        });
+      },
+      { timeout: 6_000 },
+    );
     delete server.failing.dark;
     const before = server.sent.length;
     await server.flush();
     expect(server.sent).toHaveLength(before);
     expect(server.stored).toMatchObject({ version: 4, body: 'Written on the other device.' });
   }, 15_000);
+
+  it('typing with no connection extends a live edit the flush has not sent yet', async () => {
+    const server = session({ ...NOTE }, { dark: true });
+    await server.typeAndLeave('Start. Mine.');
+    expect(await queuedEditFor(NOTE.id)).toMatchObject({ pending: true });
+    // Another device writes; this one reads the note again before its flush.
+    Object.assign(server.stored, { version: 4, body: 'Written on the other device.' });
+    server.refetched();
+
+    const view = server.open();
+    await waitFor(() => {
+      expect(view.result.current.model.draft.body).toBe('Start. Mine.');
+    });
+    act(() => {
+      view.result.current.edit({ body: 'Start. Mine. More.' });
+    });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+    // On the version the first edit was made over: sent, it is refused and
+    // comes back as the prompt, with both sentences.
+    await waitFor(
+      async () => {
+        expect(await queuedEditFor(NOTE.id)).toMatchObject({ body: { version: 3, body: 'Start. Mine. More.' } });
+      },
+      { timeout: 6_000 },
+    );
+    delete server.failing.dark;
+    // A pass begun in the tunnel may still be giving up; the next one sends.
+    await waitFor(
+      async () => {
+        await server.flush();
+        expect(await queuedEditFor(NOTE.id)).toMatchObject({ dead: true });
+      },
+      { timeout: 10_000, interval: 500 },
+    );
+    expect(server.stored.body).toBe('Written on the other device.');
+  }, 25_000);
+
+  it('keeps what is typed while the read-back is fetching the server’s copy', async () => {
+    const server = session({ ...NOTE, version: 4, body: 'Written on the other device.' });
+    await server.typeAndLeave('Start. Mine.');
+    // A slow connection: the reopened note shows my text, editable, for as
+    // long as one GET takes. The prompt then wrote the held body over it.
+    server.failing.slowGetMs = 600;
+    const view = server.open();
+    await waitFor(() => {
+      expect(view.result.current.model.draft.body).toBe('Start. Mine.');
+    });
+    act(() => {
+      view.result.current.edit({ body: 'Start. Mine. Typed at once.' });
+    });
+    await waitFor(
+      () => {
+        expect(view.result.current.model.state).toBe('conflict');
+      },
+      { timeout: 3_000 },
+    );
+    expect(view.result.current.model.draft.body).toBe('Start. Mine. Typed at once.');
+    expect(server.stored.body).toBe('Written on the other device.');
+  });
+
+  it('a save from that editor, refused on screen, is judged against what the held edit was made over', async () => {
+    const server = session({
+      ...NOTE,
+      version: 4,
+      body: 'Start.\n\nDictated paragraph.',
+      captures: [capture('cap-1')],
+    });
+    await server.typeAndLeave('Start. Mine.');
+    server.failing.dark = true;
+    const view = server.open();
+    await waitFor(() => {
+      expect(view.result.current.model.draft.body).toBe('Start. Mine.');
+    });
+    act(() => {
+      view.result.current.edit({ body: 'Start. Mine. More.' });
+    });
+    delete server.failing.dark;
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+    // Against the editor's own last text — the held edit — nothing reads as
+    // an addition, and the prompt would not offer to keep the paragraph.
+    await waitFor(() => {
+      expect(view.result.current.model.theirs).toMatchObject({ addition: 'Dictated paragraph.', recording: true });
+    });
+    expect(view.result.current.model.draft.body).toBe('Start. Mine. More.');
+  });
+
+  it('"Use the newer version" leaves the device’s copy as the one taken, not the dropped draft', async () => {
+    const server = session({ ...NOTE, version: 4, body: 'Written on the other device.' });
+    await server.typeAndLeave('Start. Mine.');
+    const view = server.open();
+    await waitFor(() => {
+      expect(view.result.current.model.state).toBe('conflict');
+    });
+    act(() => {
+      view.result.current.takeTheirs();
+    });
+    await waitFor(() => {
+      expect(server.queryClient.getQueryData(queryKeys.note(NOTE.id))).toMatchObject({
+        version: 4,
+        body: 'Written on the other device.',
+      });
+    });
+    expect(view.result.current.model.draft.body).toBe('Written on the other device.');
+    expect(await queuedEditFor(NOTE.id)).toBeNull();
+  });
+});
+
+describe('a pin from Home on a row newer than the note the device holds', () => {
+  it('does not put the row’s version on the old body: the note opens on the server’s copy and a keystroke keeps the recording', async () => {
+    const server = session({ ...NOTE });
+    // The note was open earlier: its detail is cached at v3. A recording is
+    // filed since (v4), and Home's list has been read again.
+    Object.assign(server.stored, {
+      version: 4,
+      body: 'Start.\n\nFirst dictated paragraph.',
+      captures: [capture('cap-1')],
+    });
+    const pin = renderHook(() => usePinNote(), { wrapper: server.wrapper });
+    await act(async () => {
+      await pin.result.current.mutateAsync({ note: { id: NOTE.id, version: 4 }, pinned: true });
+    });
+    // The old body stays at its own version; stamped v5, the editor loaded
+    // it, ignored the refetch, and one word overwrote the paragraph.
+    expect(server.queryClient.getQueryData<NoteDetailWire>(queryKeys.note(NOTE.id))?.version).not.toBe(5);
+
+    const view = server.open();
+    await waitFor(() => {
+      expect(view.result.current.model.draft.body).toBe('Start.\n\nFirst dictated paragraph.');
+    });
+    act(() => {
+      view.result.current.edit({ body: `${view.result.current.model.draft.body} More.` });
+    });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+    expect(server.stored.body).toBe('Start.\n\nFirst dictated paragraph. More.');
+  });
+
+  it('a colour from Home does not either', async () => {
+    const server = session({ ...NOTE });
+    Object.assign(server.stored, { version: 4, body: 'Start.\n\nFirst dictated paragraph.' });
+    const color = renderHook(() => useColorNote(NOTE.id), { wrapper: server.wrapper });
+    await act(async () => {
+      await color.result.current.mutateAsync({ version: 4, color: 'sky' });
+    });
+    expect(server.stored).toMatchObject({ version: 5, color: 'sky' });
+    const cached = server.queryClient.getQueryData<NoteDetailWire>(queryKeys.note(NOTE.id));
+    expect(cached?.body === 'Start.' && cached.version === 5, 'the old body at the new version').toBe(false);
+  });
+
+  it('still carries the new version onto a copy that was current, so the next pin is not refused', async () => {
+    const server = session({ ...NOTE });
+    const pin = renderHook(() => usePinNote(), { wrapper: server.wrapper });
+    await act(async () => {
+      await pin.result.current.mutateAsync({ note: { id: NOTE.id, version: 3 }, pinned: true });
+    });
+    expect(server.queryClient.getQueryData(queryKeys.note(NOTE.id))).toMatchObject({
+      version: 4,
+      pinned: true,
+      body: 'Start.',
+    });
+  });
 });
 
 describe('a recording filed while typing, then Back', () => {
@@ -396,6 +591,33 @@ describe('an edit the server refused on its merits, then Back', () => {
     });
     expect(server.sent).toHaveLength(before);
   });
+
+  it('typed over with no connection, is still a refusal', async () => {
+    const server = session({ ...NOTE }, { patch: 413 });
+    await server.typeAndLeave('Start. Far too long.');
+    server.failing.dark = true;
+    const view = server.open();
+    await waitFor(() => {
+      expect(view.result.current.model.draft.body).toBe('Start. Far too long.');
+    });
+    act(() => {
+      view.result.current.edit({ body: 'Start. Shorter.' });
+    });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+    // Parked over as a conflict, the unmoved note sent it again unasked.
+    await waitFor(
+      async () => {
+        expect(await queuedEditFor(NOTE.id)).toMatchObject({
+          dead: true,
+          refused: true,
+          body: { body: 'Start. Shorter.' },
+        });
+      },
+      { timeout: 6_000 },
+    );
+  }, 15_000);
 
   it('is removed when the note it was made to is gone', async () => {
     const server = session({ ...NOTE }, { patch: 413 });

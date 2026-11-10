@@ -131,8 +131,21 @@ save carried:
   back from the queue is parked too, since the field stays editable under
   it; the next visit asks again with what was typed.
 
-Two rules keep a parked text from being paired with a version newer than the
-copy it was written over, which the server would accept over that copy:
+Three rules keep a parked text from being paired with a version newer than
+the copy it was written over, which the server would accept over that copy,
+and keep it in front of the person who typed it:
+
+- **The editor shows what the device holds.** Whenever an entry exists for
+  the note, live or retired, an editor with nothing of its own is loaded
+  with the entry's fields over the note's, on the entry's version — whatever
+  copy the note was read from. Home's list and body prefetch replace the
+  device's copy with the server's, and an editor opened on that showed the
+  server's text with the held edit out of sight: one keystroke with no
+  connection replaced the entry's text. Shown, new typing extends it; on the
+  entry's version, a save from there is refused if the note has moved, which
+  is the prompt. The read-back's prompt keeps whatever was typed while it
+  was fetching the server's copy, and a save refused on screen from such an
+  editor is judged against the entry's `base`.
 
 - **A retired entry stays retired, on its own version**, whatever is parked
   over it — a draft typed under its prompt, or an offline keystroke from an
@@ -147,7 +160,9 @@ copy it was written over, which the server would accept over that copy:
   is loaded from the cache and stamps its saves with what it finds there.
 
 A retired entry whose note is gone is removed: by the purge on this device
-(`useDeleteNoteForever`), or by a read-back answered 404.
+(`useDeleteNoteForever`), or by a read-back answered 404. "Use the newer
+version" (and "Drop my edit") forgets the entry and writes the copy taken
+into the caches, so the dropped draft `park` left there does not come back.
 
 Every parked entry carries what the edit was made over (`base`: the body and
 the recordings filed by then; a replacement keeps the entry's own). The

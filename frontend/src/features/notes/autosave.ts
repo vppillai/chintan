@@ -273,6 +273,15 @@ export function holdsAll(theirs: NoteDraft, held: NoteUpdateWire): boolean {
   );
 }
 
+/** The draft's fields that differ from what the editor last loaded, saved or queued. */
+export function typedSince(model: EditorModel): Partial<NoteDraft> {
+  return Object.fromEntries(
+    Object.entries(model.draft).filter(
+      ([field, value]) => JSON.stringify(value) !== JSON.stringify(model.saved[field as keyof NoteDraft]),
+    ),
+  );
+}
+
 /**
  * Whether two drafts read the same — title, body, names and tags, language —
  * ignoring the cleaned-view settings. This is the question "did anyone
