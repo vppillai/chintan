@@ -1,7 +1,8 @@
-# Dependabot keeps three things current: the action pins in the workflows
+# Dependabot keeps four things current: the action pins in the workflows
 # (full commit SHAs in every workflow, so a moved tag can reach neither a job
-# that holds the deploy role nor a CI gate), the Go module graph, and the
-# frontend lockfile. Weekly, on one day, so the pull requests arrive together.
+# that holds the deploy role nor a CI gate), the two Python tools the workflows
+# install (.github/requirements-*.txt), the Go module graph, and the frontend
+# lockfile. Weekly, on one day, so the pull requests arrive together.
 #
 # The module groups are split by update type. One group with patterns: ["*"]
 # bundled majors with patches, so a single breaking bump (TypeScript 7 pulling
@@ -17,6 +18,12 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+
+  - package-ecosystem: "pip"
+    directory: "/.github"
+    schedule:
+      interval: "weekly"
+      day: "monday"
 
   - package-ecosystem: "gomod"
     directory: "/backend"

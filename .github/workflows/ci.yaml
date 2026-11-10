@@ -8,8 +8,8 @@ name: CI
 # matrix, still gets that one check and stays mergeable. The merge rule and the
 # production gate are README → Operate → Release flow.
 #
-# Go tests run with -race; golangci-lint, govulncheck, cfn-lint, shellcheck and
-# shfmt, the log-hygiene, env-contract and docs-current checks, and the frontend
+# Go tests run with -race; golangci-lint, govulncheck, cfn-lint, shellcheck,
+# shfmt and actionlint, the log-hygiene, env-contract and docs-current checks, and the frontend
 # typecheck, lint and tests each catch a class of defect none of the others does. A gate
 # that is not in this file is a gate that does not exist.
 #
@@ -18,8 +18,14 @@ name: CI
 # rule deploy-*.yaml follows. A moved tag or a new tool release therefore cannot
 # change what runs against a pull request without a diff here, which is what a
 # gate has to promise. Dependabot's github-actions ecosystem (.github/
-# dependabot.yml) opens the bump PRs for the action pins; the golangci-lint,
-# govulncheck, cfn-lint and PyYAML versions below are bumped by hand.
+# dependabot.yml) opens the bump PRs for the action pins, and its pip ecosystem
+# those for cfn-lint and PyYAML (.github/requirements-*.txt); the golangci-lint,
+# govulncheck, deadcode, shfmt and actionlint versions below and the Bun version
+# in .bun-version are bumped by hand.
+#
+# No checkout here keeps the job token in .git/config (persist-credentials:
+# false): no step pushes, and a later step that runs the pull request's own
+# code has no business reading it.
 
 # Every pull request runs this workflow; the `changes` job then decides what
 # the pull request touched, and the matrix jobs skip themselves when it touched
@@ -62,6 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 2
       - id: filter
         env:
@@ -89,9 +96,12 @@ jobs:
               # Playwright drives the built app against stubbed routes, so a
               # change confined to the Go code or the template cannot move it
               # (a wire change regenerates frontend/src/api/__fixtures__, which
-              # is frontend). Go-only pull requests spent 9-18 min there.
+              # is frontend). Go-only pull requests spent 9-18 min there. The
+              # same holds for scripts/: the e2e build is `bun run build` in
+              # frontend/ and reads none of them (frontend/scripts/ is
+              # frontend). A workflow change still runs it.
               case "$f" in
-                *.md|docs/*|backend/*|infrastructure/*|scripts/check-docs-current.py) ;;
+                *.md|docs/*|backend/*|infrastructure/*|scripts/*) ;;
                 *) e2e=true ;;
               esac
             done < <(git diff --name-only --no-renames HEAD^1 HEAD)
@@ -107,6 +117,8 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: backend/go.mod
@@ -136,6 +148,8 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: backend/go.mod
@@ -185,6 +199,8 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: backend/go.mod
@@ -206,6 +222,8 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
@@ -213,7 +231,7 @@ jobs:
       # set on the day it releases, failing a pull request that changed nothing.
       - name: cfn-lint
         run: |
-          python3 -m pip install --quiet --disable-pip-version-check cfn-lint==1.56.0
+          python3 -m pip install --quiet --disable-pip-version-check -r .github/requirements-cfn-lint.txt
           cfn-lint infrastructure/*.yaml
       # The custom-domain resources exist only when an instance config sets
       # api_host. cfn-lint proves the Conditions they name exist; this proves
@@ -225,13 +243,15 @@ jobs:
         run: scripts/check-custom-domain-dormant.sh --self-test
 
   shell:
-    name: shellcheck and shfmt
+    name: shellcheck, shfmt and actionlint
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: backend/go.mod
@@ -250,6 +270,17 @@ jobs:
           for f in scripts/*.sh scripts/lib/*.sh scripts/dev/*.sh scripts/qa/*.sh; do
             bash -n "$f"
           done
+      # The merge drivers loop on a rebase until the resolver says 0 or 2, so
+      # a conflict it does not handle must be a 2: this proves it is.
+      - name: The conflict resolver stops on what it cannot resolve
+        run: python3 scripts/dev/resolve-known.py --self-test
+      # The workflows are code no other job reads: a Dependabot action bump
+      # or a hand edit to a deploy workflow would otherwise merge unlinted.
+      # actionlint also runs shellcheck over every `run:` block.
+      - name: actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint"
 
   log-hygiene:
     name: No user content in logs
@@ -259,6 +290,8 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Provider adapters must not log response bodies
         run: scripts/check-log-hygiene.sh
       - name: Prove the check can fail
@@ -272,6 +305,8 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # The deploy pipeline exports VITE_* variables the bundle reads. A name
       # mismatch produces a bundle that builds and deploys green and cannot sign
       # in, because a missing variable is an empty string rather than an error.
@@ -288,10 +323,12 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
-      - run: python3 -m pip install --quiet --disable-pip-version-check pyyaml==6.0.3
+      - run: python3 -m pip install --quiet --disable-pip-version-check -r .github/requirements-pyyaml.txt
       # A malformed or duplicate instance config must fail here, not half-way
       # through a deploy matrix.
       - name: list-instances
@@ -310,11 +347,13 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # Bun, not npm: there is no Node in this project's toolchain and the
       # lockfile is bun.lock.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.3.13 # keep in step with deploy-frontend.yaml
+          bun-version-file: .bun-version
       - name: Install
         working-directory: frontend
         run: bun install --frozen-lockfile
@@ -371,13 +410,15 @@ jobs:
     # once, which is why it is its own job rather than a step in either.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.3.13 # keep in step with deploy-frontend.yaml
+          bun-version-file: .bun-version
       - name: Install
         working-directory: frontend
         run: bun install --frozen-lockfile
@@ -447,9 +488,11 @@ jobs:
     if: needs.changes.outputs.e2e == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.3.13 # keep in step with deploy-frontend.yaml
+          bun-version-file: .bun-version
       - name: Install
         working-directory: frontend
         run: bun install --frozen-lockfile
@@ -524,6 +567,8 @@ jobs:
     if: needs.changes.outputs.backlog == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: python3 scripts/backlog-view.py --self-test && python3 scripts/backlog-view.py
       - name: The committed view is the one the script produces
         run: |
@@ -545,6 +590,8 @@ jobs:
     if: needs.changes.outputs.docs == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: python3 scripts/check-docs-current.py --self-test && python3 scripts/check-docs-current.py
 
   # The one check the ruleset on main requires. `always()` so it reports when
