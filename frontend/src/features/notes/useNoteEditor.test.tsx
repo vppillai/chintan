@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { queryKeys } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
-import { queuedEditBody } from '@/offline/queuedEdits.ts';
+import { openChintanDB } from '@/offline/db.ts';
+import { enqueueReplacing, MAX_ATTEMPTS } from '@/offline/queue.ts';
+import { queuedEditBody, queuedEditId } from '@/offline/queuedEdits.ts';
 import { flushTasks, onAFakeClock } from '@/test/clock.ts';
 import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
@@ -891,5 +893,174 @@ describe('an online save over an edit still queued for the note', () => {
       body: 'Ellis quoted nine hundred.',
     });
     expect(await queuedEditBody(NOTE.id)).toBeNull();
+  });
+});
+
+function problem(status: number): Response {
+  return new Response(JSON.stringify({ type: 'about:blank', title: 'Refused', status }), {
+    status,
+    headers: { 'content-type': 'application/problem+json' },
+  });
+}
+
+/** A server that answers every PATCH with `status`, and every GET with `served`. */
+function refusing(status: number, served: NoteDetailWire = NOTE) {
+  const fetchImpl = vi.fn<typeof fetch>(async (_input, init) =>
+    (init?.method ?? 'GET') === 'PATCH'
+      ? problem(status)
+      : new Response(JSON.stringify(served), { status: 200, headers: { 'content-type': 'application/json' } }),
+  );
+  const queryClient = testQueryClient();
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <TestProviders api={testApiContext(fetchImpl)} queryClient={queryClient}>
+      {children}
+    </TestProviders>
+  );
+  return { wrapper, queryClient };
+}
+
+describe('a save refused after the screen has gone keeps the text (review round 19, FE-1)', () => {
+  /*
+   * Type, then Back inside the debounce. The unmount flush sends the PATCH;
+   * its refusal used to be committed into a reducer nobody renders — a
+   * conflict prompt or "Couldn't save" on a screen that no longer exists —
+   * and the typed text was nowhere. It is parked in the queue instead, where
+   * the next visit reads it back.
+   */
+  it.each([
+    ['a 409 against a copy that moved on', 409],
+    ['a refusal on its merits', 413],
+    ['a session that expired', 401],
+  ])('parks the PATCH on %s', async (_name, status) => {
+    const { wrapper } = refusing(status, { ...NOTE, version: 7, body: 'Someone else wrote this.' });
+    const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+    act(() => {
+      view.result.current.edit({ body: 'Ellis quoted nine hundred pounds.' });
+    });
+    view.unmount();
+
+    await waitFor(async () => {
+      expect(await queuedEditBody(NOTE.id)).toEqual({
+        version: NOTE.version,
+        body: 'Ellis quoted nine hundred pounds.',
+      });
+    });
+  });
+
+  it('parks a draft left on screen under "Couldn’t save"', async () => {
+    const { wrapper } = refusing(413);
+    const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+    act(() => {
+      view.result.current.edit({ body: 'Ellis quoted nine hundred pounds.' });
+    });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+    expect(view.result.current.model.state).toBe('error');
+    expect(await queuedEditBody(NOTE.id), 'on screen it is the user’s to retry').toBeNull();
+
+    view.unmount();
+    await waitFor(async () => {
+      expect(await queuedEditBody(NOTE.id)).toMatchObject({ body: 'Ellis quoted nine hundred pounds.' });
+    });
+  });
+
+  it('forgets a parked PATCH the server turns out to hold, with no conflict prompt', async () => {
+    // A PATCH that timed out on the way back was parked; its second sending
+    // lost the version check to its first and was retired.
+    const entry = await enqueueReplacing({
+      id: queuedEditId(NOTE.id),
+      kind: 'updateNote',
+      payload: { noteId: NOTE.id, body: { version: NOTE.version, body: 'Ellis quoted nine hundred pounds.' } },
+    });
+    await (await openChintanDB()).put('mutations', { ...entry, attempts: MAX_ATTEMPTS });
+    const landed = { ...NOTE, version: NOTE.version + 1, body: 'Ellis quoted nine hundred pounds.' };
+    const { wrapper, queryClient } = refusing(409, landed);
+
+    const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+
+    await waitFor(async () => {
+      expect(await queuedEditBody(NOTE.id)).toBeNull();
+    });
+    expect(view.result.current.model.state).not.toBe('conflict');
+    expect(queryClient.getQueryData<NoteDetailWire>(queryKeys.note(NOTE.id))).toMatchObject({
+      version: landed.version,
+      body: landed.body,
+    });
+  });
+});
+
+describe('a save the server could not answer is queued, as the screen says (FE-8)', () => {
+  it('queues a PATCH answered 503 through the client’s retries, and reads "Saved on this device"', async () => {
+    const { wrapper } = refusing(503);
+    await onAFakeClock(async () => {
+      const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+      act(() => {
+        view.result.current.edit({ body: 'Ellis quoted nine hundred pounds.' });
+      });
+      await act(() => vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 20_000));
+      await waitFor(() => {
+        expect(view.result.current.model.state).toBe('queued');
+      });
+    });
+    expect(await queuedEditBody(NOTE.id)).toEqual({
+      version: NOTE.version,
+      body: 'Ellis quoted nine hundred pounds.',
+    });
+  });
+});
+
+describe('a queued change undone before it was sent (FE-3)', () => {
+  /*
+   * Offline, add a tag: queued. Remove it again: the draft equals the
+   * server's copy, so the diff names no tags — and the merge over the held
+   * PATCH used to take the held value, sending the removed tag under "Saved".
+   */
+  async function addThenRemoveTag(backOnline: boolean) {
+    let online = false;
+    const patches: Record<string, unknown>[] = [];
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      if ((init?.method ?? 'GET') === 'PATCH') {
+        if (!online) throw new TypeError('Failed to fetch');
+        patches.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(JSON.stringify({ ...NOTE, version: NOTE.version + 1 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify(NOTE), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TestProviders api={testApiContext(fetchImpl)}>{children}</TestProviders>
+    );
+    await onAFakeClock(async () => {
+      const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+      act(() => {
+        view.result.current.edit({ tags: ['urgent'] });
+      });
+      await act(() => vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 20_000));
+      await waitFor(() => {
+        expect(view.result.current.model.state).toBe('queued');
+      });
+      online = backOnline;
+      act(() => {
+        view.result.current.edit({ tags: [] });
+      });
+      await act(() => vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS + 20_000));
+      await waitFor(() => {
+        expect(view.result.current.model.state).toBe(backOnline ? 'saved' : 'queued');
+      });
+    });
+    return patches;
+  }
+
+  it('sends the tag as removed when the save goes out online', async () => {
+    const patches = await addThenRemoveTag(true);
+    expect(patches.at(-1)).toEqual({ version: NOTE.version, tags: [] });
+  });
+
+  it('queues the tag as removed when the save is still offline', async () => {
+    await addThenRemoveTag(false);
+    expect(await queuedEditBody(NOTE.id)).toEqual({ version: NOTE.version, tags: [] });
   });
 });

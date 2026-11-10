@@ -101,7 +101,20 @@ partly succeeded replays rather than double-applies.
 `ApiError` and calls `enqueueReplacing` under `queuedEditId(noteId)` =
 `updateNote:<id>`, folding the new fields over whatever body is already held
 (`queuedEditBody`): a PATCH carries the whole note, so three offline edits are
-one write made three times. The replacement keeps `createdAt` (the order of
+one write made three times. The held entry gives the field names and the
+draft their values (`heldFields`), so a tag added offline and removed again
+is sent as removed, not as the held tag.
+
+**What else is parked.** A timeout and a 5xx are queued the same way — the
+client's own retries are spent, the flush goes on retrying, and the screen
+reads "Saved on this device — will sync". So is any save that fails once the
+note screen has gone (Back inside the debounce, a blur's save still on the
+wire) — a 409, a 4xx, a 401 after a failed refresh — and a draft left under
+"Couldn't save" or the conflict prompt: nobody is there to act on the
+failure, and the draft would otherwise go with the screen. The next visit
+reads the entry back as below. A parked PATCH whose first sending did land
+loses its version check; read back, the server's copy already has every
+field it names (`holdsAll`), so the entry is forgotten with no prompt. The replacement keeps `createdAt` (the order of
 intent) and mints a fresh key (a different payload under the same key would
 replay the earlier response). The editor then patches its caches as a landed
 save would, at the same version, so the note reopened offline shows the

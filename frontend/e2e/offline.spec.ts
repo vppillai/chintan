@@ -671,3 +671,35 @@ test('a queued edit refused as a conflict can be dropped for the newer version, 
   });
   expect(queued).toBe(0);
 });
+
+/**
+ * Type, then Back inside the autosave's debounce, while the note has moved
+ * on elsewhere — a recording filed into it is enough. The save made on
+ * leaving is answered 409 with no screen left to show it, and the text was
+ * nowhere: not on the server, not in the queue, no prompt on return (review
+ * round 19, FE-1). It is parked, the flush retires it, and the note reopens
+ * on the conflict prompt with the text.
+ */
+test('text typed just before Back is offered back when the save on leaving was refused', async ({
+  page,
+  api,
+}) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /roof repair/i }).click();
+  const body = page.getByRole('textbox', { name: 'Note body' });
+  await expect(body).not.toHaveValue('');
+
+  api.conflictOnce = true;
+  api.checkVersion = true;
+  await body.fill('Typed on the way out.');
+  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+
+  await page.getByRole('button', { name: /roof repair/i }).click();
+  await expect(page.getByText(/this note changed elsewhere/i)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('textbox', { name: 'Note body' })).toHaveValue('Typed on the way out.');
+  await page.getByRole('button', { name: 'Keep my edits' }).click();
+  await expect
+    .poll(() => api.notes['roof-repair']?.body, { timeout: 20_000 })
+    .toBe('Typed on the way out.');
+});

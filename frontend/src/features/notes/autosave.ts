@@ -240,6 +240,33 @@ export function draftFields(body: NoteUpdateWire): Partial<NoteDraft> {
 }
 
 /**
+ * A held PATCH's part in the one that replaces it: the fields it names, at
+ * the values the draft has now. The held values themselves would send a
+ * change the user has since undone — a tag added offline and removed again
+ * equals the server's copy, so `patchFor` names nothing for it and the held
+ * tag went to the server under "Saved". A title cleared since is left out,
+ * as `patchFor` leaves it out.
+ */
+export function heldFields(held: NoteUpdateWire | null | undefined, draft: NoteDraft): Partial<NoteDraft> {
+  if (!held) return {};
+  return Object.fromEntries(
+    (Object.keys(draftFields(held)) as (keyof NoteDraft)[])
+      .filter((field) => field !== 'title' || draft.title.trim() !== '')
+      .map((field) => [field, draft[field]]),
+  );
+}
+
+/**
+ * Whether the server's copy already has every field a held PATCH names: the
+ * PATCH landed and its answer was lost, so there is nothing left to send.
+ */
+export function holdsAll(theirs: NoteDraft, held: NoteUpdateWire): boolean {
+  return Object.entries(draftFields(held)).every(
+    ([field, value]) => JSON.stringify(theirs[field as keyof NoteDraft]) === JSON.stringify(value),
+  );
+}
+
+/**
  * Whether two drafts read the same — title, body, names and tags, language —
  * ignoring the cleaned-view settings. This is the question "did anyone
  * change the note's text?", which is what decides between carrying a draft
