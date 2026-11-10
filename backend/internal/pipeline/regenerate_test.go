@@ -336,7 +336,7 @@ func TestRegenerateHandsTheRestToAnotherInvocationWhenItIsOutOfTime(t *testing.T
 	short, cancel := context.WithTimeout(ctx, regenerateBudget-time.Minute)
 	defer cancel()
 	ids := []string{"c_1", "c_2", "c_3"}
-	if err := h.pipeline.RegenerateNote(short, "user1", "note1", ids); err != nil {
+	if err := h.pipeline.RegenerateNote(short, "user1", "note1", ids, false); err != nil {
 		t.Fatalf("RegenerateNote: %v", err)
 	}
 	if len(invoker.regenerated) != 1 || !slices.Equal(invoker.regenerated[0], []string{"c_2", "c_3"}) || !invoker.landed[0] {
@@ -361,13 +361,13 @@ func TestRegenerateHandsTheRestToAnotherInvocationWhenItIsOutOfTime(t *testing.T
 	// A hand-off that is refused fails the task, so Lambda retries it rather
 	// than leaving the rest with nobody.
 	invoker.err = errors.New("lambda: 429 TooManyRequestsException")
-	if err := h.pipeline.RegenerateNote(short, "user1", "note1", ids); err == nil {
+	if err := h.pipeline.RegenerateNote(short, "user1", "note1", ids, false); err == nil {
 		t.Fatal("RegenerateNote succeeded though the rest could not be handed on")
 	}
 	invoker.err = nil
 
 	// The invocation it was handed to has the time, and finishes the run.
-	if err := h.pipeline.RegenerateNote(ctx, "user1", "note1", invoker.regenerated[0]); err != nil {
+	if err := h.pipeline.RegenerateNote(ctx, "user1", "note1", invoker.regenerated[0], invoker.landed[0]); err != nil {
 		t.Fatalf("the continuation: %v", err)
 	}
 	for _, id := range ids {

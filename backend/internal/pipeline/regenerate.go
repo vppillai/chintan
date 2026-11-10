@@ -44,14 +44,11 @@ const TaskRegenerateNote = "regenerate-note"
 //
 // The return value is the worker protocol: nil means every recording reached
 // a verdict, an error means retry the task.
-func (p *Pipeline) RegenerateNote(ctx context.Context, tenantID, noteID string, captureIDs []string) error {
-	return p.regenerateNote(ctx, tenantID, noteID, captureIDs, false)
-}
-
-// regenerateNote is RegenerateNote for one link of a run. landed says an
-// earlier invocation of the same run already changed the body, so the
-// whole-note view is owed even if nothing lands in this one.
-func (p *Pipeline) regenerateNote(ctx context.Context, tenantID, noteID string, captureIDs []string, landed bool) error {
+//
+// landed says an earlier invocation of the same run already changed the body
+// (Invocation.Landed), so the whole-note view is owed even if nothing lands
+// in this one; it is false on the task as the API and the operator send it.
+func (p *Pipeline) RegenerateNote(ctx context.Context, tenantID, noteID string, captureIDs []string, landed bool) error {
 	ctx = obs.WithTenant(ctx, tenantID)
 	log := obs.Log(ctx).With(slog.String("note_id", noteID))
 
@@ -285,7 +282,7 @@ func (w *Worker) handleRegenerateNote(ctx context.Context, task Invocation) erro
 		}
 	}
 	ctx = obs.WithCorrelationID(ctx, id)
-	if err := w.pipeline.regenerateNote(ctx, task.TenantID, task.NoteID, task.CaptureIDs, task.Landed); err != nil {
+	if err := w.pipeline.RegenerateNote(ctx, task.TenantID, task.NoteID, task.CaptureIDs, task.Landed); err != nil {
 		obs.Log(ctx).Error("regenerate-note will be retried",
 			slog.String("note_id", task.NoteID),
 			slog.String("error", err.Error()))
