@@ -341,16 +341,19 @@ func (s *NotesService) GetNote(ctx context.Context, userID, noteID string) (mode
 	return s.store.GetNote(ctx, userID, noteID)
 }
 
-// NoteDetail is a note index plus markdown body for the editor, and the first
-// page of the note's captures.
+// NoteDetail is a note index plus markdown body for the editor, and the
+// note's captures.
 type NoteDetail struct {
 	model.NoteIndex
-	Body     string                              `json:"body"`
-	Captures repository.Page[model.CaptureIndex] `json:"-"`
+	Body     string               `json:"body"`
+	Captures []model.CaptureIndex `json:"-"`
 }
 
 // GetNoteDetail retrieves a note, its markdown body from object storage and
-// the first page of its captures.
+// its captures, newest first, up to MaxRecordingURLs — the bound the download
+// manifest and a regeneration read to. The note screen has no other source
+// for them and follows no cursor, so one default page silently hid every
+// recording past the fiftieth from play, delete, move and retranscribe.
 //
 // GET /v1/notes/{id} is the busiest route. It used to read the note, then the
 // body, then call ListCapturesForNote, which read the note a second time to
@@ -371,7 +374,9 @@ func (s *NotesService) GetNoteDetail(ctx context.Context, userID, noteID string)
 		defer close(bodyDone)
 		bodyBytes, bodyErr = s.objects.Get(ctx, note.S3MarkdownKey)
 	}()
-	captures, capturesErr := s.store.ListCapturesByNote(ctx, userID, noteID, repository.ListOptions{})
+	captures, capturesErr := repository.DrainPages(ctx, MaxRecordingURLs, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
+		return s.store.ListCapturesByNote(ctx, userID, noteID, opts)
+	})
 	<-bodyDone
 	if bodyErr != nil && !errors.Is(bodyErr, repository.ErrNotFound) {
 		return NoteDetail{}, fmt.Errorf("failed to load note body: %w", bodyErr)
