@@ -92,7 +92,6 @@ BUCKETS="$(stack_resources_of_type "$STACK" 'AWS::S3::Bucket')"
 TABLES="$(stack_resources_of_type "$STACK" 'AWS::DynamoDB::Table')"
 LOG_GROUPS="$(stack_resources_of_type "$STACK" 'AWS::Logs::LogGroup')"
 USER_POOLS="$(stack_resources_of_type "$STACK" 'AWS::Cognito::UserPool')"
-KMS_KEYS="$(stack_resources_of_type "$STACK" 'AWS::KMS::Key')"
 QUEUES="$(stack_resources_of_type "$STACK" 'AWS::SQS::Queue')"
 
 log ""
@@ -100,10 +99,9 @@ info "resources belonging to $STACK"
 for b in $BUCKETS; do dim "  s3 bucket     $b (Retain)"; done
 for t in $TABLES; do dim "  dynamodb      $t (Retain, DeletionProtectionEnabled)"; done
 for p in $USER_POOLS; do dim "  user pool     $p (Retain, DeletionProtection ACTIVE)"; done
-for k in $KMS_KEYS; do dim "  kms key       $k (Retain)"; done
 for q in $QUEUES; do dim "  dead-letter queue $q (deleted with the stack)"; done
 for g in $LOG_GROUPS; do dim "  log group     $g"; done
-[ -n "$BUCKETS$TABLES$LOG_GROUPS$USER_POOLS$KMS_KEYS$QUEUES" ] || dim "  (no resources found)"
+[ -n "$BUCKETS$TABLES$LOG_GROUPS$USER_POOLS$QUEUES" ] || dim "  (no resources found)"
 
 # Every one of these carries DeletionPolicy: Retain in infrastructure/template.yaml,
 # and correctly so — deleting the stack must not destroy the notes, or the user
@@ -151,14 +149,34 @@ confirm_destructive "DELETE ${STACK}" \
 #
 # protect_stack (scripts/lib/common.sh) turns this on for every stack the
 # scripts create; this script is the deliberate path past it, after the typed
-# confirmation above. It comes off FIRST, before a bucket is emptied or the
-# pool's deletion protection is dropped, so a principal without
+# confirmation above. It comes off FIRST, before the pool's deletion protection
+# is dropped or a bucket is emptied, so a principal without
 # cloudformation:UpdateTerminationProtection fails here with nothing destroyed
 # rather than after the irreversible steps.
 
 info "disabling termination protection on $STACK"
 aws_cli cloudformation update-termination-protection \
     --no-enable-termination-protection --stack-name "$STACK" >/dev/null
+
+# ---------------------------------------------------------------------------
+# Cognito deletion protection
+# ---------------------------------------------------------------------------
+#
+# DeletionProtection: ACTIVE is what stops an accidental `delete-user-pool` from
+# taking every enrolled identity with it. It comes off here, named in the log,
+# and BEFORE the bucket is emptied: Cognito can refuse the call, and a refusal
+# at this point has destroyed nothing. unprotect_user_pool (scripts/lib/
+# common.sh) says what the call has to restate and what it resets. A redeploy
+# does not put the protection back, because CloudFormation sees no change to
+# make: if the run stops before the stack is deleted, run this script again;
+# if it stops after, scripts/clean-instance-orphans.sh finishes the job.
+
+for pool in $USER_POOLS; do
+    if aws_cli cognito-idp describe-user-pool --user-pool-id "$pool" >/dev/null 2>&1; then
+        info "disabling deletion protection on user pool $pool"
+        unprotect_user_pool "$pool"
+    fi
+done
 
 # ---------------------------------------------------------------------------
 # Empty buckets before the stack delete
@@ -169,28 +187,6 @@ aws_cli cloudformation update-termination-protection \
 
 for bucket in $BUCKETS; do
     empty_s3_bucket "$bucket"
-done
-
-# ---------------------------------------------------------------------------
-# Cognito deletion protection
-# ---------------------------------------------------------------------------
-#
-# DeletionProtection: ACTIVE is what stops an accidental `delete-user-pool` from
-# taking every enrolled identity with it. Turning it off is therefore the point at
-# which this run stops being reversible, and it is done here — deliberately, named
-# in the log — rather than discovered as an API error later.
-
-for pool in $USER_POOLS; do
-    if aws_cli cognito-idp describe-user-pool --user-pool-id "$pool" >/dev/null 2>&1; then
-        info "disabling deletion protection on user pool $pool"
-        # update-user-pool resets any property not restated in the call. That is
-        # normally a trap; here the pool is deleted moments later, so the only
-        # exposure is a stack delete that fails in between. If that happens,
-        # redeploy the stack before doing anything else — CloudFormation will put
-        # the pool's configuration back.
-        aws_cli cognito-idp update-user-pool --user-pool-id "$pool" \
-            --deletion-protection INACTIVE >/dev/null
-    fi
 done
 
 # ---------------------------------------------------------------------------
@@ -210,8 +206,7 @@ for table in $TABLES; do
     if aws_cli dynamodb describe-table --table-name "$table" >/dev/null 2>&1; then
         # DeletionProtectionEnabled is on by design (template.yaml) and refuses
         # delete-table outright. Turned off here, named in the log, immediately
-        # before the delete it exists to prevent — the same shape as the user
-        # pool above. If the delete then fails, redeploying the stack does NOT
+        # before the delete it exists to prevent. If the delete then fails, redeploying the stack does NOT
         # put the protection back on a retained table; run
         #   aws dynamodb update-table --table-name <table> --deletion-protection-enabled
         # by hand.
@@ -234,24 +229,6 @@ for pool in $USER_POOLS; do
         aws_cli cognito-idp delete-user-pool --user-pool-id "$pool" >/dev/null
         ok "user pool $pool deleted"
     fi
-done
-
-# A CMK is SCHEDULED for deletion, never deleted: AWS gives no other option, and
-# the 30-day window is chosen rather than the 7-day minimum on purpose, so a
-# teardown that turns out to have been a mistake is still recoverable inside it.
-# The template declares no KMS key today; this handles one an older stack left.
-for key in $KMS_KEYS; do
-    state="$(aws_cli kms describe-key --key-id "$key" --query 'KeyMetadata.KeyState' --output text 2>/dev/null || echo NONE)"
-    case "$state" in
-        Enabled | Disabled)
-            info "scheduling deletion of KMS key $key (30-day window)"
-            aws_cli kms schedule-key-deletion --key-id "$key" --pending-window-in-days 30 >/dev/null
-            warn "to cancel within 30 days: aws kms cancel-key-deletion --key-id $key"
-            ;;
-        PendingDeletion) dim "  KMS key $key is already pending deletion" ;;
-        NONE) dim "  KMS key $key not found" ;;
-        *) dim "  KMS key $key is in state $state; leaving it alone" ;;
-    esac
 done
 
 for group in $LOG_GROUPS; do
