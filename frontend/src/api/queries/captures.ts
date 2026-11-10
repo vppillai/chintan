@@ -424,17 +424,26 @@ export interface CaptureBatchResult {
   failed: { captureId: string; error: unknown }[];
 }
 
+/**
+ * One at a time, in order. Every delete or move of a selection rewrites the
+ * same note's body, and the server takes those one at a time per note: sent
+ * together they queued there, and it refused the tail of a selection too
+ * large for its wait as busy. A failure is that recording's alone; the rest
+ * are still tried.
+ */
 async function settleEach(
   captureIds: readonly string[],
   run: (captureId: string) => Promise<unknown>,
 ): Promise<CaptureBatchResult> {
-  const outcomes = await Promise.allSettled(captureIds.map((id) => run(id)));
   const result: CaptureBatchResult = { done: [], failed: [] };
-  outcomes.forEach((outcome, index) => {
-    const captureId = captureIds[index] as string;
-    if (outcome.status === 'fulfilled') result.done.push(captureId);
-    else result.failed.push({ captureId, error: outcome.reason });
-  });
+  for (const captureId of captureIds) {
+    try {
+      await run(captureId);
+      result.done.push(captureId);
+    } catch (error) {
+      result.failed.push({ captureId, error });
+    }
+  }
   return result;
 }
 
