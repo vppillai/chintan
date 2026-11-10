@@ -5,16 +5,23 @@
 # commits), force-pushed, retargeted to main, then merged via merge-seq.sh.
 # Kinds: be|fe|infra (for the log; nothing is gated by kind any more).
 #
-# It reuses the implementer's worktree, asserts a new HEAD before pushing a
-# rebuilt upper, and retargets the uppers to main BEFORE the bottom merges,
-# because GitHub closes a pull request whose base branch is deleted.
+# The rebuild is merge-seq.sh's rebase_pr with the previous tip to drop, so it
+# reuses the implementer's worktree and STOPs, as that does, on a worktree
+# holding unpushed commits or a conflict resolve-known.py does not settle. The
+# uppers are retargeted to main BEFORE the bottom merges, because GitHub closes
+# a pull request whose base branch is deleted. It takes no flags and acts at
+# once: there is no dry run.
 #
 # Paths: CHINTAN_WT_ROOT and CHINTAN_REPO as in merge-seq.sh.
+case "${1:-}" in -h | --help)
+    awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+    exit 0
+    ;;
+esac
 set -u
-T=$(cd "$(dirname "$0")" && pwd)
-WT_ROOT=${CHINTAN_WT_ROOT:-$(cd "$T/../../.." && pwd)}
-MAIN=${CHINTAN_REPO:-$WT_ROOT/chintan}
-cd "$MAIN" || exit 2
+# T, WT_ROOT, MAIN and rebase_pr; it also cds into the main checkout.
+# shellcheck source-path=SCRIPTDIR source=merge-seq.sh
+. "$(dirname "$0")/merge-seq.sh"
 
 for spec in "$@"; do
     prs=${spec%%:*}
@@ -27,62 +34,28 @@ for spec in "$@"; do
         done
     fi
     for n in "${layers[@]}"; do
-        branch=$(gh pr view "$n" --json headRefName --jq .headRefName)
         tip=$(gh pr view "$n" --json headRefOid --jq .headRefOid)
         if [ -n "$prev_tip" ]; then
-            echo "=== rebuilding PR $n ($branch) onto main, dropping $prev_tip.."
+            echo "=== rebuilding PR $n onto main, dropping $prev_tip.."
             git -C "$MAIN" fetch -q origin
-            # Use the worktree that already has the branch checked out (an implementer's), else make one.
-            W=$(git -C "$MAIN" worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{w=$2} /^branch /{if($2==b)print w}' | head -1)
-            if [ -z "$W" ]; then
-                W=$WT_ROOT/wt-stack-$n
-                git -C "$MAIN" worktree add -q "$W" "$branch" 2>/dev/null || git -C "$MAIN" worktree add -q -B "$branch" "$W" "origin/$branch" || {
-                    echo "STOP: cannot make a worktree for $n"
-                    exit 2
-                }
-            fi
-            [ -d "$W" ] || {
-                echo "STOP: no worktree dir for $n"
-                exit 2
-            }
-            (
-                set -e
-                cd "$W" && git checkout -q "$branch" && git reset -q --hard "origin/$branch" && (
-                    git rebase --onto origin/main "$prev_tip" "$branch" >/dev/null 2>&1 || {
-                        while [ -d "$(git rev-parse --git-path rebase-merge)" ]; do
-                            python3 "$T/resolve-known.py" || {
-                                echo "STOP: manual conflict rebuilding $n"
-                                git status --short | grep -E "^(UU|AA)"
-                                exit 2
-                            }
-                            GIT_EDITOR=true git rebase --continue >/dev/null 2>&1 || true
-                        done
-                    }
-                )
-                # As in merge-seq.sh: a clean merge of docs/backlog.md still leaves the generated view stale.
-                python3 scripts/backlog-view.py >/dev/null
-                git diff --quiet -- docs/backlog-open.md ||
-                    git commit -q -m "Regenerate the open backlog view after the rebase" -- docs/backlog-open.md
-                [ "$(git rev-parse HEAD)" != "$tip" ] || {
-                    echo "STOP: rebuild of $n produced no new commit"
-                    exit 2
-                }
-                git push -q --force-with-lease origin "$branch" && echo "pushed rebuilt $n at $(git rev-parse --short HEAD)"
-            ) || {
+            rebase_pr "$n" "wt-stack-$n" "$prev_tip" || {
                 echo "STOP: rebuild failed for $n"
                 exit 2
             }
+            [ "$(gh pr view "$n" --json headRefOid --jq .headRefOid)" != "$tip" ] || {
+                echo "STOP: rebuild of $n produced no new commit"
+                exit 2
+            }
             gh pr edit "$n" --base main >/dev/null 2>&1 || true
-            sleep 90
+            sleep 60
         fi
         echo "=== merging PR $n ($kind)"
-        "$T/merge-seq.sh" "$n:wt-stack-$n:$kind" | grep -v "^remote" | grep -E "^===|merged|STOP|SEQUENCE|NEEDS|rebasing|pending" || true
+        "$T/merge-seq.sh" "$n:wt-stack-$n:$kind" | grep -v "^remote" | grep -E "^===|merged|STOP|SEQUENCE|NEEDS|WARN|kept|rebasing|pending" || true
         if ! gh pr view "$n" --json state --jq .state | grep -q MERGED; then
             echo "STOP: $n did not merge"
             exit 2
         fi
         prev_tip=$tip
-        [ -d "$WT_ROOT/wt-stack-$n" ] && git -C "$MAIN" worktree remove --force "$WT_ROOT/wt-stack-$n" 2>/dev/null
         git -C "$MAIN" worktree prune
     done
 done
