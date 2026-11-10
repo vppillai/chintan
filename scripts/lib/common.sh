@@ -430,14 +430,6 @@ list_chintan_stacks() {
         --output text | tr '\t' '\n' | grep -v '^$' || true
 }
 
-# list_chintan_stacks_with_status prints "<name>\t<status>" so a caller can say
-# WHICH abnormal state a stack is in rather than silently skipping it.
-list_chintan_stacks_with_status() {
-    aws_cli cloudformation list-stacks \
-        --query "StackSummaries[?StackStatus!='DELETE_COMPLETE' && starts_with(StackName, \`${CHINTAN_PREFIX}\`)].[StackName,StackStatus]" \
-        --output text | grep -v '^$' || true
-}
-
 # stack_resources_of_type prints the physical IDs of every resource of a given
 # type that BELONGS TO the named stack.
 #
@@ -480,8 +472,8 @@ assert_not_protected_bucket() {
 # ---------------------------------------------------------------------------
 #
 # Resources carrying DeletionPolicy: Retain survive a failed create and then
-# collide with the retry, because bucket names, table names, Cognito pool names
-# and KMS aliases are unique. Two scripts need to ask "is this still there?" —
+# collide with the retry, because bucket names, table names and Cognito pool
+# names are unique. Two scripts need to ask "is this still there?" —
 # deploy.sh, to report it, and clean-instance-orphans.sh, to delete it.
 #
 # They must be able to tell ABSENT from COULD-NOT-LOOK. The obvious spelling,
@@ -581,24 +573,18 @@ list_user_pools_by_prefix() {
     done
 }
 
-# probe_kms_alias returns the alias's TARGET KEY ID as the detail, not just the
-# alias name. The key id is the only handle on the CMK once the alias is gone,
-# and an alias delete that does not surface it leaves a key nobody can name —
-# which is exactly how this account came to hold three CMKs described "Chintan
-# dev Cognito refresh-token vault" behind one alias, billing indefinitely.
-probe_kms_alias() {
-    local alias_name="$1" out target
-    out="$(aws_cli kms list-aliases --output json 2>&1)" || {
-        probe_result unknown "kms alias ${alias_name}: ${out##*$'\n'}"
-        return 0
-    }
-    target="$(printf '%s' "$out" | jq -r --arg a "$alias_name" \
-        '.Aliases[] | select(.AliasName==$a) | .TargetKeyId // ""' | head -n 1)"
-    if [ -n "$target" ]; then
-        probe_result present "$target"
-    else
-        probe_result absent
-    fi
+# unprotect_user_pool turns a pool's deletion protection off, the step before
+# delete-user-pool. UpdateUserPool replaces the whole configuration rather than
+# patching it, so the verification attributes the template sets are restated:
+# without them Cognito rejects the call with "All attributes in
+# AttributesRequireVerificationBeforeUpdate must exist in
+# AutoVerifiedAttributes". Everything else falls back to Cognito's defaults,
+# which is why the only callers are about to delete the pool.
+unprotect_user_pool() {
+    aws_cli cognito-idp update-user-pool --user-pool-id "$1" \
+        --deletion-protection INACTIVE \
+        --auto-verified-attributes email \
+        --user-attribute-update-settings AttributesRequireVerificationBeforeUpdate=email >/dev/null
 }
 
 # ---------------------------------------------------------------------------

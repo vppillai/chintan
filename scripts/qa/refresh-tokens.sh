@@ -6,6 +6,11 @@
 #   TOKENS       the tokens file                                  (default: ~/review-tokens.json)
 #   STACK        the stack whose user-pool client issued them     (default: chintan-dev-prod)
 #   AWS_PROFILE  the profile that may read the stack's outputs    (default: chintan)
+case "${1:-}" in -h | --help)
+    awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+    exit 0
+    ;;
+esac
 set -euo pipefail
 export AWS_PROFILE=${AWS_PROFILE:-chintan} AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-west-2}
 TOKENS=${TOKENS:-$HOME/review-tokens.json}

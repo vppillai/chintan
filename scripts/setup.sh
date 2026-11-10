@@ -174,10 +174,9 @@ ok "artifact bucket: $BUCKET"
 # The workflows build the deploy role ARN from AWS_ACCOUNT_ID rather than storing
 # it. The build role and the CloudFormation service role are stored as plain
 # variables: neither is secret (the account id is already in the public
-# bundle's Cognito domain), and the workflows fall back sensibly when either is
-# unset — to the deploy role for the build jobs, to the caller's own permissions
-# for CloudFormation — which is what a repository whose bootstrap stack predates
-# them gets until this runs.
+# bundle's Cognito domain). The build jobs need BUILD_ROLE_ARN: the deploy role
+# does not trust the `build` environment. Without CFN_DEPLOY_ROLE_ARN
+# CloudFormation acts under the deploy role's own permissions.
 
 info "setting repository secrets and variables"
 gh secret set AWS_ACCOUNT_ID --repo "$REPO" --body "$ACCOUNT_ID"
@@ -273,9 +272,4 @@ done <<<"$PUSH_INSTANCES"
 
 log ""
 ok "setup complete"
-info "next:"
-dim "  1. store the provider keys:"
-dim "       aws ssm put-parameter --type SecureString --name /chintan/<instance>/groq_api_key --value ..."
-dim "       aws ssm put-parameter --type SecureString --name /chintan/<instance>/llm_api_key  --value ..."
-dim "  2. scripts/bootstrap.sh --instance <instance> --region $REGION --origin https://${OWNER}.github.io --apply"
-dim "  3. scripts/invite-user.sh --instance <instance> --email you@example.com --apply"
+info "next: scripts/doctor.sh --instance <instance> --region $REGION"

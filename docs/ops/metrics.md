@@ -103,7 +103,7 @@ Every metric is in the CloudWatch namespace `Chintan`, emitted as EMF records in
 | `CaptureEndToEnd` | `{Source}` | `pipeline/pipeline.go` | Upload to terminal status, ms; the owner, as the number the capture screen's wait is judged by. |
 | `ProviderLatency` | `{Provider,Op,Outcome}` | `breaker/breaker.go` | One provider call, ms; the owner, when sizing the stage deadlines (`pipeline-deadlines.md`). |
 
-To see a metric: CloudWatch → Metrics → `Chintan` in the console, or the EMF records in the Lambda log groups; the agent role cannot read metrics, so a review that needs numbers asks the owner.
+To see a metric: CloudWatch → Metrics → `Chintan` in the console, or the EMF records in the Lambda log groups. The agent role can read a metric it names (`aws cloudwatch get-metric-statistics --namespace Chintan --metric-name <name> …`) but cannot list them (`cloudwatch:ListMetrics` is not in `infrastructure/agent-policies/permissions.json`), so the names are the tables above.
 
 To read the records themselves — a capture's stage transitions, or the log lines around an alarm — tail the worker's log group for the stack, or query it (the API's is `/aws/lambda/chintan-api-<instance>-<environment>`):
 

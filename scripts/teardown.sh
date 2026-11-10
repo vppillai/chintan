@@ -122,7 +122,9 @@ export APPLY
 # Instance stacks
 # ---------------------------------------------------------------------------
 
-for stack in "${INSTANCE_STACKS[@]}"; do
+# ${a[@]+"${a[@]}"}: an empty array under `set -u` is an unbound variable
+# before bash 4.4 (macOS), and only the bootstrap stack may be left.
+for stack in ${INSTANCE_STACKS[@]+"${INSTANCE_STACKS[@]}"}; do
     parse_stack_name "$stack"
     log ""
     info "tearing down $stack"
@@ -206,78 +208,22 @@ done < <(aws_cli ssm get-parameters-by-path --path "/${SYSTEM_ID}/" --recursive 
     --query 'Parameters[].Name' --output text 2>/dev/null |
     tr '\t' '\n' | grep -v '^$' || true)
 
-# KMS keys and Cognito user pools are the two resources in template.yaml that
-# carry DeletionPolicy: Retain, so they are the two that ALWAYS survive a
-# teardown — and they were the two this report could not see.
-#
-# Nothing else can find them either. cleanup-aws.sh enumerates a LIVE stack's
-# resources, so it cannot see a key left behind by a stack that rolled back and
-# was then deleted; and a CMK has no name, only a UUID and an alias that the
-# rollback did not create. The result was a report reading "no orphaned
-# resources" over keys billing $1/month each, indefinitely. At the time of
-# writing this account holds six enabled CMKs all described "Chintan dev
-# Cognito refresh-token vault" and exactly two aliases.
-#
-# Keys are found by TAG rather than by name because there is no name to match
-# on. template.yaml tags every key Project=chintan, which is what makes this
-# possible at all.
-kms_orphans=()
-while IFS= read -r key_id; do
-    [ -n "$key_id" ] || continue
-    state="$(aws_cli kms describe-key --key-id "$key_id" \
-        --query 'KeyMetadata.KeyState' --output text 2>/dev/null || echo UNKNOWN)"
-    # A key already scheduled for deletion is on its way out and needs no
-    # action; reporting it invites a second, pointless attempt.
-    [ "$state" = "PendingDeletion" ] && continue
-    tags="$(aws_cli kms list-resource-tags --key-id "$key_id" \
-        --query 'Tags[?TagKey==`Project`].TagValue' --output text 2>/dev/null || echo '')"
-    [ "$tags" = "$SYSTEM_ID" ] || continue
-    alias_name="$(aws_cli kms list-aliases --key-id "$key_id" \
-        --query 'Aliases[0].AliasName' --output text 2>/dev/null || echo None)"
-    if [ "$alias_name" = "None" ] || [ -z "$alias_name" ]; then
-        report_orphan "kms key $key_id (no alias — a stack that rolled back left it)"
-    else
-        report_orphan "kms key $key_id ($alias_name)"
-    fi
-    kms_orphans+=("$key_id")
-done < <(aws_cli kms list-keys --query 'Keys[].KeyId' --output text 2>/dev/null |
-    tr '\t' '\n' | grep -v '^$' || true)
-
-pool_orphans=()
+# A user pool carries DeletionPolicy: Retain like the table and the bucket, and
+# has no name-prefixed ARN to list by, so it is found by its pool name.
 while IFS= read -r line; do
     [ -n "$line" ] || continue
-    pool_id="${line%%	*}"
-    pool_name="${line#*	}"
-    report_orphan "cognito user pool $pool_id ($pool_name)"
-    pool_orphans+=("$pool_id")
+    report_orphan "cognito user pool ${line%%	*} (${line#*	})"
 done < <(list_user_pools_by_prefix "$CHINTAN_PREFIX")
 
 if [ "$orphans" -eq 0 ]; then
     ok "no orphaned resources"
 else
     log ""
-    warn "$orphans orphaned resource(s) remain. Delete them deliberately, by name:"
-    dim "  aws s3 rb s3://<bucket> --force"
-    dim "  aws dynamodb update-table --table-name <table> --no-deletion-protection-enabled"
-    dim "  aws dynamodb delete-table --table-name <table>"
+    warn "$orphans orphaned resource(s) remain. Delete them deliberately:"
+    dim "  an instance's bucket, table and user pool (every enrolled credential):"
+    dim "    scripts/clean-instance-orphans.sh --instance <name> --environment <env> --apply"
+    dim "    (the bucket is versioned, so 'aws s3 rb --force' cannot empty it)"
     dim "  aws ssm delete-parameter --name <name>"
-    if [ "${#kms_orphans[@]}" -gt 0 ]; then
-        log ""
-        warn "each KMS key below bills about \$1/month for as long as it exists."
-        warn "scheduling deletion is reversible until the window expires:"
-        for key_id in "${kms_orphans[@]}"; do
-            dim "  aws kms schedule-key-deletion --key-id $key_id --pending-window-in-days 7"
-        done
-    fi
-    if [ "${#pool_orphans[@]}" -gt 0 ]; then
-        log ""
-        warn "a user pool is every enrolled credential. Deleting one is not recoverable"
-        warn "by redeploying, and deletion protection must come off first:"
-        for pool_id in "${pool_orphans[@]}"; do
-            dim "  aws cognito-idp update-user-pool --user-pool-id $pool_id --deletion-protection INACTIVE ..."
-            dim "  aws cognito-idp delete-user-pool --user-pool-id $pool_id"
-        done
-    fi
 fi
 
 log ""

@@ -42,7 +42,7 @@
 # Usage:
 #   scripts/list-instances.sh                        # every instance, as JSON
 #   scripts/list-instances.sh --environment staging  # only staging entries
-#   scripts/list-instances.sh --format text          # one "stack region" per line
+#   scripts/list-instances.sh --format text          # one "stack region site_path" per line
 #   scripts/list-instances.sh --app-host             # the one Pages custom domain, or nothing
 #   scripts/list-instances.sh --self-test            # prove the character check fails
 
@@ -323,8 +323,8 @@ for path in sorted(config_dir.glob("*.yaml")):
         "DailySpendCapMicros": doc.get("daily_spend_cap_micros"),
         "RefreshTokenValidityDays": doc.get("refresh_token_validity_days"),
         # CloudWatch bills alarms beyond ten alarm-months for the account, and
-        # this template declares thirteen per stack, so a second environment
-        # with alarms on crosses into the paid band. Absent means the template
+        # one stack's alarms (docs/ops/alarms.md) already pass that, so a
+        # second environment with alarms on is billed for every one. Absent means the template
         # default, true.
         "EnableAlarms": doc.get("enable_alarms"),
         # The custom API domain. Both template parameters default to '' and

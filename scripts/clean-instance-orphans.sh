@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 #
-# Delete the resources a failed instance create left behind.
+# Delete the resources a stack that is gone left behind: after a failed create,
+# or after a stack was deleted and its retained table, bucket and user pool
+# stand in the way of the rebuild (docs/ops/backup-restore.md, "Disaster
+# restore", which backs them up first).
 #
 # Resources in infrastructure/template.yaml carry DeletionPolicy: Retain so that
 # deleting a stack cannot destroy notes, audio, or the user pool the tenant ids
@@ -32,15 +35,14 @@
 # Production requires --i-understand-this-deletes-data in addition to --apply,
 # because there the retained resources are usually real.
 
-set -euo pipefail
-
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck source=lib/common.sh
-. "$REPO_ROOT/scripts/lib/common.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 INSTANCE=""
 ENVIRONMENT=""
 REGION="${AWS_REGION:-us-west-2}"
+# Set here, not inherited: an APPLY=1 left in the environment must not turn a
+# look into a delete.
 APPLY=0
 PROD_ACK=0
 
@@ -63,7 +65,7 @@ while [ $# -gt 0 ]; do
         --yes) export ASSUME_YES=1 ;;
         --i-understand-this-deletes-data) PROD_ACK=1 ;;
         -h | --help)
-            awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
+            usage_from_header "${BASH_SOURCE[0]}"
             exit 0
             ;;
         *) die "unknown flag '$1' (see --help)" ;;
@@ -73,22 +75,20 @@ done
 
 [ -n "$INSTANCE" ] || die "--instance is required"
 [ -n "$ENVIRONMENT" ] || die "--environment is required"
-case "$ENVIRONMENT" in
-    prod | staging | dev) ;;
-    *) die "--environment must be one of prod, staging, dev" ;;
-esac
 export AWS_REGION="$REGION"
+require_aws
 
-STACK="chintan-${INSTANCE}-${ENVIRONMENT}"
+# stack_name validates both names, so a mistyped instance cannot spell another
+# project's bucket.
+STACK="$(stack_name "$INSTANCE" "$ENVIRONMENT")"
 
 # Refuse to touch anything while the stack that owns it still exists. If the
 # stack is alive these are not orphans, they are its resources.
-if aws cloudformation describe-stacks --stack-name "$STACK" >/dev/null 2>&1; then
+if stack_exists "$STACK"; then
     die "$STACK still exists — these are its resources, not orphans. Delete the stack first."
 fi
 
-ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)" ||
-    die "could not resolve the account id"
+ACCOUNT_ID="$(aws_account_id)" || die "could not resolve the account id"
 
 BUCKET="chintan-content-${INSTANCE}-${ENVIRONMENT}-${ACCOUNT_ID}"
 TABLE="chintan-${INSTANCE}-${ENVIRONMENT}"
@@ -134,8 +134,8 @@ note_probe() {
 if [ "$(probe_state "$BUCKET_PROBE")" = present ]; then
     # Not silenced and not defaulted to 0: "(0 objects)" on a bucket whose
     # listing was denied invites deleting it as empty debris.
-    if n="$(aws s3 ls "s3://${BUCKET}" --recursive --summarize 2>&1 | awk '/Total Objects/ {print $3}')" && [ -n "$n" ]; then
-        warn "bucket   s3://${BUCKET} (${n} objects)"
+    if n="$(aws_cli s3 ls "s3://${BUCKET}" --recursive --summarize 2>&1 | awk '/Total Objects/ {print $3}')" && [ -n "$n" ]; then
+        warn "bucket   s3://${BUCKET} (${n} current objects; superseded versions are not counted)"
     else
         warn "bucket   s3://${BUCKET} (object count unavailable — listing denied or failed)"
     fi
@@ -171,35 +171,31 @@ fi
 confirm_destructive "delete the resources listed above for ${STACK}" || exit 2
 
 if [ "$(probe_state "$BUCKET_PROBE")" = present ]; then
-    info "emptying and removing s3://${BUCKET}"
-    aws s3 rb "s3://${BUCKET}" --force
+    # The bucket is versioned, so `aws s3 rb --force` — which deletes current
+    # objects only — turns every object into a delete marker and then fails
+    # with BucketNotEmpty. delete_s3_bucket removes every version and marker
+    # first, and refuses the CloudTrail bucket and one tagged Protected=true.
+    delete_s3_bucket "$BUCKET"
 fi
 
 if [ "$(probe_state "$TABLE_PROBE")" = present ]; then
     # Deletion protection is on by design and must come off first; the call is
     # a no-op on a table that never had it.
     info "disabling deletion protection on ${TABLE}"
-    aws dynamodb update-table --table-name "$TABLE" --no-deletion-protection-enabled >/dev/null
+    aws_cli dynamodb update-table --table-name "$TABLE" --no-deletion-protection-enabled >/dev/null
     info "deleting table ${TABLE}"
-    aws dynamodb delete-table --table-name "$TABLE" >/dev/null
+    aws_cli dynamodb delete-table --table-name "$TABLE" >/dev/null
     # delete-table returns immediately; the name stays taken until it is gone,
     # which is long enough for a following create to collide with it.
     info "waiting for ${TABLE} to disappear"
-    aws dynamodb wait table-not-exists --table-name "$TABLE"
+    aws_cli dynamodb wait table-not-exists --table-name "$TABLE"
 fi
 
 if [ -n "$POOL" ]; then
     info "deleting user pool ${POOL}"
-    # Deletion protection is on by design and must come off first. UpdateUserPool
-    # replaces the whole configuration rather than patching it, so the
-    # verification attributes have to be restated or the call is rejected with
-    # "All attributes in AttributesRequireVerificationBeforeUpdate must exist in
-    # AutoVerifiedAttributes".
-    aws cognito-idp update-user-pool --user-pool-id "$POOL" \
-        --deletion-protection INACTIVE \
-        --auto-verified-attributes email \
-        --user-attribute-update-settings AttributesRequireVerificationBeforeUpdate=email >/dev/null
-    aws cognito-idp delete-user-pool --user-pool-id "$POOL" >/dev/null
+    # Deletion protection is on by design and must come off first.
+    unprotect_user_pool "$POOL"
+    aws_cli cognito-idp delete-user-pool --user-pool-id "$POOL" >/dev/null
 fi
 
 ok "orphans cleared for ${STACK}"

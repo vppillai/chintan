@@ -4,8 +4,8 @@
 # squash-merged pull request with the one `CI passed` check green on a head at
 # main's current tip (strict: that run is the only test of the tree that
 # lands), with no force-push, no deletion, no required reviewers and no bypass
-# actors; and the `production` environment with its wait timer and branch
-# policy and no required reviewer.
+# actors. The `production` environment is scripts/setup.sh's, not this
+# script's: one owner, so a fork's `--reviewer` is not undone from here.
 #
 # Why no bypass actor: `gh pr merge --squash` by an admin satisfies the rules
 # when the check is green and is refused when it is not, which is the point.
@@ -13,17 +13,21 @@
 # not exempt admins the way legacy branch protection did.
 #
 #   scripts/dev/protect-main.sh          dry run (default): current state, then what would be sent
-#   scripts/dev/protect-main.sh --apply  create or update the ruleset, rewrite the environment
+#   scripts/dev/protect-main.sh --apply  create or update the ruleset
 #
 # Idempotent — run it after every edit to this file. `gh` must be logged in as
 # a repository admin (rulesets are an admin API). The repository is the
 # checkout's origin unless CHINTAN_GH_REPO (owner/name) says otherwise.
+case "${1:-}" in -h | --help)
+    awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+    exit 0
+    ;;
+esac
 set -euo pipefail
 
 cd "$(dirname "$0")/../.." || exit 1
 REPO=${CHINTAN_GH_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}
 RULESET_NAME=main
-ENV_NAME=production
 REQUIRED_CHECK="CI passed"
 GITHUB_ACTIONS_APP_ID=15368 # the GitHub Actions app: only its check counts
 
@@ -55,18 +59,6 @@ ruleset_body() {
         ]}'
 }
 
-# The environment PUT is declarative: what it does not name is removed. The
-# wait timer and the branch policy are carried over from the current state so
-# only the reviewers change.
-environment_body() {
-    jq '{
-        wait_timer: ([.protection_rules[]? | select(.type == "wait_timer") | .wait_timer] | first // 0),
-        prevent_self_review: false,
-        reviewers: [],
-        deployment_branch_policy: (.deployment_branch_policy // {protected_branches: true, custom_branch_policies: false})
-    }'
-}
-
 echo "== repository: $REPO"
 if [ "$(gh api "repos/$REPO" --jq .permissions.admin)" != "true" ]; then
     echo "run this with the repo admin's gh (the active account is not an admin of $REPO)" >&2
@@ -81,15 +73,8 @@ if [ -n "$ruleset_id" ]; then
     gh api "repos/$REPO/rulesets/$ruleset_id" | jq '{name, enforcement, conditions, bypass_actors, rules}'
 fi
 
-echo "== environment $ENV_NAME (before)"
-env_before="$(gh api "repos/$REPO/environments/$ENV_NAME")"
-echo "$env_before" | jq '{id, name, protection_rules: [.protection_rules[]? | {type, wait_timer, reviewers: [.reviewers[]? | .reviewer.login]}], deployment_branch_policy}'
-
 echo "== ruleset payload"
 ruleset_body | jq .
-echo "== environment payload"
-echo "$env_before" | environment_body | jq .
-
 if [ "$APPLY" -ne 1 ]; then
     echo "== dry run: nothing changed. Re-run with --apply."
     exit 0
@@ -102,16 +87,6 @@ else
     echo "== creating ruleset \"$RULESET_NAME\""
     ruleset_id="$(ruleset_body | gh api --method POST "repos/$REPO/rulesets" --input - --jq .id)"
 fi
-echo "== rewriting environment $ENV_NAME"
-echo "$env_before" | environment_body | gh api --method PUT "repos/$REPO/environments/$ENV_NAME" --input - >/dev/null
-
 echo "== ruleset #$ruleset_id (after)"
 gh api "repos/$REPO/rulesets/$ruleset_id" | jq '{name, enforcement, conditions, bypass_actors, rules}'
-echo "== environment $ENV_NAME (after)"
-env_after="$(gh api "repos/$REPO/environments/$ENV_NAME")"
-echo "$env_after" | jq '{id, name, protection_rules: [.protection_rules[]? | {type, wait_timer, reviewers: [.reviewers[]? | .reviewer.login]}], deployment_branch_policy}'
-if echo "$env_after" | jq -e '[.protection_rules[]? | select(.type == "required_reviewers")] | length > 0' >/dev/null; then
-    echo "WARNING: $ENV_NAME still lists a required reviewer; remove it in Settings → Environments → $ENV_NAME, then re-run this script to confirm." >&2
-    exit 1
-fi
-echo "== done: main requires a pull request and \"$REQUIRED_CHECK\"; $ENV_NAME has no reviewer"
+echo "== done: main requires a pull request and \"$REQUIRED_CHECK\""

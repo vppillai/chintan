@@ -13,7 +13,8 @@ A personal voice-notes PWA (Go on Lambda, DynamoDB, S3; React/Vite PWA on Pages)
 - Go: `cd backend && export PATH=/usr/local/go/bin:$HOME/go/bin:$PATH GOTOOLCHAIN=auto && gofmt -l . && go vet ./... && go test -race ./... && golangci-lint run --timeout=5m ./...` — gofmt must print nothing.
 - Frontend: `cd frontend && export PATH=$HOME/temp/node/bin:$HOME/.bun/bin:$PATH && bun install --frozen-lockfile && bun run typecheck && bun run lint && node node_modules/vitest/vitest.mjs run && bun run build && bun run check-bundle`.
 - Playwright, for the specs you touch: `CI=1 bunx playwright test --project=chromium <spec>`. `CI=1` is required: without it Playwright attaches to another stream's preview server. WebKit does not launch on the VM; CI covers it.
-- Infra and scripts: `cfn-lint infrastructure/*.yaml`; `shellcheck --severity=warning` and `shfmt -d -i 4 -ci` on every script; `actionlint` on the workflows.
+- Infra and scripts: `cfn-lint infrastructure/*.yaml`; `shellcheck --severity=warning` and `shfmt -d -i 4 -ci` on every script; `actionlint` on the workflows; `python3 scripts/check-docs-current.py` on the documents.
+- CI adds what the lines above do not run: `go run golang.org/x/tools/cmd/deadcode@v0.38.0 ./...` (a Go function no binary reaches fails), `govulncheck` and `bun audit --audit-level=high`. `ci.yaml` is the whole list.
 - Wire changes: update `docs/api/openapi.yaml`, add a conformance scenario, then `CHINTAN_UPDATE_FIXTURES=1 go test ./internal/handler/ -run Contract` and the frontend typecheck; copy the generated fixtures back, never hand-edit them. Re-run after any merge from main.
 
 ## The merge rule

@@ -9,7 +9,7 @@
 #
 # What it checks, in the order the deploy needs them:
 #
-#   tools       aws (v2), gh, jq, curl, zip, python3 with PyYAML; go and bun are
+#   tools       aws (v2), gh, jq, curl, zip, openssl, python3 with PyYAML; go and bun are
 #               reported but only needed for a local build or scripts/bootstrap.sh
 #   aws         credentials resolve (sts get-caller-identity), and who you are
 #   gh          gh is authenticated and the repository resolves
@@ -127,7 +127,7 @@ else
     suggest "install the AWS CLI v2: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
 fi
 
-for tool in gh jq curl zip; do
+for tool in gh jq curl zip openssl; do
     if command -v "$tool" >/dev/null 2>&1; then
         record "$tool" ok "$(command -v "$tool")"
     else
@@ -163,7 +163,7 @@ else
     dim "  -- go: not installed; needed only for a local build, the tests and scripts/bootstrap.sh (go.mod wants $go_mod_version)"
 fi
 
-bun_pinned="$(sed -n 's/.*bun-version: *\([0-9.]*\).*/\1/p' "$REPO_ROOT/.github/workflows/deploy-frontend.yaml" | head -n 1)"
+bun_pinned="$(cat "$REPO_ROOT/.bun-version")"
 if command -v bun >/dev/null 2>&1; then
     record "bun" ok "bun $(bun --version 2>/dev/null) (CI pins $bun_pinned)"
 else
@@ -345,7 +345,7 @@ if [ "$HAVE_AWS" = 1 ]; then
             else
                 record "stack $stack" missing "not deployed in $stack_region"
                 if [ "$stack" = "$prod_stack" ]; then
-                    suggest "gh workflow run deploy-backend.yaml   (staging, smoke test, then production after your approval; or scripts/bootstrap.sh --instance $INSTANCE --region $REGION --origin https://<owner>.github.io --apply from this machine)"
+                    suggest "gh workflow run deploy-backend.yaml   (staging, smoke test, then production; or scripts/bootstrap.sh --instance $INSTANCE --region $REGION --origin https://<owner>.github.io --apply from this machine)"
                 fi
             fi
         done < <("$REPO_ROOT/scripts/list-instances.sh" --format text 2>/dev/null)
