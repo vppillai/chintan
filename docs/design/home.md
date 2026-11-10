@@ -104,8 +104,14 @@ swipe tray, the ⋮ menu and the note's own header menu — and each is one `PAT
 cached list at once (the row moves into or out of the group, ranked after the
 last pin) and the note detail, puts them back if the server refuses, and
 refetches `['notes']` either way so what is shown is what was stored. A pin
-writes the server's answer back into the cache, so an Unpin before the refetch
-carries the new `version`. An archived note offers no pin.
+writes the server's answer back into the cached rows, so an Unpin before the
+refetch carries the new `version` — and into the cached note only when that
+copy is at the version the request was sent on (`stampDetail`). The PATCH
+carries no body and its answer is a row, so a cached note that is behind the
+row (a recording filed since it was last open) keeps its old body at its own
+old version and is read again: stamped with the new version, the editor
+opened on the old body as current and the next keystroke was accepted over
+the recording's paragraph. An archived note offers no pin.
 
 Reorder is a drag and one request. Where the pointer is fine each row wears a
 grip at its left: a mouse drags it, and the arrow keys on a focused grip move
@@ -162,7 +168,8 @@ says "Colour: Rose"; Done or Escape closes. It is one `PATCH {version,
 color}` (`useColorNote`), shown before the server answers and put back if
 refused; the requests of one note share a mutation scope and each reads
 the version the last one left, so arrowing through the swatches is a run of
-saves, not of conflicts. Like Pin it is online only from the row and is
+saves, not of conflicts; the cached note takes the new version by Pin's
+rule. Like Pin it is online only from the row and is
 not an edit: `updated_at` stays, so the note keeps its day. The note's own
 Details has the same picker and carries a colour through the offline queue
 (note-screen.md).

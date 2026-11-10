@@ -955,3 +955,24 @@ test.describe('the screen locks while recording', () => {
     await expect(page.getByText(/Filed into|Filing your recording|Uploading/).first()).toBeVisible();
   });
 });
+
+/**
+ * The review player is a chunk of its own. On a page the worker does not
+ * control yet, offline or after a deploy, it cannot be fetched — and Stop
+ * used to end on the route's error screen, with no Send and no Discard.
+ */
+test.describe('Stop with the review player unreachable', () => {
+  test.use({ serviceWorkers: 'block' });
+  test('still offers Send and Discard, without the player', async ({ page }) => {
+    await page.goto('/');
+    await page.route(/ReviewPlayer-.*\.js/, (route) => route.abort());
+    await page.getByRole('button', { name: 'Record', exact: true }).click();
+    await expect(page.locator('.capture__state')).toHaveText('Recording');
+    await expect(page.locator('.capture__timer')).not.toHaveText('00:00');
+    await page.getByRole('button', { name: 'Stop' }).click();
+
+    await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Discard' })).toBeVisible();
+    await expect(page.getByText('This screen could not be drawn')).toHaveCount(0);
+  });
+});

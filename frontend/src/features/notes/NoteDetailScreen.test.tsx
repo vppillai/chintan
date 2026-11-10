@@ -17,6 +17,8 @@ import { settings } from '@/api/__fixtures__/responses.ts';
 import { routes } from '@/app/router.tsx';
 import { INITIAL_CAPTURE } from '@/features/capture/machine.ts';
 import { useCaptureStore } from '@/features/capture/store.ts';
+import { count as queuedCount, enqueueReplacing } from '@/offline/queue.ts';
+import { queuedEditId } from '@/offline/queuedEdits.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { LOADING_PATIENCE_MS, NOTE_RETRY_GIVE_UP_MS, noteRetryInterval } from './NoteDetailScreen.tsx';
@@ -1227,6 +1229,14 @@ describe('deleting from the note screen', () => {
     ]);
     const { router } = mount(api.fetchImpl, '/notes/roof-repair');
     await loaded();
+    // An edit to it the device still holds, retired: the flush never sends
+    // one, so only the purge can take it out of sign-out's "unsent" count.
+    await enqueueReplacing({
+      id: queuedEditId('roof-repair'),
+      kind: 'updateNote',
+      payload: { noteId: 'roof-repair', body: { version: 1, body: 'Refused.' }, refused: true },
+      retired: true,
+    });
 
     await user.click(screen.getByRole('button', { name: 'Note actions' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete forever' }));
@@ -1242,6 +1252,9 @@ describe('deleting from the note screen', () => {
     });
     expect(api.calls).not.toContain('DELETE /v1/notes/roof-repair');
     expect(api.notes.has('roof-repair')).toBe(false);
+    await waitFor(async () => {
+      expect(await queuedCount()).toBe(0);
+    });
     // Back to the archive, which is where this note was.
     await waitFor(() => {
       expect(router.state.location.search).toBe('?view=archived');
@@ -1699,5 +1712,35 @@ describe('a conflict takes the foot of the screen', () => {
       expect(screen.queryByText(/changed elsewhere/i)).toBeNull();
     });
     expect(screen.getByRole('combobox', { name: 'Transcription language' })).toBeInTheDocument();
+  });
+});
+
+describe('one screen per note (review round 19, FE-2)', () => {
+  /*
+   * "Open <title>" after a move pushes one note over another on the same
+   * route. One instance served both, so the first note's pending edit was
+   * dropped by the editor's reset — no request, the text gone.
+   */
+  it('saves what was typed in one note when the route walks to another inside the debounce', async () => {
+    const user = userEvent.setup();
+    const api = server([ROOF, { ...ROOF, id: 'garden', title: 'Garden', body: 'Garden body', version: 5 }]);
+    const { router } = mount(api.fetchImpl, '/notes/roof-repair');
+    const body = await screen.findByRole('textbox', { name: 'Note body' });
+    await waitFor(() => {
+      expect(body).toHaveValue('v1 body');
+    });
+    await user.type(body, ' and more');
+
+    // No blur: the route changes under the field, as "Open <title>" does.
+    await act(() => router.navigate('/notes/garden'));
+
+    await waitFor(() => {
+      expect(api.notes.get('roof-repair')?.body).toBe('v1 body and more');
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Note body' })).toHaveValue('Garden body');
+    });
+    expect(api.patches.map((patch) => patch.status)).toEqual([200]);
+    expect(api.notes.get('garden')).toMatchObject({ body: 'Garden body', version: 5 });
   });
 });

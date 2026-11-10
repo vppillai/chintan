@@ -91,33 +91,3 @@ func TestListUnindexedCapturesFollowsEveryPage(t *testing.T) {
 		t.Fatalf("unindexed = %d rows, want both legacy rows across the pages", len(unindexed))
 	}
 }
-
-func TestNoteExistsAnswersWithoutReadingTheNote(t *testing.T) {
-	store, api := newTestStore(t)
-	ctx := context.Background()
-	if _, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{ID: "n1", Title: "Roof"}); err != nil {
-		t.Fatalf("PutNote: %v", err)
-	}
-
-	cases := []struct {
-		tenant, note string
-		want         bool
-	}{
-		{"tenant-a", "n1", true},
-		{"tenant-a", "n2", false},
-		// The row is another tenant's; it does not exist for this one.
-		{"tenant-b", "n1", false},
-	}
-	for _, tc := range cases {
-		got, err := store.NoteExists(ctx, tc.tenant, tc.note)
-		if err != nil {
-			t.Fatalf("NoteExists(%s, %s): %v", tc.tenant, tc.note, err)
-		}
-		if got != tc.want {
-			t.Errorf("NoteExists(%s, %s) = %v, want %v", tc.tenant, tc.note, got, tc.want)
-		}
-	}
-	if api.Gets != len(cases) {
-		t.Errorf("gets = %d, want one GetItem per question", api.Gets)
-	}
-}

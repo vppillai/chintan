@@ -18,12 +18,6 @@ const ArchiveRetention = 30 * 24 * time.Hour
 // failure.
 var ErrPurgeIncomplete = errors.New("note purge incomplete")
 
-// DeleteNote archives a note (soft delete)
-func (s *NotesService) DeleteNote(ctx context.Context, userID, noteID string) error {
-	_, err := s.ArchiveNote(ctx, userID, noteID)
-	return err
-}
-
 // ArchiveNote archives a note (soft delete with retention period)
 func (s *NotesService) ArchiveNote(ctx context.Context, userID, noteID string) (model.NoteIndex, error) {
 	note, err := s.store.GetNote(ctx, userID, noteID)

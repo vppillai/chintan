@@ -28,8 +28,9 @@ then seven cards, in the order `SettingsScreen.test.tsx` holds them to:
 | About & support | `Usage this month` carrying the month's figure (`formatDollars`) and opening `/usage`; `About <app>`; `Source on GitHub`; and the Version row (`VersionFootnote`). |
 
 Every control saves itself the moment it changes — Recording downloads to
-the device, everything else to the server: a server change is a whole
-`PUT /v1/settings` (`useSaveSettings`) built on the stored record, so
+the device, everything else to the server: a server change is a
+`PUT /v1/settings` (`useSaveSettings`) built on the stored record — the
+server changes the fields the body names and keeps the rest — so
 nothing is saved before that record has loaded, and what renders after the
 PUT is what the server stored, not what the device sent — the server rounds
 a retention number down to a tier, and the screen shows the rounded value.

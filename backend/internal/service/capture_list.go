@@ -2,10 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/base64"
-	"fmt"
-	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/vppillai/chintan/backend/internal/model"
@@ -59,24 +55,6 @@ func (f CaptureFilter) keep(c model.CaptureIndex) bool {
 	}
 }
 
-// TenantCaptureLister is the store capability GET /v1/captures wants: one
-// query over the tenant's whole capture partition.
-//
-// It is an optional interface rather than a method on repository.Store because
-// the store is owned elsewhere and does not offer it yet. A store that
-// implements it is used directly; a store that does not falls back to
-// listCapturesByWalk below, which is correct but pays a query per note.
-//
-// This is the one piece of the API surface still waiting on the repository. The
-// method that closes it is a Query on pk = USER#<tenant> with sk prefix
-// CAPTURE#, which is the same shape as ListNotes.
-type TenantCaptureLister interface {
-	ListCaptures(ctx context.Context, tenantID string, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error)
-}
-
-// maxCaptureWalkNotes bounds the fallback walk.
-const maxCaptureWalkNotes = 500
-
 // maxCaptureFilterRounds bounds how many store queries one filtered page may
 // cost. Without it, a filter that matches almost nothing turns one request into
 // a scan of the whole partition.
@@ -104,11 +82,6 @@ const maxCaptureFilterRounds = 10
 // other stopped statuses are kept without a lookup; needs_target, failed and
 // no_content have no note by definition.
 func (s *CaptureService) ListCaptures(ctx context.Context, userID string, filter CaptureFilter, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
-	lister, ok := s.store.(TenantCaptureLister)
-	if !ok {
-		return s.listCapturesByWalk(ctx, userID, filter, opts)
-	}
-
 	limit := int(opts.Limit)
 	if limit <= 0 {
 		limit = int(repository.DefaultListLimit)
@@ -120,7 +93,7 @@ func (s *CaptureService) ListCaptures(ctx context.Context, userID string, filter
 	cursor := opts.Cursor
 	notes := s.noteExistence(userID)
 	for round := 0; round < maxCaptureFilterRounds && len(kept) < limit; round++ {
-		page, err := lister.ListCaptures(ctx, userID, repository.ListOptions{
+		page, err := s.store.ListCaptures(ctx, userID, repository.ListOptions{
 			Limit:  int32(limit - len(kept)),
 			Cursor: cursor,
 		})
@@ -200,115 +173,4 @@ func (n *noteExistence) filedIntoLiveNote(c model.CaptureIndex) bool {
 // ListUnroutedCaptures returns captures that have no destination note yet.
 func (s *CaptureService) ListUnroutedCaptures(ctx context.Context, userID string, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
 	return s.store.ListCapturesByNote(ctx, userID, "", opts)
-}
-
-// listCapturesByWalk builds the list from the note index plus the unrouted
-// captures, then pages it in memory.
-//
-// It is bounded and it is honest about being a fallback: the cursor it issues
-// is its own offset token, not the store's, so it is only valid against this
-// same walk.
-func (s *CaptureService) listCapturesByWalk(ctx context.Context, userID string, filter CaptureFilter, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
-	offset, err := decodeWalkCursor(opts.Cursor)
-	if err != nil {
-		return repository.Page[model.CaptureIndex]{}, err
-	}
-
-	notes, _, err := s.store.DrainNotes(ctx, userID, repository.DrainOptions{MaxItems: maxCaptureWalkNotes})
-	if err != nil {
-		return repository.Page[model.CaptureIndex]{}, err
-	}
-	archived, _, err := s.store.DrainNotes(ctx, userID, repository.DrainOptions{Shelf: repository.NoteShelfArchived, MaxItems: maxCaptureWalkNotes})
-	if err != nil {
-		return repository.Page[model.CaptureIndex]{}, err
-	}
-	notes = append(notes, archived...)
-
-	seen := map[string]struct{}{}
-	all := make([]model.CaptureIndex, 0, len(notes))
-
-	add := func(captures []model.CaptureIndex) {
-		for _, c := range captures {
-			if _, dup := seen[c.ID]; dup {
-				continue
-			}
-			seen[c.ID] = struct{}{}
-			if filter.keep(c) {
-				all = append(all, c)
-			}
-		}
-	}
-
-	unrouted, err := repository.DrainPages(ctx, maxCaptureWalkNotes, func(ctx context.Context, o repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
-		return s.store.ListCapturesByNote(ctx, userID, "", o)
-	})
-	if err != nil {
-		return repository.Page[model.CaptureIndex]{}, err
-	}
-	add(unrouted)
-
-	for _, note := range notes {
-		captures, err := repository.DrainPages(ctx, maxCaptureWalkNotes, func(ctx context.Context, o repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
-			return s.store.ListCapturesByNote(ctx, userID, note.ID, o)
-		})
-		if err != nil {
-			return repository.Page[model.CaptureIndex]{}, err
-		}
-		add(captures)
-	}
-
-	// CreatedAt is written with a fixed-width fraction, so a string comparison is
-	// a valid reverse-chronological ordering. The id breaks ties.
-	sort.Slice(all, func(i, j int) bool {
-		if all[i].CreatedAt != all[j].CreatedAt {
-			return all[i].CreatedAt > all[j].CreatedAt
-		}
-		return all[i].ID > all[j].ID
-	})
-
-	limit := int(opts.Limit)
-	if limit <= 0 {
-		limit = int(repository.DefaultListLimit)
-	}
-	if limit > int(repository.MaxListLimit) {
-		limit = int(repository.MaxListLimit)
-	}
-
-	if offset > len(all) {
-		offset = len(all)
-	}
-	end := offset + limit
-	if end > len(all) {
-		end = len(all)
-	}
-	page := repository.Page[model.CaptureIndex]{Items: all[offset:end]}
-	if end < len(all) {
-		page.Cursor = encodeWalkCursor(end)
-	}
-	return page, nil
-}
-
-const walkCursorPrefix = "walk:"
-
-func encodeWalkCursor(offset int) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(walkCursorPrefix + strconv.Itoa(offset)))
-}
-
-func decodeWalkCursor(cursor string) (int, error) {
-	if cursor == "" {
-		return 0, nil
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(cursor)
-	if err != nil {
-		return 0, fmt.Errorf("%w: malformed cursor", ErrInvalidCursor)
-	}
-	text, ok := strings.CutPrefix(string(raw), walkCursorPrefix)
-	if !ok {
-		return 0, fmt.Errorf("%w: cursor is not for this query", ErrInvalidCursor)
-	}
-	offset, err := strconv.Atoi(text)
-	if err != nil || offset < 0 {
-		return 0, fmt.Errorf("%w: malformed cursor", ErrInvalidCursor)
-	}
-	return offset, nil
 }

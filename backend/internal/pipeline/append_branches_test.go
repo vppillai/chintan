@@ -12,6 +12,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
+	"github.com/vppillai/chintan/backend/internal/service"
 )
 
 // stampFaults is the store with StampNoteAppend answering from a script:
@@ -85,13 +86,13 @@ func TestAppendExactlyOnceBranches(t *testing.T) {
 		},
 		{
 			name:     "a stamp that loses the version race re-reads and stamps",
-			stamp:    &stampFaults{conflicts: maxIndexRefreshAttempts - 1},
-			wantBody: appendedText, wantToken: ownToken, wantStampCalls: maxIndexRefreshAttempts,
+			stamp:    &stampFaults{conflicts: service.MaxIndexRefreshAttempts - 1},
+			wantBody: appendedText, wantToken: ownToken, wantStampCalls: service.MaxIndexRefreshAttempts,
 		},
 		{
 			name:    "a stamp that loses every race gives up and releases the claim",
 			stamp:   &stampFaults{conflicts: 1 << 30},
-			wantErr: true, wantStampCalls: maxIndexRefreshAttempts,
+			wantErr: true, wantStampCalls: service.MaxIndexRefreshAttempts,
 		},
 	}
 	for _, tc := range cases {

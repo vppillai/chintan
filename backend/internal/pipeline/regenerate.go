@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
@@ -43,7 +44,11 @@ const TaskRegenerateNote = "regenerate-note"
 //
 // The return value is the worker protocol: nil means every recording reached
 // a verdict, an error means retry the task.
-func (p *Pipeline) RegenerateNote(ctx context.Context, tenantID, noteID string, captureIDs []string) error {
+//
+// landed says an earlier invocation of the same run already changed the body
+// (Invocation.Landed), so the whole-note view is owed even if nothing lands
+// in this one; it is false on the task as the API and the operator send it.
+func (p *Pipeline) RegenerateNote(ctx context.Context, tenantID, noteID string, captureIDs []string, landed bool) error {
 	ctx = obs.WithTenant(ctx, tenantID)
 	log := obs.Log(ctx).With(slog.String("note_id", noteID))
 
@@ -89,7 +94,21 @@ func (p *Pipeline) RegenerateNote(ctx context.Context, tenantID, noteID string, 
 	}
 
 	done := 0
-	for _, id := range captureIDs {
+	for i, id := range captureIDs {
+		// Never before the first recording: a link that hands off without
+		// having tried one makes no progress, and a timeout shorter than the
+		// budget would chain such links for good.
+		if deadline, ok := ctx.Deadline(); i > 0 && ok && time.Until(deadline) < regenerateBudget && p.cfg.CleanInvoker != nil {
+			// A recording started now could be killed with the invocation.
+			// The rest goes to a fresh one, which skips whatever has landed.
+			if err := p.handOffRegeneration(ctx, tenantID, noteID, captureIDs[i:], landed || done > 0); err != nil {
+				return err
+			}
+			log.Info("regenerate-note: out of time; the rest was handed to another invocation",
+				slog.Int("regenerated", done),
+				slog.Int("remaining", len(captureIDs)-i))
+			return nil
+		}
 		capture, err := p.cfg.Store.GetCapture(ctx, tenantID, id)
 		if errors.Is(err, repository.ErrNotFound) {
 			continue
@@ -123,13 +142,52 @@ func (p *Pipeline) RegenerateNote(ctx context.Context, tenantID, noteID string, 
 	if err != nil {
 		return fmt.Errorf("pipeline: regenerate-note: re-read note: %w", err)
 	}
-	if done > 0 && current.CleanedBody != "" {
+	cleanView := (done > 0 || landed) && current.CleanedBody != ""
+	if cleanView {
 		p.cleanNoteAfter(ctx, tenantID, current, "regenerate")
 	}
 	log.Info("regenerate-note: finished",
 		slog.Int("captures", len(captureIDs)),
 		slog.Int("regenerated", done),
-		slog.Bool("cleaned_view", done > 0 && current.CleanedBody != ""))
+		slog.Bool("cleaned_view", cleanView))
+	return nil
+}
+
+// regenerateBudget is how much of the invocation RegenerateNote wants left
+// before it starts another recording. One recording is a cleanup call, bounded
+// at two minutes, and an append; the rest of the margin keeps the hand-off
+// inside service.CaptureStuckAfter of the rows' last touch, so the reaper does
+// not take a recording that is only waiting its turn.
+const regenerateBudget = 6 * time.Minute
+
+// handOffRegeneration queues the task again for rest, the recordings this
+// invocation has no time left for. Without it a long note ran into the
+// worker's timeout, Lambda's two retries carried on from where each was
+// killed, and whatever three invocations could not finish dead-lettered and
+// paged.
+//
+// Each waiting row's progress time is moved to now first, best effort. They
+// were reset when the request was accepted, and one that waits out the stuck
+// threshold is run by the reaper down a capture's ordinary path, which is not
+// this one: it lands checklist items the person removed, queues the cleaned
+// view once per recording and may transcribe again.
+func (p *Pipeline) handOffRegeneration(ctx context.Context, tenantID, noteID string, rest []string, landed bool) error {
+	touched := model.FormatTime(p.now())
+	for _, id := range rest {
+		c, err := p.cfg.Store.GetCapture(ctx, tenantID, id)
+		if err != nil || c.NoteID != noteID || !regenerationInFlight(c.Status) {
+			continue
+		}
+		c.LastProgressAt = touched
+		if _, err := p.cfg.Store.PutCapture(ctx, c); err != nil {
+			obs.Log(ctx).Warn("regenerate-note: could not refresh a waiting recording's progress time",
+				slog.String("capture_id", id),
+				slog.String("error", err.Error()))
+		}
+	}
+	if err := p.cfg.CleanInvoker.InvokeRegenerateRest(ctx, tenantID, noteID, rest, landed); err != nil {
+		return fmt.Errorf("pipeline: regenerate-note: hand the rest to another invocation: %w", err)
+	}
 	return nil
 }
 
@@ -173,6 +231,11 @@ func (p *Pipeline) dropReplacedItems(ctx context.Context, tenantID string, captu
 	if capture.Status != model.StatusNoContent || len(previous) == 0 {
 		return nil
 	}
+	// Stamped like the append this stands in for, and cleared by the refresh,
+	// so an editor save cannot land between the two and write the items back.
+	if err := p.stampNoteAppend(ctx, tenantID, note.ID, capture.ID); err != nil {
+		return fmt.Errorf("pipeline: stamp note for the removal: %w", err)
+	}
 	written, err := service.RewriteNoteBody(ctx, p.cfg.Objects, note.S3MarkdownKey, func(existing string) (string, bool) {
 		if !service.HasCaptureMarker(existing, capture.ID) {
 			return existing, false
@@ -180,17 +243,23 @@ func (p *Pipeline) dropReplacedItems(ctx context.Context, tenantID string, captu
 		next := replaceChecklistItems(existing, capture.ID, previous, "")
 		return next, next != existing
 	})
-	if err != nil {
-		return fmt.Errorf("pipeline: remove the recording's earlier items: %w", err)
-	}
-	if !written {
+	if err != nil || !written {
+		p.clearStampOf(ctx, *capture)
+		if err != nil {
+			return fmt.Errorf("pipeline: remove the recording's earlier items: %w", err)
+		}
 		return nil
 	}
 	if _, err := service.RefreshNoteIndex(ctx, p.cfg.Store, p.cfg.Objects, tenantID, note.ID, service.RefreshOptions{
-		Now:         p.now,
-		RequireBody: true,
-		Attempts:    maxIndexRefreshAttempts,
+		Now:                 p.now,
+		RequireBody:         true,
+		ClearAppendStampFor: capture.ID,
 	}); err != nil {
+		// The capture is no_content now, so the task's retry passes over it
+		// and nothing would come back to clear the stamp: left standing, the
+		// list refuses saves for the whole lease. The index stays as it was
+		// until the next body write refreshes it.
+		p.clearStampOf(ctx, *capture)
 		return fmt.Errorf("pipeline: refresh note index: %w", err)
 	}
 	return nil
@@ -213,7 +282,7 @@ func (w *Worker) handleRegenerateNote(ctx context.Context, task Invocation) erro
 		}
 	}
 	ctx = obs.WithCorrelationID(ctx, id)
-	if err := w.pipeline.RegenerateNote(ctx, task.TenantID, task.NoteID, task.CaptureIDs); err != nil {
+	if err := w.pipeline.RegenerateNote(ctx, task.TenantID, task.NoteID, task.CaptureIDs, task.Landed); err != nil {
 		obs.Log(ctx).Error("regenerate-note will be retried",
 			slog.String("note_id", task.NoteID),
 			slog.String("error", err.Error()))

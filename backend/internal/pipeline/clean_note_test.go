@@ -293,12 +293,26 @@ func TestCleanNoteTaskOnAMissingOrArchivedNoteIsDone(t *testing.T) {
 	}
 }
 
-// recordingCleanInvoker captures every clean-note hand-off the pipeline makes.
+// recordingCleanInvoker captures every hand-off the pipeline makes to itself:
+// the clean-note tasks, and the recordings a regeneration passed on.
 type recordingCleanInvoker struct {
-	mu     sync.Mutex
-	calls  []string
-	stamps []string
-	err    error
+	mu          sync.Mutex
+	calls       []string
+	stamps      []string
+	regenerated [][]string
+	landed      []bool
+	err         error
+}
+
+func (r *recordingCleanInvoker) InvokeRegenerateRest(_ context.Context, _, _ string, captureIDs []string, landed bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.err != nil {
+		return r.err
+	}
+	r.regenerated = append(r.regenerated, append([]string(nil), captureIDs...))
+	r.landed = append(r.landed, landed)
+	return nil
 }
 
 func (r *recordingCleanInvoker) InvokeCleanNote(_ context.Context, tenantID, noteID string, mode model.NoteCleanMode, requestedAt string) error {

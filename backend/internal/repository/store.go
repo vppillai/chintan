@@ -208,17 +208,14 @@ type Store interface {
 	// then deletes the note; DynamoDB TTL is only the backstop.
 	ExpiredNotes(ctx context.Context, asOf int64) ([]TenantNote, error)
 	GetNote(ctx context.Context, tenantID, noteID string) (model.NoteIndex, error)
-	// NoteExists reports whether the tenant has a row for this note, on either
-	// shelf, without reading the row. It is what a list of captures asks for
-	// every note its receipts name: GetNote would carry the note's cleaned
-	// body (up to 200 KB) into a poll that only wants to know the row is
-	// there.
-	NoteExists(ctx context.Context, tenantID, noteID string) (bool, error)
-	// NotesExist answers NoteExists for several notes in one round trip: the
-	// result holds true for every id that has a row and false for the rest.
-	// It is what a page of receipts asks — one BatchGetItem for the page's
-	// distinct notes rather than one GetItem each, on a list the client polls
-	// every second and a half (review 2026-09-05, S17).
+	// NotesExist reports, for several notes in one round trip, whether the
+	// tenant has a row for each, on either shelf, without reading the rows:
+	// the result holds true for every id that has a row and false for the
+	// rest. It is what a page of receipts asks — one BatchGetItem for the
+	// page's distinct notes, on a list the client polls every second and a
+	// half (review 2026-09-05, S17) — where GetNote would carry each note's
+	// cleaned body (up to 200 KB) into a poll that only wants to know the
+	// row is there.
 	NotesExist(ctx context.Context, tenantID string, noteIDs []string) (map[string]bool, error)
 	// PutNote writes n conditionally on n.Version matching the stored version
 	// AND n.CleanedRequestedAt matching the stored clean stamp, and returns the
@@ -290,7 +287,6 @@ type Store interface {
 	// the base table whole, like ExpiredNotes; nothing on a request path
 	// should call it.
 	StuckCaptures(ctx context.Context, before string) ([]model.CaptureIndex, error)
-	UpdateCaptureStatus(ctx context.Context, tenantID, captureID string, status model.CaptureStatus, errMsg string) error
 	DeleteCapture(ctx context.Context, tenantID, captureID string) error
 
 	// ClaimCaptureAppend conditionally records token as the owner of this

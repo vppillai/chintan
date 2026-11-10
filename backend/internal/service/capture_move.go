@@ -200,18 +200,18 @@ func (s *CaptureService) moveInto(ctx context.Context, userID string, current mo
 		if !stamped {
 			return
 		}
-		if cerr := s.store.ClearNoteAppend(ctx, userID, targetNoteID, captureID); cerr != nil {
-			obs.Log(ctx).Warn("capture move could not clear the target's append stamp; it expires with the lease",
-				slog.String("capture_id", captureID),
-				slog.String("to_note_id", targetNoteID),
-				slog.String("error", cerr.Error()))
-		}
+		s.clearNoteStamp(ctx, userID, targetNoteID, captureID)
+		s.clearNoteStamp(ctx, userID, sourceID, captureID)
 	}()
 	if found {
-		if err := s.stampMoveTarget(ctx, userID, targetNoteID, captureID); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrMoveIncomplete, err)
+		// The source too, before either body is written: a save between its
+		// cut and its refresh would write the paragraph back, into both notes.
+		for _, noteID := range []string{targetNoteID, sourceID} {
+			if err := s.stampNote(ctx, userID, noteID, captureID); err != nil {
+				return nil, fmt.Errorf("%w: %w", ErrMoveIncomplete, err)
+			}
+			stamped = true
 		}
-		stamped = true
 
 		// 2. Copy it into the target. A copy already there is left by a move
 		// that stopped between the writes; the source's text replaces it,
@@ -261,8 +261,8 @@ func (s *CaptureService) moveInto(ctx context.Context, userID string, current mo
 				slog.String("capture_id", captureID),
 				slog.String("error", err.Error()))
 		}
-		// The cut has landed, by either path: from here the stamp is the
-		// target's guard, not this call's to hand back.
+		// The cut has landed, by either path: from here the stamps are the
+		// two notes' guard, not this call's to hand back.
 		stamped = false
 	}
 
@@ -277,7 +277,7 @@ func (s *CaptureService) moveInto(ctx context.Context, userID string, current mo
 	}
 	touched := []model.NoteIndex{refreshed}
 	if sourceKey != "" {
-		refreshed, err := RefreshNoteIndex(ctx, s.store, s.objects, userID, sourceID, RefreshOptions{})
+		refreshed, err := RefreshNoteIndex(ctx, s.store, s.objects, userID, sourceID, RefreshOptions{ClearAppendStampFor: captureID})
 		if err != nil {
 			return nil, fmt.Errorf("failed to refresh the source note index: %w", err)
 		}
@@ -339,31 +339,6 @@ func (s *CaptureService) olderCapturesIn(ctx context.Context, userID, noteID, cr
 	}, nil
 }
 
-// stampMoveTarget puts captureID's append stamp on the target row under its
-// version, re-reading on a lost race as every writer of the row does. Another
-// capture's fresh stamp means the worker is writing that body right now; the
-// move does not wait on it (the worker waits on ours, pipeline.stampNoteAppend)
-// and is refused instead, for the person to repeat.
-func (s *CaptureService) stampMoveTarget(ctx context.Context, userID, noteID, captureID string) error {
-	var lastErr error
-	for attempt := 0; attempt < maxIndexRefreshAttempts; attempt++ {
-		note, err := s.store.GetNote(ctx, userID, noteID)
-		if err != nil {
-			return err
-		}
-		if note.AppendingCapture != captureID && AppendInProgress(note, s.now()) {
-			return errors.New("a recording is being added to the target note")
-		}
-		if _, err = s.store.StampNoteAppend(ctx, userID, noteID, captureID, note.Version, s.now()); err == nil {
-			return nil
-		} else if !errors.Is(err, repository.ErrVersionConflict) {
-			return err
-		}
-		lastErr = err
-	}
-	return lastErr
-}
-
 // sourceHolds reports whether the source body still carries captureID's
 // marker, read back after a cut whose outcome is unknown.
 func (s *CaptureService) sourceHolds(ctx context.Context, sourceKey, captureID string) (bool, error) {
@@ -406,7 +381,7 @@ func (s *CaptureService) undoInsert(ctx context.Context, targetKey, sourceID str
 // re-reading on a conflict. A row that already points at noteID is done.
 func (s *CaptureService) repointCapture(ctx context.Context, userID, captureID, noteID string) (model.CaptureIndex, error) {
 	var lastErr error
-	for attempt := 0; attempt < maxIndexRefreshAttempts; attempt++ {
+	for attempt := 0; attempt < MaxIndexRefreshAttempts; attempt++ {
 		c, err := s.store.GetCapture(ctx, userID, captureID)
 		if err != nil {
 			return model.CaptureIndex{}, err
