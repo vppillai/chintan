@@ -270,7 +270,9 @@ export function CaptureScreen() {
         <FailureCard failure={model.failure} />
       ) : (
         <>
+          {/* `timer`, since a paragraph cannot carry a name and the label was ignored. */}
           <p
+            role="timer"
             className="capture__timer numeric"
             aria-label={`Elapsed ${formatElapsed(model.elapsedMs)}`}
             data-live={isLive(model) || undefined}

@@ -29,9 +29,11 @@ then seven cards, in the order `SettingsScreen.test.tsx` holds them to:
 
 Every control saves itself the moment it changes — Recording downloads to
 the device, everything else to the server: a server change is a
-`PUT /v1/settings` (`useSaveSettings`) built on the stored record — the
-server changes the fields the body names and keeps the rest — so
-nothing is saved before that record has loaded, and what renders after the
+`PUT /v1/settings` (`useSaveSettings`) naming only the field changed, plus
+any whose own PUT is still in the air or failed — the server changes the
+fields the body names and keeps the rest, so a device whose copy is old
+cannot put another device's change back. Nothing is saved before the
+stored record has loaded, and what renders after the
 PUT is what the server stored, not what the device sent — the server rounds
 a retention number down to a tier, and the screen shows the rounded value.
 There is no Save button and nothing is ever unsaved. The status line beside

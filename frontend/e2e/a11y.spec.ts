@@ -29,6 +29,22 @@ const THEMES = ['ink', 'nocturne'] as const;
 
 /** The axe sweep of the screen as it stands, failing on anything critical or serious. */
 async function expectNoSeriousViolations(page: Page): Promise<void> {
+  /*
+   * The screen as it stands, not as it arrives. A card that fades in — the
+   * Undo toast, over `--motion-duration-base` — is already "visible" at its
+   * first frame, and axe weighs its text at the opacity of the moment: a
+   * sweep begun inside the fade measured ink on ground at a fraction of its
+   * contrast and failed, on whichever run was quick enough. Entrances are
+   * waited out; a loop (the recording pulse) has no end and is left running.
+   */
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((animation) => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+        .map((animation) => animation.finished.catch(() => undefined)),
+    ),
+  );
   const results = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
     .analyze();

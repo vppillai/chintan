@@ -102,6 +102,28 @@ describe('bearer and idempotency', () => {
     expect(get.get('Idempotency-Key')).toBeNull();
   });
 
+  it('sends a body that leaves while the page is hidden with keepalive, where it fits', async () => {
+    // The note editor's flush on switching apps: iOS may freeze the page
+    // before an ordinary fetch completes.
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse({ ok: true }));
+    const { client } = build(fetchImpl, stubRefresher(async (t) => t));
+    const send = (body: unknown) => client.request('/v1/notes/a', { method: 'PATCH', body });
+    const keepalive = (index: number) => fetchImpl.mock.calls[index]?.[1]?.keepalive;
+
+    await send({ body: 'seen' });
+    expect(keepalive(0)).toBeUndefined();
+
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    await send({ body: 'hidden' });
+    expect(keepalive(1)).toBe(true);
+    // Over the browser's allowance a keepalive request is refused outright.
+    await send({ body: 'ക'.repeat(30_000) });
+    expect(keepalive(2)).toBeUndefined();
+    // A read has nothing to deliver.
+    await client.request('/v1/notes');
+    expect(keepalive(3)).toBeUndefined();
+  });
+
   it('holds one Idempotency-Key across the internal retries of a POST', async () => {
     // The whole point: a retried POST must replay, not act twice.
     const fetchImpl = vi

@@ -35,16 +35,9 @@ export interface EnqueueInput {
   retired?: boolean;
 }
 
-function newId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
 export async function enqueue(input: EnqueueInput): Promise<QueuedMutation> {
   const db = await openChintanDB();
-  const id = input.id ?? newId();
+  const id = input.id ?? crypto.randomUUID();
   const existing = await db.get('mutations', id);
   if (existing) return existing;
 
@@ -53,7 +46,7 @@ export async function enqueue(input: EnqueueInput): Promise<QueuedMutation> {
     kind: input.kind,
     // Minted once, at enqueue time, and never regenerated. Regenerating per
     // flush attempt would make each retry a new logical write.
-    idempotencyKey: input.idempotencyKey ?? newId(),
+    idempotencyKey: input.idempotencyKey ?? crypto.randomUUID(),
     payload: input.payload,
     createdAt: Date.now(),
     attempts: 0,
@@ -91,7 +84,7 @@ export async function enqueueReplacing(
   const mutation: QueuedMutation = {
     id: input.id,
     kind: input.kind,
-    idempotencyKey: input.idempotencyKey ?? newId(),
+    idempotencyKey: input.idempotencyKey ?? crypto.randomUUID(),
     payload: input.payload,
     createdAt: existing?.createdAt ?? Date.now(),
     // Reset: this is new content, and it should not inherit the failures of the

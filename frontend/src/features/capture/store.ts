@@ -30,13 +30,6 @@ const LIVE_STATES: ReadonlySet<CaptureModel['state']> = new Set([
   'stopping',
 ]);
 
-function newLocalId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return `cap-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
 export interface CaptureStore {
   model: CaptureModel;
   /** Live amplitudes for the canvas. Read outside React's render cycle. */
@@ -180,7 +173,7 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
     dispatch,
 
     async start(noteId = null) {
-      const localId = newLocalId();
+      const localId = crypto.randomUUID();
       const active = ensureController();
       // The previous recording's peaks go before `requesting` can be rendered,
       // so the first frame of the new canvas reads an empty session rather
@@ -233,7 +226,7 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
           /* Nothing on disk. */
         });
       }
-      dispatch({ type: 'discard' });
+      dispatch({ type: 'reset' });
     },
 
     async rerecord() {

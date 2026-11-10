@@ -1,12 +1,11 @@
 import { IDBFactory } from 'fake-indexeddb';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { resetDatabaseHandle } from '@/offline/db.ts';
+import { openChintanDB, resetDatabaseHandle } from '@/offline/db.ts';
 
 import {
   appendChunk,
   assembleBlob,
-  bufferedBytes,
   confirmUploaded,
   discardCapture,
   pruneCapture,
@@ -22,6 +21,11 @@ beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
   resetDatabaseHandle();
 });
+
+/** The bytes on disk for a recording. */
+async function bufferedBytes(localId: string): Promise<number> {
+  return (await readChunks(localId)).reduce((total, each) => total + each.bytes, 0);
+}
 
 function chunk(text: string): Blob {
   return new Blob([text], { type: 'audio/webm' });
@@ -44,6 +48,20 @@ describe('chunks are written as they are produced', () => {
     const chunks = await readChunks('cap-1');
     expect(chunks).toHaveLength(1);
     expect(chunks[0]?.bytes).toBe(3);
+  });
+
+  it('writes the chunk on a fresh connection when the cached one rejects the write', async () => {
+    await appendChunk('cap-1', 0, chunk('abc'));
+    // As WebKit leaves it behind a page that was in the background: the
+    // handle is still cached, and the first the app hears is a rejected put.
+    (await openChintanDB()).close();
+
+    await appendChunk('cap-1', 1, chunk('de'));
+
+    expect((await readChunks('cap-1')).map((each) => each.bytes)).toEqual([3, 2]);
+    // And the connection every later write gets is the fresh one.
+    await appendChunk('cap-1', 2, chunk('f'));
+    expect(await bufferedBytes('cap-1')).toBe(6);
   });
 
   it('reassembles chunks in recording order, not insertion order', async () => {

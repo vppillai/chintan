@@ -9,13 +9,14 @@ import {
   useReducer,
   useRef,
   useState,
+  type ComponentType,
   type ReactNode,
   type RefObject,
 } from 'react';
 import { flushSync } from 'react-dom';
 import { useLocation, useParams } from 'react-router';
 
-import { ApiError } from '@/api/problem.ts';
+import { ApiError, networkError } from '@/api/problem.ts';
 import {
   CAPTURE_POLL_FAST_MS,
   CAPTURE_POLL_FAST_WINDOW_MS,
@@ -44,7 +45,6 @@ import { useHorizontalSwipe } from '@/hooks/useHorizontalSwipe.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNote } from '@/offline/useNotesCache.ts';
 
-import { CleanedPanel } from './CleanedPanel.tsx';
 import { FindBar, type FindTarget } from './FindBar.tsx';
 import { NoteMenu } from './NoteActions.tsx';
 import { isUntouchedPlaceholder } from './newNote.ts';
@@ -57,7 +57,6 @@ import {
   type NoteTab,
   type NoteTabDescriptor,
 } from './NoteTabs.tsx';
-import { Recordings } from './Recordings.tsx';
 import { SAVE_LABELS, type SaveState } from './autosave.ts';
 import { FIND_CLOSED, findReducer, type FindState, type FindAction } from './find.ts';
 import { describeRecordings, formatRowTime } from './groups.ts';
@@ -65,6 +64,52 @@ import { describeProgress, parseChecklist, progressOf } from './checklist.ts';
 import { describePurge, purgeCountdown } from './purge.ts';
 import { TextPanel, type Flash } from './TextPanel.tsx';
 import { useNoteEditor, type NoteEditor } from './useNoteEditor.ts';
+
+/**
+ * A tab whose code could not be fetched — offline before the worker cached
+ * it, or a deploy since. Said in the tab's own panel, so the note, its text
+ * and the way out all stand; thrown to the route's boundary it replaced the
+ * whole screen with "This screen could not be drawn".
+ */
+function PanelUnavailable() {
+  return (
+    <p className="screen__empty" role="status">
+      This tab could not be loaded. Reload the app to try again.
+    </p>
+  );
+}
+
+/**
+ * A panel in a chunk of its own: it stands behind a tab, and the launch
+ * carries every byte the first screen needs against a fixed budget
+ * (check-bundle). The service worker precaches the chunk.
+ *
+ * `preload` fetches it when a note opens, and a panel whose chunk is already
+ * here renders in the commit that selects its tab: `lazy` is handed a
+ * thenable that answers at once, where a promise would suspend for a tick
+ * even when resolved. That matters because the tab change places the scroll
+ * against the new panel's height (`e2e/scroll-restore.spec.ts`), and an
+ * empty panel for one frame put it in the wrong place.
+ */
+function lazyPanel<Props>(load: () => Promise<ComponentType<Props>>) {
+  type Module = { default: ComponentType<Props> };
+  let loaded: Module | undefined;
+  let loading: Promise<Module> | undefined;
+  const start = (): Promise<Module> =>
+    (loading ??= load()
+      .catch((): ComponentType<Props> => PanelUnavailable)
+      .then((panel) => (loaded = { default: panel })));
+  const Panel = lazy(() => {
+    const ready = loaded;
+    if (!ready) return start();
+    return { then: (resolve: (module: Module) => void) => resolve(ready) } as unknown as Promise<Module>;
+  });
+  return { Panel, preload: () => void start() };
+}
+const cleaned = lazyPanel(() => import('./CleanedPanel.tsx').then((m) => m.CleanedPanel));
+const recordings = lazyPanel(() => import('./Recordings.tsx').then((m) => m.Recordings));
+const CleanedPanel = cleaned.Panel;
+const Recordings = recordings.Panel;
 
 /*
  * The Details/Share drawer is its own chunk: a launch never opens it, and
@@ -542,6 +587,11 @@ function NoteViews({
   quietFind: boolean;
 }) {
   const [chosenTab, selectTab] = useNoteTab(note.id);
+  // The other panels' code, fetched behind the text so a tab is there when tapped.
+  useEffect(() => {
+    cleaned.preload();
+    recordings.preload();
+  }, []);
   // A checklist has no Cleaned tab (R8-F8: Tidy up list in the ⋮ writes the
   // body instead), so a remembered or linked `cleaned` lands on its Items.
   const tab: NoteTab = checklist && chosenTab === 'cleaned' ? 'text' : chosenTab;
@@ -707,15 +757,19 @@ function NoteViews({
               flash={flash}
               onFlashDone={clearFlash}
             />
-          ) : tab === 'cleaned' ? (
-            <CleanedPanel note={note} editor={editor} lang={lang} find={target} />
           ) : (
-            <Recordings
-              note={note}
-              lang={lang}
-              localUpload={localUpload}
-              onSelectingChange={onSelectingRecordings}
-            />
+            <Suspense fallback={null}>
+              {tab === 'cleaned' ? (
+                <CleanedPanel note={note} editor={editor} lang={lang} find={target} />
+              ) : (
+                <Recordings
+                  note={note}
+                  lang={lang}
+                  localUpload={localUpload}
+                  onSelectingChange={onSelectingRecordings}
+                />
+              )}
+            </Suspense>
           )}
         </NotePanel>
       </div>
@@ -940,6 +994,14 @@ function SaveIndicator({ editor }: { editor: ReturnType<typeof useNoteEditor> })
    * starts unconfirmed without an effect resetting anything.
    */
   const [discardConfirmedFor, setDiscardConfirmedFor] = useState<number | null>(null);
+  /*
+   * Try again with no connection, under an edit the queue has given up on:
+   * what there is to try is reading the server's copy, which cannot start,
+   * so the tap did nothing and said nothing. It says why instead, in the
+   * sentence every request that did not leave the device gets.
+   */
+  const online = useOnline();
+  const [triedOffline, setTriedOffline] = useState(false);
   if (model.state === 'clean') return null;
 
   if (model.state === 'conflict') {
@@ -1025,12 +1087,22 @@ function SaveIndicator({ editor }: { editor: ReturnType<typeof useNoteEditor> })
 
   return (
     <p className="save-indicator" data-state={model.state}>
-      <SaveWord state={model.state} text={model.error ?? SAVE_LABELS[model.state]} />
+      <SaveWord
+        state={model.state}
+        text={
+          model.state === 'error' && triedOffline && !online
+            ? networkError(null).userMessage
+            : (model.error ?? SAVE_LABELS[model.state])
+        }
+      />
       {model.state === 'error' && (
         <button
           type="button"
           className="save-indicator__retry"
-          onClick={() => void editor.saveNow()}
+          onClick={() => {
+            setTriedOffline(!online);
+            void editor.saveNow();
+          }}
         >
           Try again
         </button>

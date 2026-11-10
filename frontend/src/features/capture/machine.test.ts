@@ -499,14 +499,14 @@ describe('changing the target mid-recording', () => {
   });
 });
 
-describe('discard and reset', () => {
+describe('reset', () => {
   it('returns to idle and forgets the recording', () => {
     const model = run([
       ...requestAndStart,
       { type: 'data', bytes: 5_000 },
       { type: 'stop', now: T0 + 4_000 },
       { type: 'finalised' },
-      { type: 'discard' },
+      { type: 'reset' },
     ]);
 
     expect(model).toEqual(INITIAL_CAPTURE);

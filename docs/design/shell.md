@@ -110,6 +110,8 @@ none. Two rules:
    found later; Update posts `{ type: 'SKIP_WAITING' }`, the only message the
    worker acts on, and the page reloads once on `controllerchange` only
    when the user asked (the first install's `clients.claim()` fires it too).
+   The prompt is not shown while a recording or an upload is in flight
+   (`isCaptureBusy`), since the reload would end it.
    A foregrounded app asks for a new build on `visibilitychange`, at most
    every `UPDATE_CHECK_INTERVAL_MS` (30 min), because the browser re-checks
    `sw.js` only on a real navigation and an installed app is resumed, not
@@ -150,16 +152,23 @@ Usage, About, the Ask panel (with the thread's chip labels and Save as note,
 `ask/panelThread.ts`; Home keeps only what holds and sends the thread),
 Home's `ResumePrompt` and `PasskeyNudge` (each says something only after a
 crash or until a passkey exists), the note's Details/Share drawer (`NoteDrawer`,
-`React.lazy` behind a `Suspense` in `NoteDetailScreen`) and the zip writer
+`React.lazy` behind a `Suspense` in `NoteDetailScreen`), the note's Cleaned
+and Recordings panels (`lazyPanel`: fetched when a note opens, so a tab
+tapped after that renders in the same commit and the scroll is placed
+against a panel that is there), the capture screen's `ReviewPlayer` and the zip writer
 with `fflate` (`zipRecordings`, an `import()` when an archive is asked for).
 The capture screen is in the main chunk on purpose: as a lazy chunk it cost
 the shortcut one round trip after the main chunk had run — 650 ms of the
 3.1 s to a live microphone on a cold Fast 3G launch, nothing on a warm one.
 `index.html` carries `preconnect` hints for the API and Cognito origins
 (`vite.config.ts`), so the first request's handshakes overlap the module
-download. A lazy chunk that fails to load is a render fault like
+download. A lazy screen that fails to load is a render fault like
 any other: the route's `RouteError` (`navigation.md`) is drawn inside the
-shell. Tests: `app/lazyRoute.test.tsx`; the measurement is
+shell. A lazy part of a screen is not: a Cleaned or Recordings panel that
+cannot be fetched says "This tab could not be loaded. Reload the app to try
+again." in its own panel, and the review shows without its player, so the
+note and the take's Send and Discard stand. Tests: `app/lazyRoute.test.tsx`,
+`e2e/note-tabs.spec.ts` "a tab whose code cannot be fetched"; the measurement is
 `e2e/launch-latency.spec.ts` (`LAUNCH_PERF=1`: Home and `/capture`, worker
 cold and warm, Fast 3G with a 4× CPU slowdown on a 360 px phone, median of
 three), which prints and asserts nothing.

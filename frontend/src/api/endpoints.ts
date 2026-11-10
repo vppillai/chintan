@@ -80,7 +80,8 @@ export class ChintanApi {
     return this.client.request('/v1/settings');
   }
 
-  putSettings(body: SettingsWire, idempotencyKey?: string): Promise<SettingsWire> {
+  /** The fields to change; the server keeps the stored value of any left out. */
+  putSettings(body: Partial<SettingsWire>, idempotencyKey?: string): Promise<SettingsWire> {
     return this.client.request('/v1/settings', {
       method: 'PUT',
       body,

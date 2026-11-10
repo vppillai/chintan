@@ -197,6 +197,8 @@ describe('opening /capture arms a recording', () => {
     // Not the previous recording's clock, and not "Sent".
     expect(document.querySelector('.capture__state')).toHaveTextContent('Recording');
     expect(document.querySelector('.capture__timer')).toHaveTextContent('00:00');
+    // On a role that can carry a name; on a bare paragraph it was ignored.
+    expect(screen.getByRole('timer', { name: 'Elapsed 00:00' })).toBeInTheDocument();
     expect(useCaptureStore.getState().model.elapsedMs).toBeLessThan(17_000);
     expect(useCaptureStore.getState().model.serverCaptureId).toBeNull();
   });

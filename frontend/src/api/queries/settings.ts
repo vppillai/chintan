@@ -28,7 +28,7 @@ export function useSaveSettings() {
   const api = useApi();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: SettingsWire) => api.putSettings(body),
+    mutationFn: (body: Partial<SettingsWire>) => api.putSettings(body),
     // The contract returns what was *stored*, not what was sent, so the
     // response replaces the cache rather than the optimistic value.
     onSuccess: (stored) => {

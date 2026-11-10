@@ -212,7 +212,12 @@ server.
 
 - **The buffer is on disk.** `recorder.ts` writes each `ondataavailable`
   chunk to IndexedDB (`buffer.ts`, keys zero-padded so chunk 10 sorts after
-  chunk 2) and prunes it only after the server confirms the upload. A tab the
+  chunk 2) and prunes it only after the server confirms the upload. A chunk
+  write the connection rejects is tried once more on a fresh connection
+  (`reopenChintanDB`) before the recorder stops over it: WebKit closes the
+  connection behind a backgrounded page. Once the audio is on the server, a
+  failure of the device's own confirmation does not fail the upload; the
+  row stays unconfirmed and the resume path finds the capture landed. A tab the
   OS reclaims mid-recording — routine on a phone during a long take — leaves
   the bytes where `ResumePrompt` finds them.
 - **The screen stays awake.** The recorder holds a screen wake lock
