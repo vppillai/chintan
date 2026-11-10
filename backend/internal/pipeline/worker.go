@@ -136,7 +136,7 @@ func (w *Worker) Handle(ctx context.Context, raw json.RawMessage) error {
 			continue
 		}
 
-		if _, err := w.pipeline.RunUpload(recCtx, ref); err != nil {
+		if _, err := w.pipeline.runCapture(recCtx, ref); err != nil {
 			obs.Log(recCtx).Error("capture will be retried",
 				slog.String("capture_id", ref.CaptureID),
 				slog.String("error", err.Error()))

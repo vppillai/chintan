@@ -71,10 +71,10 @@ func TestWorkerRemovesAnObjectWhoseCaptureWasDeleted(t *testing.T) {
 		t.Fatalf("the speech provider was called %d time(s) for a capture that no longer exists", got)
 	}
 
-	// A direct invocation for a missing row carries no object and is still the
-	// retryable fault it was: there is nothing to clean up, and the row may be
-	// on its way.
-	if _, err := h.pipeline.Run(ctx, "user1", "c_1"); !errors.Is(err, repository.ErrNotFound) {
-		t.Fatalf("Run for a missing row = %v, want the not-found fault", err)
+	// A direct invocation for a missing row carries no object, and its sender
+	// read the row before sending it: the row is not on its way, it was
+	// deleted, and there is nothing to clean up or retry.
+	if _, err := h.pipeline.Run(ctx, "user1", "c_1"); err != nil {
+		t.Fatalf("Run for a missing row = %v, want nil", err)
 	}
 }
