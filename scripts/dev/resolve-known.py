@@ -7,7 +7,7 @@ with no two sides to keep (deleted on one side, added on one side) — so the
 merge drivers STOP instead of retrying a rebase that cannot continue.
 `--self-test` proves both answers in a scratch repository.
 """
-import os, re, subprocess, sys, tempfile
+import os, re, shutil, subprocess, sys, tempfile
 KEEP_BOTH = {"docs/backlog.md", "docs/history/reviews/README.md", "frontend/src/styles/index.css", "frontend/src/components/Icon.tsx"}
 TAKE_THEIRS_FROM_MAIN = {"frontend/src/api/__fixtures__/responses.ts", "frontend/src/api/__fixtures__/requests.json"}
 # Every status `git status --short` gives an unmerged path; only the first two have both sides in the file.
@@ -58,8 +58,9 @@ def self_test():
     """A both-appended ledger resolves (0); a file main deleted and the branch edited does not (2)."""
     def git(*args):
         return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args], capture_output=True, text=True)
+    home, made = os.getcwd(), []
     def conflict(path, main_edit, branch_edit):
-        d = tempfile.mkdtemp(); os.chdir(d); os.makedirs("docs")
+        d = tempfile.mkdtemp(); made.append(d); os.chdir(d); os.makedirs("docs")
         git("init", "-q", "-b", "main"); open(path, "w").write("| id |\n|---|\n| 1 |\n"); git("add", "."); git("commit", "-qm", "base")
         git("checkout", "-qb", "branch"); branch_edit(path); git("add", "-A"); git("commit", "-qm", "branch")
         git("checkout", "-q", "main"); main_edit(path); git("add", "-A"); git("commit", "-qm", "main")
@@ -69,6 +70,8 @@ def self_test():
     assert resolve() == 0 and open("docs/backlog.md").read().endswith("| 2 |\n| 3 |\n"), "a both-appended ledger must resolve to both rows"
     conflict("docs/backlog.md", os.remove, append("| 3 |\n"))
     assert resolve() == 2, "a modify/delete conflict must exit 2, or the drivers retry the rebase for ever"
+    os.chdir(home)
+    for d in made: shutil.rmtree(d, ignore_errors=True)
     print("self-test ok")
 
 

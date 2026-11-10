@@ -50,17 +50,17 @@ aws s3api head-bucket --bucket chintan-content-dev-prod-$A
 aws cognito-idp list-user-pools --max-results 60 --query "UserPools[?Name=='chintan-dev-prod'].Id" --output text
 ```
 
-No stack, and the table and the bucket answer: start at step 1. No stack and nothing retained, with a backup directory in hand: start at step 3.
+No stack, and the table and the bucket answer: start at step 1. No stack and nothing retained, with a backup directory in hand: start at step 3. Either way the steps use `$A` from above and `$C`, the `chintanctl` built as in the same-instance procedure (`export PATH=/usr/local/go/bin:$HOME/go/bin:$PATH GOTOOLCHAIN=auto; (cd backend && go build -o /tmp/chintanctl ./cmd/chintanctl); C=/tmp/chintanctl`).
 
 1. **Back up what the stack left behind**, by name, since no stack is left to read the bucket from (the table name is derived from the instance). Twice, and compare, as in step 5 of the procedure above; the restore dry run in between hashes every body against the manifest and writes nothing.
    ```bash
-   B=chintan-content-dev-prod-$A
-   $C backup  --instance dev --bucket $B --out ~/backup-retained
-   $C restore --instance dev --bucket $B --in ~/backup-retained
-   $C backup  --instance dev --bucket $B --out ~/backup-retained-2
+   BUCKET=chintan-content-dev-prod-$A
+   $C backup  --instance dev --bucket $BUCKET --out ~/backup-retained
+   $C restore --instance dev --bucket $BUCKET --in ~/backup-retained
+   $C backup  --instance dev --bucket $BUCKET --out ~/backup-retained-2
    sha256sum ~/backup-retained{,-2}/items.jsonl ~/backup-retained{,-2}/objects.jsonl && diff -rq ~/backup-retained/objects ~/backup-retained-2/objects
    ```
-   Copy `~/backup-retained` off the VM before going on: the next step deletes the only other copy of the notes.
+   Copy `~/backup-retained` off the VM before going on: the next step deletes the only other copy of the notes. A backup holds the tenants' partitions only; the table's `INSTANCE` partition (the daily spend counter and the AWS-cost reading) is not in it and starts again in the rebuilt table.
 2. **Clear the retained resources**, only once step 1 has passed. The script refuses while the stack exists, lists what it found, and deletes nothing without `--apply`; on `prod` it also wants the acknowledgement flag, and it asks for a typed phrase. It needs the owner's credentials (the VM's default profile): the agent role's boundary denies these deletes. The pool goes with it, and with the pool every sign-in and passkey.
    ```bash
    scripts/clean-instance-orphans.sh --instance dev --environment prod --region us-west-2
@@ -76,7 +76,7 @@ No stack, and the table and the bucket answer: start at step 1. No stack and not
    scripts/invite-user.sh --instance dev --email you@example.com --apply
    POOL=$(aws cloudformation describe-stacks --stack-name chintan-dev-prod --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text)
    NEW=$(aws cognito-idp admin-get-user --user-pool-id "$POOL" --username you@example.com --query "UserAttributes[?Name=='sub'].Value | [0]" --output text)
-   OLD=$(jq -r '.tenants[0]' ~/backup-retained/backup.json)
+   OLD=$(jq -r '.tenants[0]' ~/backup-retained/backup.json)   # or the backup directory you started with
    ```
 5. **Re-map the backup to the new id.** The old sub is in every item's `pk` (`USER#<sub>`) and `gsi1pk` (`TENANT#<sub>#NOTE#…`, `dynamo_captures.go`), in the top-level key attributes (`audio_key`, `raw_key`, `routed_key`, `clean_key`, `segments_key`, `peaks_key` on a capture; `s3_markdown_key`, `s3_meta_key` on a note), in the usage rows' `gsi1sk` (`TENANT#<sub>`, `usage.go`) and inside the `data` blobs, in every `objects.jsonl` line, in the `objects/` path and in the header's `tenants`; the header's manifest hashes must then be recomputed, or `restore` refuses the directory. A plain substitution covers all of those because the sub is one opaque string; this assumes a single-tenant backup (one `tenants` entry). Work on a copy, on the VM (`perl -pi -e` rather than `sed -i`, whose in-place flag differs between GNU and the Mac's BSD sed).
    ```bash

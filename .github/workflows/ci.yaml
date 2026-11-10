@@ -274,6 +274,11 @@ jobs:
       # a conflict it does not handle must be a 2: this proves it is.
       - name: The conflict resolver stops on what it cannot resolve
         run: python3 scripts/dev/resolve-known.py --self-test
+      # The drivers' rebase in a scratch repository with a stub gh: a stacked
+      # rebuild, a conflict that must STOP, and a worktree holding a commit
+      # nobody pushed, which must STOP rather than be pushed and merged.
+      - name: The merge drivers' rebase stops where it must
+        run: scripts/dev/test-rebase-pr.sh
       # The workflows are code no other job reads: a Dependabot action bump
       # or a hand edit to a deploy workflow would otherwise merge unlinted.
       # actionlint also runs shellcheck over every `run:` block.

@@ -104,4 +104,6 @@ keeps both sides of `docs/backlog.md`, `docs/history/reviews/README.md`,
 main's contract fixtures (CI regenerates and diffs them, so a wrong pick fails
 loudly), and exits 2 on anything else — another file, or one of those deleted
 or added on one side only — so the driver STOPs. `--self-test` proves both
-answers in a scratch repository, and CI runs it.
+answers in a scratch repository, and `test-rebase-pr.sh` does the same for the
+drivers' rebase (a stacked rebuild, a conflict, a worktree holding an unpushed
+commit) with a stub `gh`; CI runs both.

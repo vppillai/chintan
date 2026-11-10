@@ -13,6 +13,7 @@
 #
 # Required environment:
 #   INSTANCE, ENVIRONMENT, LAMBDA_BUCKET, LAMBDA_KEY, WORKER_KEY, PAGES_HOST, REPO_NAME
+#   AWS_REGION (or CHINTAN_REGION); a region set only in the AWS config file is not read
 # Optional:
 #   EXTRA_PARAMETERS      JSON array of "Key=Value" strings from the instance config
 #   APP_HOST              the Pages custom domain (app_host in the instance

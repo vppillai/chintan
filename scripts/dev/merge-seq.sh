@@ -53,8 +53,12 @@ rebase_pr() {
     }
     (
         cd "$W" && git checkout -q "$branch" || exit 2
-        # A worktree that cannot fast-forward holds commits origin does not: stop rather than rebase them away.
-        git pull -q --ff-only origin "$branch" 2>/dev/null || {
+        # A worktree behind origin fast-forwards. One that is then not AT origin
+        # holds commits nobody pushed (ahead, where the pull succeeds, or diverged,
+        # where it fails): stop rather than push them into the pull request or
+        # rebase them away.
+        git pull -q --ff-only origin "$branch" 2>/dev/null
+        [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$branch")" ] || {
             echo "STOP: $W is not at origin/$branch (unpushed commits?)"
             exit 2
         }
@@ -167,7 +171,7 @@ for spec in "$@"; do
     git -C "$MAIN" pull -q --ff-only origin main || echo "WARN: $MAIN did not fast-forward to origin/main; pull it by hand"
     # No --force: a worktree with uncommitted or untracked files is somebody's work and stays.
     if [ -d "$WT_ROOT/$wt" ]; then
-        git -C "$MAIN" worktree remove "$WT_ROOT/$wt" 2>/dev/null || echo "kept $WT_ROOT/$wt: it holds uncommitted or untracked files"
+        git -C "$MAIN" worktree remove "$WT_ROOT/$wt" 2>/dev/null || echo "kept $WT_ROOT/$wt: git could not remove it (uncommitted or untracked files?)"
     fi
     # A backend deploy starts on its own for a merge that touched backend/**, infrastructure/** or the deploy scripts
     # (deploy-backend.yaml's paths), whatever the declared kind; `gh run list --workflow deploy-backend.yaml` follows it.
