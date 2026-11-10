@@ -434,14 +434,17 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     /*
      * Only what changed since the server's copy, and always the version: an
      * unchanged body sent along with a language change is what detached the
-     * recordings' markers (see `patchFor`). Over the edit the queue still
-     * holds for the note, when there is one: this save forgets that entry once
-     * it lands, and the copy `patchFor` diffs against is the cached one, which
-     * already reads as the queued text — so a title queued offline and a body
-     * typed online sent the body alone and dropped the title.
+     * recordings' markers (see `patchFor`). Over the edit the queue holds for
+     * the note, when there is one, live or retired: this save forgets that
+     * entry once it lands, and the editor was loaded from the held text, so
+     * the diff alone names none of it — a tag added to a note showing a
+     * refused edit was saved, the entry forgotten, and the edit's text left
+     * in the editor under "Saved", never sent. The names are the entry's and
+     * the values the draft's, on the editor's version, which with an entry
+     * shown is the entry's own: a note that has moved refuses it, as before.
      */
     const body = {
-      ...heldFields(queued.data?.pending ? queued.data.body : null, attempted),
+      ...heldFields(queued.data?.body, attempted),
       ...patchFor(current),
     };
     // The entry this save supersedes, by key; see `forgetQueued`. One this
@@ -774,14 +777,16 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     if (state !== 'clean' && state !== 'saved' && state !== 'queued') return;
     let gone = false;
     void (async () => {
-      if (!(await queuedEditFor(note.id))?.dead) return;
-      const theirs = await api
-        .getNote(note.id)
-        .catch((error: unknown) => (error instanceof ApiError && error.isNotFound ? 404 : null));
-      // Read after the fetch, which can take as long as the connection likes:
-      // the entry and the editor are judged as they are now.
       const entry = await queuedEditFor(note.id);
       const held = entry?.dead ? entry.body : null;
+      // A round trip on whatever connection there is. Anything that changes
+      // the entry or the note meanwhile re-runs this effect, and `gone`
+      // retires this pass.
+      const theirs = held
+        ? await api
+            .getNote(note.id)
+            .catch((error: unknown) => (error instanceof ApiError && error.isNotFound ? 404 : null))
+        : null;
       if (gone || !entry || !held || !theirs) return;
       // The note is gone, and with it everything the edit could mean: the
       // flush never sends a retired entry, so nothing else would remove it.
@@ -801,9 +806,6 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
         return;
       }
       const current = latest.current;
-      // A save of the draft's own is on the wire, or has already been
-      // answered with the prompt: its answer is the one that counts.
-      if (current.state === 'saving' || current.state === 'conflict') return;
       const moved = theirs.version > held.version;
       const refused = !moved && (entry.refused ?? false);
       // What the entry was parked over, or — for one an older build queued —
@@ -861,11 +863,8 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
       const theirs = latest.current.theirs;
       commit({ type: 'takeTheirs' });
       if (!note || !theirs) return;
-      // Nothing is held any more, said at once: until the delete below has
-      // run, the editor would be handed the held text again.
-      queryClient.setQueryData(queryKeys.queuedEdit(note.id), null);
-      // And the device's copy is the one just taken, not the dropped draft
-      // `park` left there under the entry's version.
+      // The device's copy is the one just taken, not the dropped draft `park`
+      // left there under the entry's version.
       void forgetQueued().then(() => {
         recordSavedNote(queryClient, withDraft({ ...note, version: theirs.version }, theirs.draft));
       });

@@ -15,8 +15,13 @@
  * live, which more than one rule now stops; 97 and 185 lose typed text when
  * the editor does not show a held edit; 135, run with pins, loses another
  * device's text when a pin from Home puts the row's version on a body the
- * device never fetched. `MODEL_SEEDS`, `MODEL_FROM`
- * and `MODEL_PINS` run a wider sweep by hand; it is about a second a seed.
+ * device never fetched. 7 and 42 run with faults — a server that at times
+ * refuses a PATCH on its merits, answers 503, or fails reads while writes
+ * get through, and a tag saved at once — so refused entries are inside the
+ * model; no random sequence tried has yet found a defect there (the one
+ * known, a tag's save forgetting a retired edit unsent, has its own test in
+ * `useNoteEditor.parked.test.tsx`). `MODEL_SEEDS`, `MODEL_FROM`
+ * and `MODEL_MODE` (`pins`, `faults`) run a wider sweep by hand; it is about a second a seed.
  */
 import { act, renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
@@ -32,20 +37,21 @@ import { TestProviders, testApiContext, testQueryClient } from '@/test/providers
 import { useNoteEditor } from './useNoteEditor.ts';
 
 const STEPS = 20;
-/** [seed, whether Home pins the note between visits]. */
-const FIXED: [number, boolean][] = [
-  [16, false],
-  [80, false],
-  [97, false],
-  [185, false],
-  [135, true],
-
+type Mode = 'plain' | 'pins' | 'faults';
+const FIXED: [number, Mode][] = [
+  [16, 'plain'],
+  [80, 'plain'],
+  [97, 'plain'],
+  [185, 'plain'],
+  [135, 'pins'],
+  [7, 'faults'],
+  [42, 'faults'],
 ];
 const sweep = Number(process.env['MODEL_SEEDS'] ?? 0);
-const RUNS: [number, boolean][] = sweep
+const RUNS: [number, Mode][] = sweep
   ? Array.from({ length: sweep }, (_unused, index) => [
       Number(process.env['MODEL_FROM'] ?? 1) + index,
-      process.env['MODEL_PINS'] === '1',
+      (process.env['MODEL_MODE'] ?? 'plain') as Mode,
     ])
   : FIXED;
 
@@ -77,12 +83,23 @@ afterEach(async () => {
   await clearAllLocalData().catch(() => undefined);
 });
 
-async function run(seed: number, pins: boolean): Promise<string | null> {
+async function run(seed: number, mode: Mode): Promise<string | null> {
+  const pins = mode === 'pins';
+  const faults = mode === 'faults';
   const random = mulberry32(seed);
   const pick = <T,>(items: T[]): T => items[Math.floor(random() * items.length)] as T;
   const trace: string[] = [];
 
-  const server = { stored: { ...NOTE, captures: [] as NonNullable<NoteDetailWire['captures']> }, dark: false };
+  const server = {
+    stored: { ...NOTE, captures: [] as NonNullable<NoteDetailWire['captures']> },
+    dark: false,
+    /** Every request answered 503. */
+    down: false,
+    /** Every PATCH with a body refused on its merits. */
+    strict: false,
+    /** Reads answered 503 while writes get through: the weather a read-back fails in. */
+    blind: false,
+  };
   const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
     const json = (body: unknown, status = 200) =>
       new Response(JSON.stringify(body), {
@@ -90,13 +107,20 @@ async function run(seed: number, pins: boolean): Promise<string | null> {
         headers: { 'content-type': status >= 400 ? 'application/problem+json' : 'application/json' },
       });
     if (server.dark) throw new TypeError('Failed to fetch');
-    if ((init?.method ?? 'GET') !== 'PATCH') return json(server.stored);
+    if (server.down) return json({ type: 'about:blank', title: 'Unavailable', status: 503 }, 503);
+    if ((init?.method ?? 'GET') !== 'PATCH') {
+      return server.blind ? json({ type: 'about:blank', title: 'Unavailable', status: 503 }, 503) : json(server.stored);
+    }
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    if (server.strict && typeof body['body'] === 'string') {
+      return json({ type: 'about:blank', title: 'Too large', status: 413 }, 413);
+    }
     if (body['version'] !== server.stored.version) {
       return json({ type: 'about:blank', title: 'Conflict', status: 409 }, 409);
     }
     if (typeof body['body'] === 'string') server.stored = { ...server.stored, body: body['body'] };
     if (typeof body['pinned'] === 'boolean') server.stored = { ...server.stored, pinned: body['pinned'] };
+    if (Array.isArray(body['tags'])) server.stored = { ...server.stored, tags: body['tags'] as string[] };
     server.stored = { ...server.stored, version: server.stored.version + 1 };
     const { body: _b, captures: _c, ...row } = server.stored;
     return json(row);
@@ -170,9 +194,18 @@ async function run(seed: number, pins: boolean): Promise<string | null> {
       else actions.push('open', 'open');
       if (view && loaded) actions.push('type', 'type', 'type', 'blur');
       if (view && model?.state === 'conflict') actions.push('answer', 'answer', 'answer');
-      if (!server.dark) actions.push('reread');
+      if (!server.dark && !server.blind && !server.down) actions.push('reread');
       // From Home, whose list has just been read: the row is the server's.
       if (pins && !view && !server.dark) actions.push('pin', 'pin');
+      if (faults) {
+        actions.push(
+          server.strict ? 'lenient' : 'strict',
+          server.down ? 'recover' : 'down',
+          server.blind ? 'sight' : 'blind',
+        );
+        // A tag saves at once, with whatever else the editor holds.
+        if (view && loaded) actions.push('tag', 'tag');
+      }
       const action = pick(actions);
       let detail = '';
 
@@ -227,6 +260,20 @@ async function run(seed: number, pins: boolean): Promise<string | null> {
         // The screen's poll, a pull to refresh, or Home's list and body prefetch.
         if (view) await act(() => queryClient.refetchQueries({ queryKey: queryKeys.note(NOTE.id) }));
         else queryClient.setQueryData(queryKeys.note(NOTE.id), { ...server.stored });
+      } else if (action === 'strict' || action === 'lenient') {
+        server.strict = action === 'strict';
+      } else if (action === 'down' || action === 'recover') {
+        server.down = action === 'down';
+      } else if (action === 'blind' || action === 'sight') {
+        server.blind = action === 'blind';
+      } else if (action === 'tag' && view) {
+        counter += 1;
+        const current = view.result.current;
+        await act(async () => {
+          current.edit({ tags: [`t${String(counter)}`] });
+          void current.saveNow();
+          await Promise.resolve();
+        });
       } else if (action === 'pin') {
         const row = { id: NOTE.id, version: server.stored.version };
         await act(() =>
@@ -279,9 +326,9 @@ async function run(seed: number, pins: boolean): Promise<string | null> {
 }
 
 describe('the editor and its queue, under random sequences', () => {
-  for (const [seed, pins] of RUNS) {
-    it(`seed ${String(seed)}${pins ? ', with pins from Home' : ''}`, async () => {
-      expect(await run(seed, pins)).toBeNull();
+  for (const [seed, mode] of RUNS) {
+    it(`seed ${String(seed)}, ${mode}`, async () => {
+      expect(await run(seed, mode)).toBeNull();
     }, 60_000);
   }
 });

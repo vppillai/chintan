@@ -43,7 +43,7 @@ const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeou
 /** The device opened the note at v3; the server holds `stored`. */
 function session(
   stored: NoteDetailWire,
-  refuse: { patch?: number; get?: number; dark?: boolean; slowGetMs?: number } = {},
+  refuse: { patch?: number; get?: number; dark?: boolean; patchDark?: boolean; slowGetMs?: number } = {},
 ) {
   const sent: Record<string, unknown>[] = [];
   const failing = { ...refuse };
@@ -58,12 +58,14 @@ function session(
       if (failing.slowGetMs) await settle(failing.slowGetMs);
       return failing.get ? json({ type: 'about:blank', title: 'Refused', status: failing.get }, failing.get) : json(stored);
     }
+    if (failing.patchDark) throw new TypeError('Failed to fetch');
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     sent.push(body);
     if (failing.patch) return json({ type: 'about:blank', title: 'Refused', status: failing.patch }, failing.patch);
     if (body['version'] !== stored.version) return json({ type: 'about:blank', title: 'Conflict', status: 409 }, 409);
     if (typeof body['body'] === 'string') stored.body = body['body'];
     if (typeof body['pinned'] === 'boolean') stored.pinned = body['pinned'];
+    if (Array.isArray(body['tags'])) stored.tags = body['tags'] as string[];
     if (typeof body['color'] === 'string') stored.color = body['color'] as NonNullable<NoteDetailWire['color']>;
     stored.version += 1;
     const { body: _body, captures: _captures, ...row } = stored;
@@ -679,6 +681,108 @@ describe('an edit the server refused on its merits, then Back', () => {
       expect(await queuedEditFor(NOTE.id)).toBeNull();
     });
     expect(view.result.current.model.draft.body).toBe('Start.');
+  });
+});
+
+describe('a save of another field from an editor showing a retired edit', () => {
+  /*
+   * Reopened on a slow link, the note shows the held edit for as long as the
+   * read-back's GET takes, and a tag saves at once. The save named only the
+   * tag — the editor was loaded from the held text, so nothing else differed
+   * — landed, and forgot the entry: the edit's text was left in the editor
+   * under "Saved" and was gone at the next re-read.
+   */
+  async function held(server: ReturnType<typeof session>) {
+    await enqueueReplacing({
+      id: queuedEditId(NOTE.id),
+      kind: 'updateNote',
+      payload: {
+        noteId: NOTE.id,
+        body: { version: 3, body: 'Start. Mine.' },
+        base: { body: 'Start.', captures: [] },
+        refused: true,
+      },
+      retired: true,
+    });
+    server.failing.slowGetMs = 800;
+    const view = server.open();
+    await waitFor(() => {
+      expect(view.result.current.model.draft.body).toBe('Start. Mine.');
+    });
+    await act(async () => {
+      view.result.current.edit({ tags: ['urgent'] });
+      await view.result.current.saveNow();
+    });
+    return view;
+  }
+
+  it('on a note that has not moved, sends the whole edit with it, and the read-back then has nothing to ask', async () => {
+    const server = session({ ...NOTE });
+    const view = await held(server);
+
+    expect(server.sent).toEqual([{ version: 3, body: 'Start. Mine.', tags: ['urgent'] }]);
+    expect(server.stored).toMatchObject({ version: 4, body: 'Start. Mine.', tags: ['urgent'] });
+    expect(await queuedEditFor(NOTE.id)).toBeNull();
+    // The read-back's fetch answers after the save: the entry it set out
+    // to ask about is gone, and it must not prompt over a saved note.
+    await settle(1_200);
+    expect(view.result.current.model).toMatchObject({ state: 'saved', theirs: null });
+  });
+
+  it('a read-back that answers after more was typed and parked shows the entry as it is now', async () => {
+    const server = session({ ...NOTE, version: 4, body: 'Written on the other device.' });
+    await server.typeAndLeave('Start. Mine.');
+    server.failing.slowGetMs = 2_500;
+    const view = server.open();
+    await waitFor(() => {
+      expect(view.result.current.model.draft.body).toBe('Start. Mine.');
+    });
+    // Reads crawl and writes do not get through at all: the keystroke is
+    // parked over the retired entry while the read-back is still fetching.
+    server.failing.patchDark = true;
+    act(() => {
+      view.result.current.edit({ body: 'Start. Mine. More.' });
+    });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+    await waitFor(
+      async () => {
+        expect(await queuedEditFor(NOTE.id)).toMatchObject({ dead: true, body: { body: 'Start. Mine. More.' } });
+      },
+      { timeout: 6_000 },
+    );
+    // Judged by the entry as it was before the fetch, the prompt put the
+    // older text back in the field.
+    await waitFor(
+      () => {
+        expect(view.result.current.model.state).toBe('conflict');
+      },
+      { timeout: 6_000 },
+    );
+    expect(view.result.current.model.draft.body).toBe('Start. Mine. More.');
+  }, 20_000);
+
+  it('on a note that has moved, is refused with the edit still held, and asks', async () => {
+    const server = session({ ...NOTE, version: 4, body: 'Written on the other device.' });
+    const view = await held(server);
+
+    expect(server.sent).toEqual([{ version: 3, body: 'Start. Mine.', tags: ['urgent'] }]);
+    await waitFor(() => {
+      expect(view.result.current.model.state).toBe('conflict');
+    });
+    expect(server.stored).toMatchObject({ version: 4, body: 'Written on the other device.' });
+    expect(await queuedEditFor(NOTE.id)).toMatchObject({ dead: true, body: { version: 3, body: 'Start. Mine.' } });
+  });
+
+  it('refused on its merits again, says so with the edit still held', async () => {
+    const server = session({ ...NOTE }, { patch: 413 });
+    const view = await held(server);
+
+    expect(view.result.current.model.state).toBe('error');
+    expect(view.result.current.model.draft).toMatchObject({ body: 'Start. Mine.', tags: ['urgent'] });
+    expect(server.stored.body).toBe('Start.');
+    expect(await queuedEditFor(NOTE.id)).toMatchObject({ dead: true, body: { body: 'Start. Mine.' } });
   });
 });
 

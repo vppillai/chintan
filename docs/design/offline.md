@@ -211,10 +211,14 @@ is neither re-sent on every visit nor impossible to drop. Try again under a
 retired entry's "did not save" runs the read-back again. Keep sends the
 held body on the newer version;
 either choice clears the entry (`clearQueuedEdit`). A direct save made online
-while an entry is still pending sends the held fields under its own
-(`queuedEditFor` carries the body), since it clears the entry once it lands:
-the reopened note's copy already reads as the queued text, so the save's own
-diff alone would drop a field queued offline. It forgets the entry only
+while the device holds an entry, live or retired, sends the entry's fields at
+the draft's values with its own (`queuedEditFor` carries the body), since it
+clears the entry once it lands: the editor was loaded from the held text, so
+the save's own diff alone would drop a field queued offline — or, for a
+retired entry on a note that has not moved, save a tag, forget the entry and
+leave the refused edit's text unsent under "Saved". The version is the
+editor's, which with an entry shown is the entry's own: a note that has moved
+refuses the save and the prompt follows. It forgets the entry only
 under the key it carried (`clearQueuedEdit`), so a keystroke queued while it
 was on the wire is kept.
 
