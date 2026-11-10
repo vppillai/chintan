@@ -1,2 +1,2 @@
 # cfn-lint for ci.yaml's infrastructure-lint job; Dependabot's pip ecosystem bumps it.
-cfn-lint==1.56.0
+cfn-lint==1.60.0
