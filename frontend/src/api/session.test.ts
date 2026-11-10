@@ -93,6 +93,18 @@ describe('signing out beats a refresh that is already in flight', () => {
   });
 });
 
+describe('signed out is not expired', () => {
+  it('forgets that the last person left once someone signs in', () => {
+    // `left` stops a late save writing into the emptied stores; left set
+    // after the next sign-in, it would stop every offline edit being kept.
+    const session = new Session(createMemoryTokenStore(tokens()), { refresh: async (current) => current });
+    session.left = true;
+    session.clear();
+    session.set(tokens());
+    expect(session.left).toBe(false);
+  });
+});
+
 describe('a token endpoint that never answers', () => {
   it('gives up after the bound as a network failure, keeping the session', async () => {
     vi.useFakeTimers();

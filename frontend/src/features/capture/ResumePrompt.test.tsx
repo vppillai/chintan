@@ -181,6 +181,108 @@ describe('Discard', () => {
   });
 });
 
+describe('a take left at review: Stop, then Back (review round 19, FE-5)', () => {
+  const atReview = { ...INITIAL_CAPTURE, state: 'review' as const, localId: 'cap-a', bytes: 9 };
+
+  it('is offered on the next visit to Home, though the list was read before it existed', async () => {
+    const queryClient = testQueryClient();
+    const home = () =>
+      render(
+        <TestProviders api={testApiContext(serverWith('appended'))} queryClient={queryClient}>
+          <ResumePrompt />
+        </TestProviders>,
+      );
+    // Boot: Home reads an empty device.
+    const first = home();
+    await waitFor(() => {
+      expect(queryClient.getQueryState(queryKeys.unsentCaptures())?.status).toBe('success');
+    });
+    first.unmount();
+
+    // Record, Stop, Back.
+    await saveCaptureRecord(stranded({ createdAt: Date.now() }));
+    await appendChunk('cap-a', 0, new Blob(['webm bytes'], { type: 'audio/webm' }));
+    useCaptureStore.setState({ model: atReview });
+    home();
+
+    expect(await screen.findByRole('region', { name: 'Unsent recording' })).toBeInTheDocument();
+  });
+
+  it('Send from the prompt takes the take from the store', async () => {
+    const user = userEvent.setup();
+    await saveCaptureRecord(stranded());
+    await appendChunk('cap-a', 0, new Blob(['webm bytes'], { type: 'audio/webm' }));
+    useCaptureStore.setState({ model: atReview });
+    await mount(serverWith('appended'));
+
+    await user.click(await screen.findByRole('button', { name: 'Send' }));
+
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('idle');
+    });
+  });
+
+  it('leaves the store alone when the take sent is not its own', async () => {
+    const user = userEvent.setup();
+    await saveCaptureRecord(stranded());
+    await appendChunk('cap-a', 0, new Blob(['webm bytes'], { type: 'audio/webm' }));
+    useCaptureStore.setState({ model: { ...atReview, localId: 'cap-live' } });
+    await mount(serverWith('appended'));
+
+    await user.click(await screen.findByRole('button', { name: 'Send' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: 'Unsent recording' })).toBeNull();
+    });
+    expect(useCaptureStore.getState().model).toMatchObject({ state: 'review', localId: 'cap-live' });
+  });
+
+  it('leaves the store alone when the capture screen sent the take meanwhile', async () => {
+    const user = userEvent.setup();
+    await saveCaptureRecord(stranded());
+    await appendChunk('cap-a', 0, new Blob(['webm bytes'], { type: 'audio/webm' }));
+    useCaptureStore.setState({ model: atReview });
+    let answer: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const slow: typeof fetch = async (input, init) => {
+      await held;
+      return serverWith('appended')(input, init);
+    };
+    await mount(slow);
+
+    await user.click(await screen.findByRole('button', { name: 'Send' }));
+    // The capture screen's own Send starts while the prompt's is on the wire.
+    act(() => {
+      useCaptureStore.setState({ model: { ...atReview, state: 'uploading' } });
+    });
+    answer();
+
+    await waitFor(async () => {
+      expect((await readCaptureRecord('cap-a'))?.uploadedAt).not.toBeNull();
+    });
+    expect(useCaptureStore.getState().model.state).toBe('uploading');
+  });
+
+  it('Discard from the prompt takes the take from the store', async () => {
+    const user = userEvent.setup();
+    await saveCaptureRecord(stranded());
+    await appendChunk('cap-a', 0, new Blob(['webm bytes'], { type: 'audio/webm' }));
+    useCaptureStore.setState({ model: atReview });
+    await mount();
+
+    await user.click(await screen.findByRole('button', { name: 'Discard' }));
+    await user.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: 'Discard recording' }),
+    );
+
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('idle');
+    });
+  });
+});
+
 describe('relativeTime', () => {
   it('rounds to the coarsest unit a person would say', () => {
     const now = 1_700_000_000_000;

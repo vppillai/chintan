@@ -98,14 +98,82 @@ capture upload resumes from the audio on disk. Each entry carries the
 partly succeeded replays rather than double-applies.
 
 **One entry per note.** The editor (`useNoteEditor`) catches an offline
-`ApiError` and calls `enqueueReplacing` under `queuedEditId(noteId)` =
-`updateNote:<id>`, folding the new fields over whatever body is already held
-(`queuedEditBody`): a PATCH carries the whole note, so three offline edits are
-one write made three times. The replacement keeps `createdAt` (the order of
-intent) and mints a fresh key (a different payload under the same key would
-replay the earlier response). The editor then patches its caches as a landed
-save would, at the same version, so the note reopened offline shows the
-edit and the next keystroke builds on it.
+`ApiError` and parks the PATCH (`park`): `enqueueReplacing` under
+`queuedEditId(noteId)` = `updateNote:<id>`, over whatever body is already
+held (`queuedEditBody`): a PATCH carries the whole note, so three offline
+edits are one write made three times. The held entry gives the field names
+and the draft their values (`heldFields`), so a tag added offline and removed
+again is sent as removed, and a title cleared since is left out. The
+replacement keeps `createdAt` (the order of intent) and mints a fresh key (a
+different payload under the same key would replay the earlier response). The
+editor then patches its caches as a landed save would, at the same version,
+so the note reopened offline shows the edit and the next keystroke builds on
+it.
+
+**A save nobody is left to see.** With the note open, any failure but
+offline is a state on screen — "Couldn't save" with Try again, or the
+conflict prompt — and nothing is queued: the text is in the editor. Once the
+screen has gone (Back inside the debounce, a blur's save still on the wire)
+the draft exists nowhere else, so the PATCH is parked, under the version the
+save carried:
+
+- A timeout, a 5xx or a 401 after a failed refresh may pass later: a live
+  entry, sent by the flush. One whose first sending did land loses the
+  version check and is retired; read back, the server's copy has every field
+  it names (`holdsAll`) and it is forgotten with no prompt.
+- A 409, or a refusal on the edit's merits (`isTerminal`), is parked already
+  retired (`retired`, at the attempt ceiling; `refused` on the payload says
+  which). The flush never sends it; only a tap on the prompt does.
+- A draft left on screen under "Couldn't save" or the conflict prompt is
+  parked retired the same way as the screen unmounts — a passing failure
+  included, so it is not retried and the offline banner does not count it;
+  the note says so when it is next opened. A prompt that was itself read
+  back from the queue is parked too, since the field stays editable under
+  it; the next visit asks again with what was typed.
+
+Three rules keep a parked text from being paired with a version newer than
+the copy it was written over, which the server would accept over that copy,
+and keep it in front of the person who typed it:
+
+- **The editor shows what the device holds.** Whenever an entry exists for
+  the note, live or retired, an editor with nothing of its own is loaded
+  with the entry's fields over the note's, on the entry's version — whatever
+  copy the note was read from. Home's list and body prefetch replace the
+  device's copy with the server's, and an editor opened on that showed the
+  server's text with the held edit out of sight: one keystroke with no
+  connection replaced the entry's text. Shown, new typing extends it; on the
+  entry's version, a save from there is refused if the note has moved, which
+  is the prompt. The read-back's prompt keeps whatever was typed while it
+  was fetching the server's copy, and a save refused on screen from such an
+  editor is judged against the entry's `base`.
+
+- **A retired entry stays retired, on its own version**, whatever is parked
+  over it — a draft typed under its prompt, or an offline keystroke from an
+  editor that never showed the prompt. The server turned that base down, the
+  editor may since have been loaded from the server's newer copy, and only
+  an answered prompt (Keep my edits, Send it again) moves the text onto a
+  newer version. The flush never sends it.
+- **The cached copy carries the entry's version.** `park` writes the draft
+  into the note's caches so the device shows what it holds, stamped with the
+  version the entry carries rather than the note's: the screen's poll may
+  have read the note again under an unanswered prompt, and the next editor
+  is loaded from the cache and stamps its saves with what it finds there.
+
+A retired entry whose note is gone is removed: by the purge on this device
+(`useDeleteNoteForever`), or by a read-back answered 404. "Use the newer
+version" (and "Drop my edit") forgets the entry and writes the copy taken
+into the caches, so the dropped draft `park` left there does not come back.
+
+Every parked entry carries what the edit was made over (`base`: the body and
+the recordings filed by then; a replacement keeps the entry's own). The
+read-back judges the server's copy against it, and against the copy it has
+just fetched — so the prompt names a recording filed since, and "Keep my
+edits and add the recording" adds everything filed since the edit, however
+many times the note moved before it was reopened.
+
+Nothing is parked after sign-out (`Session.left`): the stores have been
+emptied for the next person, and a save still on the wire must not write a
+note back into them.
 
 **The flush** (`queue.flush`, run by `useOfflineQueue`) walks entries oldest
 first and never overlaps itself: a reconnect and a window focus landing
@@ -134,12 +202,28 @@ it loaded, and that never changes, so replaying it is eight guaranteed
 conflicts for an outcome settled at the first. The entry stays; back online,
 the editor reads the held body, fetches the server's copy and shows the
 conflict prompt — Keep my edits, or Use the newer version
-(`append-vs-autosave.md`). Keep sends the held body on the newer version;
+(`append-vs-autosave.md`) — with the recording warning and "Keep my edits and
+add the recording" when the entry was parked with them. When the server has
+not moved, an entry the flush itself gave up on is sent once more on its
+version; one the editor parked retired — out of a prompt, a refusal or
+"Couldn't save" — is asked about instead, whichever it was: "That edit did
+not save", Send it again or Drop my edit. So an edit the server will never
+take is neither re-sent on every visit nor impossible to drop, and an edit
+left under a prompt is never sent without a tap even if it was stored on the
+server's own version. The read-back reads the entry again after its fetch:
+"Use the newer version" tapped as a hung fetch answers has dropped the entry
+by then, and there is nothing to ask. Try again under a
+retired entry's "did not save" runs the read-back again. Keep sends the
+held body on the newer version;
 either choice clears the entry (`clearQueuedEdit`). A direct save made online
-while an entry is still pending sends the held fields under its own
-(`queuedEditFor` carries the body), since it clears the entry once it lands:
-the reopened note's copy already reads as the queued text, so the save's own
-diff alone would drop a field queued offline. It forgets the entry only
+while the device holds an entry, live or retired, sends the entry's fields at
+the draft's values with its own (`queuedEditFor` carries the body), since it
+clears the entry once it lands: the editor was loaded from the held text, so
+the save's own diff alone would drop a field queued offline — or, for a
+retired entry on a note that has not moved, save a tag, forget the entry and
+leave the refused edit's text unsent under "Saved". The version is the
+editor's, which with an entry shown is the entry's own: a note that has moved
+refuses the save and the prompt follows. It forgets the entry only
 under the key it carried (`clearQueuedEdit`), so a keystroke queued while it
 was on the wire is kept.
 

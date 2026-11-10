@@ -52,6 +52,8 @@ export interface ApiState {
   dropNoteGets: number;
   /** Forces the next PATCH to return 409 once. */
   conflictOnce: boolean;
+  /** Refuses a PATCH whose `version` is not the note's, as the server does. */
+  checkVersion: boolean;
   /**
    * Makes every PATCH fail on its merits, as a validation error does. Set to
    * exercise a queued edit the server will never accept, however often it is
@@ -242,6 +244,7 @@ export function freshState(): ApiState {
     offline: false,
     dropNoteGets: 0,
     conflictOnce: false,
+    checkVersion: false,
     rejectPatch: null,
     purged: [],
     deletedCaptures: [],
@@ -876,6 +879,14 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
           return;
         }
         const body = request.postDataJSON() as Record<string, unknown>;
+        if (state.checkVersion && body['version'] !== note.version) {
+          await problem(route, 409, {
+            title: 'Someone else changed this first',
+            detail: 'This note was updated elsewhere.',
+            current_version: note.version,
+          });
+          return;
+        }
         // As `handler/body.go` `checkTitle` answers a blank title.
         if (typeof body['title'] === 'string' && body['title'].trim() === '') {
           await problem(route, 400, { title: 'That request was not valid', detail: 'title is required' });

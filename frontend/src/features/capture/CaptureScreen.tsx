@@ -8,7 +8,6 @@ import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { Icon, type IconName } from '@/components/Icon.tsx';
 import { useReducedMotion } from '@/hooks/useReducedMotion.ts';
 
-import { ReviewPlayer } from './ReviewPlayer.tsx';
 import { TargetChooser } from './TargetChooser.tsx';
 import { Waveform } from './Waveform.tsx';
 import {
@@ -28,6 +27,17 @@ import { useCaptureStore } from './store.ts';
 // the first screen needs against a fixed budget (check-bundle).
 const TypedThought = lazy(() =>
   import('./TypedThought.tsx').then((module) => ({ default: module.TypedThought })),
+);
+// Likewise: only a take that is listened back to needs its player, and that
+// is after Stop. The service worker precaches the chunk.
+const ReviewPlayer = lazy(() =>
+  import('./ReviewPlayer.tsx').then(
+    (module) => ({ default: module.ReviewPlayer }),
+    // The chunk could not be fetched — offline before the worker cached it,
+    // or a deploy since. Listening back is lost, until a reload: `lazy`
+    // keeps what the import answered. Send and Discard are not.
+    () => ({ default: () => <div className="capture__waveform" /> }),
+  ),
 );
 
 /**
@@ -274,12 +284,14 @@ export function CaptureScreen() {
               the recording's own waveform, scrollable and seekable, with
               play/pause.
             */
-            <ReviewPlayer
-              key={model.localId}
-              clip={clip}
-              envelope={reviewEnvelope}
-              durationMs={model.elapsedMs}
-            />
+            <Suspense fallback={<div className="capture__waveform" />}>
+              <ReviewPlayer
+                key={model.localId}
+                clip={clip}
+                envelope={reviewEnvelope}
+                durationMs={model.elapsedMs}
+              />
+            </Suspense>
           ) : (
             <div className="capture__waveform">
               {/*

@@ -47,6 +47,13 @@ export class Session {
    * is a sign-out that did not sign anybody out.
    */
   private generation = 0;
+  /**
+   * Signed out, not merely expired: the device's stores have been emptied
+   * for the next person, and a save still on the wire must not write a note
+   * back into them when it fails (`useNoteEditor` `park`). An expired
+   * session keeps its data, and its unsent edit is still parked.
+   */
+  left = false;
 
   constructor(
     private readonly store: TokenStore,
@@ -64,6 +71,7 @@ export class Session {
   }
 
   set(tokens: TokenSet): void {
+    this.left = false;
     this.tokens = tokens;
     this.store.write(tokens);
     this.emit();
