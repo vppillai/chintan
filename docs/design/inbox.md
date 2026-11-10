@@ -169,7 +169,9 @@ those plus the probes.
   the id in the note's Details). The text
   is written where the transcript would be (`RawKey`), the row starts at `transcribed`
   with no audio key and no duration, and the API invokes the worker since no
-  object lands to wake it. The pipeline gates transcription on `RawKey` being
+  object lands to wake it. A hand-off that fails removes the row and the
+  text before the request answers its error, so the sender's retry is the
+  only copy and the reaper has nothing to file beside it. The pipeline gates transcription on `RawKey` being
   empty, so it routes, cleans and appends the text as it would a transcript;
   the destination note's own language never sends it to the provider either
   (`wantsNoteLanguage` needs an audio key), "Transcribe again" refuses it
