@@ -461,8 +461,10 @@ func (s *CaptureService) IngestText(ctx context.Context, userID string, req Capt
 		// a new capture. A row left at transcribed would be filed by the
 		// reaper a quarter of an hour on, beside that second one, so the
 		// thought would be in the notes twice. Should the hand-off have been
-		// delivered after all, the worker finds no row and ends quietly
-		// (pipeline.runCapture).
+		// delivered after all, a worker that starts after this finds no row
+		// and ends quietly (pipeline.runCapture). One that was already past
+		// its append claim files the text anyway, beside the retry: an
+		// invoke that reports a fault and delivers leaves no way to tell.
 		if derr := deleteObjectIfPresent(ctx, s.objects, rawKey); derr != nil {
 			obs.Log(ctx).Warn("could not remove the text of a capture whose hand-off failed",
 				slog.String("capture_id", stored.ID),

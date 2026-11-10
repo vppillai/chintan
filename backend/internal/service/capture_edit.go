@@ -39,9 +39,9 @@ const maxBodyEditAttempts = 5
 // alike.
 const MaxIndexRefreshAttempts = 5
 
-// errNoteBusy refuses a cut or an insert on a note another recording's
-// paragraph is being written into right now. The row holds one stamp, so
-// stamping over a live one would leave that write unguarded.
+// errNoteBusy refuses a cut or an insert on a note that carries another
+// capture's stamp which did not clear in noteBusyWait. The row holds one
+// stamp, so stamping over a live one would leave that write unguarded.
 var errNoteBusy = errors.New("a recording is being added to the note")
 
 // StampNoteForBodyWrite puts captureID's append stamp on the note row under
@@ -79,16 +79,40 @@ func StampNoteForBodyWrite(ctx context.Context, store repository.Store, userID, 
 	}
 }
 
-// stampNote is StampNoteForBodyWrite on the request path, which does not
-// wait: another capture's live stamp means the worker is writing that body
-// right now (the worker waits on ours, pipeline.stampNoteAppend), and the
-// request is refused for the person to repeat.
+// noteBusyWait is how long a delete or a move waits for another capture's
+// stamp on the same note to clear before it is refused, and noteBusyPoll how
+// often it looks. A stamp is held for a handful of store calls, and the
+// Recordings tab deletes a selection as one request per recording, all at
+// once: refused outright, every sibling that met the first one's stamp
+// answered 409 and the person repeated the delete once per recording. Three
+// seconds is far above that span and far below the gateway's 29.
+const (
+	noteBusyWait = 3 * time.Second
+	noteBusyPoll = 100 * time.Millisecond
+)
+
+// stampNote is StampNoteForBodyWrite on the request path. Another capture's
+// stamp younger than noteBusyWait is a write in flight — a sibling delete or
+// move, or the worker's append — and is waited out for at most that long. An
+// older one was left by a writer that died or failed before its refresh;
+// it is never stamped over (the row holds one stamp, and that write's guard
+// would go with it), so the request is refused for the person to repeat.
 func (s *CaptureService) stampNote(ctx context.Context, userID, noteID, captureID string) error {
+	giveUp := time.Now().Add(noteBusyWait)
 	return StampNoteForBodyWrite(ctx, s.store, userID, noteID, captureID, s.now, func(note model.NoteIndex) (bool, error) {
-		if note.AppendingCapture != captureID && AppendInProgress(note, s.now()) {
+		if note.AppendingCapture == captureID || !AppendInProgress(note, s.now()) {
+			return false, nil
+		}
+		at, err := model.ParseTime(note.AppendingAt)
+		if err != nil || s.now().Sub(at) >= noteBusyWait || !time.Now().Before(giveUp) {
 			return false, errNoteBusy
 		}
-		return false, nil
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(noteBusyPoll):
+			return true, nil
+		}
 	})
 }
 
@@ -194,10 +218,12 @@ func (s *CaptureService) DeleteCapture(ctx context.Context, userID, captureID st
 // The row is stamped before the cut and the refresh clears the stamp, as an
 // append does, so an editor save cannot land between the two and write the
 // paragraph back from a draft that still holds it. The refresh runs whenever
-// the paragraph was there or the capture was appended, not only when this
-// call cut: a delete whose refresh failed is repeated, finds nothing left to
-// cut, and must still take the words out of the search text and clear the
-// stamp the first attempt left.
+// the paragraph was there, the capture was appended or the row still carries
+// this capture's stamp, not only when this call cut: a delete whose refresh
+// failed is repeated, finds nothing left to cut, and must still take the
+// words out of the search text and clear the stamp the first attempt left —
+// whatever the capture's status, since a recording whose retranscription
+// failed keeps its paragraph.
 func (s *CaptureService) cutFromNote(ctx context.Context, userID string, note model.NoteIndex, capture model.CaptureIndex) (*model.NoteIndex, error) {
 	body, err := s.objects.Get(ctx, note.S3MarkdownKey)
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
@@ -217,7 +243,7 @@ func (s *CaptureService) cutFromNote(ctx context.Context, userID string, note mo
 			s.clearNoteStamp(ctx, userID, note.ID, capture.ID)
 			return nil, fmt.Errorf("failed to remove the paragraph from the note: %w", err)
 		}
-	} else if capture.Status != model.StatusAppended {
+	} else if capture.Status != model.StatusAppended && note.AppendingCapture != capture.ID {
 		return nil, nil
 	}
 	refreshed, err := RefreshNoteIndex(ctx, s.store, s.objects, userID, note.ID, RefreshOptions{ClearAppendStampFor: capture.ID})

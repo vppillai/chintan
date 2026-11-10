@@ -266,6 +266,10 @@ func (i invoker) InvokeRegenerateNote(_ context.Context, tenantID, noteID string
 	return i.send(pipeline.Invocation{Task: pipeline.TaskRegenerateNote, TenantID: tenantID, NoteID: noteID, CaptureIDs: captureIDs})
 }
 
+func (i invoker) InvokeRegenerateRest(_ context.Context, tenantID, noteID string, captureIDs []string, landed bool) error {
+	return i.send(pipeline.Invocation{Task: pipeline.TaskRegenerateNote, TenantID: tenantID, NoteID: noteID, CaptureIDs: captureIDs, Landed: landed})
+}
+
 // counter is the instance spend row over a map.
 type counter struct {
 	mu     sync.Mutex

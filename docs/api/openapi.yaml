@@ -1006,7 +1006,9 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: |
-            The capture is still moving through the pipeline. Deleting it
+            Either another recording is being written into the capture's note
+            and did not finish within a few seconds — repeat the delete in a
+            moment — or the capture is still moving through the pipeline. Deleting it
             while the worker may be writing its paragraph would leave the
             text behind with nothing pointing at it; wait for a terminal
             status. A capture that has not moved for 15 minutes may be

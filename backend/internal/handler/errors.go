@@ -39,8 +39,8 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		httperr.Conflict(w, r, "the note is archived; restore it first", nil)
 	case errors.Is(err, service.ErrAppendInProgress):
 		// updateNote answers this itself with the current version; this arm is
-		// for any other path that writes a body through the notes service.
-		httperr.Conflict(w, r, "a recording is being added to this note; send the same save again in a moment", nil)
+		// for the other writers of a body, a recording's delete among them.
+		httperr.Conflict(w, r, "a recording is being added to this note; try again in a moment", nil)
 	case errors.Is(err, service.ErrCaptureTerminal):
 		httperr.Conflict(w, r, "the capture has already finished", nil)
 	case errors.Is(err, service.ErrCaptureAlreadyTargeted):

@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
@@ -168,24 +170,90 @@ func TestDeleteCaptureRetryAfterAFailedRefreshStillRefreshesTheIndex(t *testing.
 	}
 }
 
-// The row holds one stamp. A delete or a move that met another recording's
-// live stamp and stamped over it would leave that append unguarded, so both
-// are refused and change nothing.
-func TestDeleteAndMoveAreRefusedWhileAnotherRecordingIsBeingAppended(t *testing.T) {
+// The Recordings tab deletes a selection as one request per recording, all
+// at once. Each delete stamps the note, so a sibling arriving inside the
+// first one's stamp has to wait its turn: refused outright, a selection of
+// N came back as one deleted and N-1 answered 409.
+func TestASecondDeleteArrivingInsideTheFirstWaitsItsTurn(t *testing.T) {
+	h := newEditHarness(t)
+	body := CaptureMarker("c_1") + "\nFirst dictation.\n\n" + CaptureMarker("c_2") + "\nSecond dictation."
+	note := h.note("u1", "Kitchen", body)
+	h.appended("u1", note.ID, "c_1", "2026-01-01T10:00:00.000000000Z")
+	h.appended("u1", note.ID, "c_2", "2026-01-01T11:00:00.000000000Z")
+
+	// The sibling's request starts right after the first one's cut, while
+	// its stamp stands, and is still running when the first one refreshes.
+	second := make(chan error, 1)
+	hooked := &hookObjects{Objects: h.objects}
+	hooked.after = func() {
+		go func() { second <- h.captures.DeleteCapture(h.ctx, "u1", "c_2") }()
+		time.Sleep(50 * time.Millisecond) // long enough for the sibling to meet the stamp
+	}
+	first := NewCaptureService(h.store, hooked).WithNoteCreator(h.notes)
+	if err := first.DeleteCapture(h.ctx, "u1", "c_1"); err != nil {
+		t.Fatalf("first delete: %v", err)
+	}
+	if err := <-second; err != nil {
+		t.Fatalf("second delete: %v, want it to wait out the first one's stamp", err)
+	}
+	if got := h.body(note); got != "" {
+		t.Errorf("body = %q, want both paragraphs cut", got)
+	}
+	h.unstamped("u1", note.ID)
+}
+
+func TestDeletingASelectionOfOneNotesRecordingsAtOnceDeletesThemAll(t *testing.T) {
+	h := newEditHarness(t)
+	ids := []string{"c_1", "c_2", "c_3", "c_4"}
+	var body []string
+	for _, id := range ids {
+		body = append(body, CaptureMarker(id)+"\nDictation "+id+".")
+	}
+	note := h.note("u1", "Kitchen", "typed intro\n\n"+strings.Join(body, "\n\n"))
+	for i, id := range ids {
+		h.appended("u1", note.ID, id, fmt.Sprintf("2026-01-01T1%d:00:00.000000000Z", i))
+	}
+
+	errs := make(chan error, len(ids))
+	for _, id := range ids {
+		go func() { errs <- h.captures.DeleteCapture(h.ctx, "u1", id) }()
+	}
+	for range ids {
+		if err := <-errs; err != nil {
+			t.Errorf("a delete of the selection: %v", err)
+		}
+	}
+	if got := h.body(note); got != "typed intro" {
+		t.Errorf("body = %q, want the typed line alone", got)
+	}
+	if after := h.unstamped("u1", note.ID); strings.Contains(after.SearchText, "dictation") {
+		t.Errorf("search text still holds deleted words: %q", after.SearchText)
+	}
+}
+
+// The wait is for a write in flight. A stamp that has stood past it was left
+// by a writer that died before its refresh; the row holds one stamp, and a
+// delete or a move that stamped over it would leave that write unguarded, so
+// both are refused, at once, and change nothing.
+func TestDeleteAndMoveAreRefusedUnderAnotherRecordingsStandingStamp(t *testing.T) {
 	h := newEditHarness(t)
 	body := CaptureMarker("c_1") + "\nFirst dictation."
 	note := h.note("u1", "Kitchen", body)
 	dst := h.note("u1", "Garden", "")
 	h.appended("u1", note.ID, "c_1", "2026-01-01T10:00:00.000000000Z")
-	if _, err := h.store.StampNoteAppend(h.ctx, "u1", note.ID, "c_other", note.Version, h.captures.now()); err != nil {
+	if _, err := h.store.StampNoteAppend(h.ctx, "u1", note.ID, "c_other", note.Version, h.captures.now().Add(-time.Minute)); err != nil {
 		t.Fatal(err)
 	}
+	started := time.Now()
 
 	if err := h.captures.DeleteCapture(h.ctx, "u1", "c_1"); !errors.Is(err, ErrAppendInProgress) {
 		t.Errorf("DeleteCapture = %v, want ErrAppendInProgress", err)
 	}
 	if _, _, err := h.captures.MoveCapture(h.ctx, "u1", "c_1", dst.ID); !errors.Is(err, ErrMoveIncomplete) {
 		t.Errorf("MoveCapture = %v, want ErrMoveIncomplete", err)
+	}
+	if waited := time.Since(started); waited > time.Second {
+		t.Errorf("the refusals took %s; a stamp that old is not waited on", waited)
 	}
 	if got := h.body(note); got != body {
 		t.Errorf("source body = %q, want it untouched", got)
@@ -199,6 +267,32 @@ func TestDeleteAndMoveAreRefusedWhileAnotherRecordingIsBeingAppended(t *testing.
 	h.unstamped("u1", dst.ID)
 	if _, err := h.store.GetCapture(h.ctx, "u1", "c_1"); err != nil {
 		t.Errorf("capture row: %v, want it kept", err)
+	}
+}
+
+// A recording whose retranscription failed keeps its paragraph, so its delete
+// stamps and cuts like any other. When that delete's refresh failed, the
+// repeat found no marker and a status that is not appended, skipped the
+// refresh, and left the stamp refusing saves on the note for the lease.
+func TestDeleteRetryOfAFailedRecordingClearsTheStampItsFirstAttemptLeft(t *testing.T) {
+	h := newEditHarness(t)
+	body := "typed intro\n\n" + CaptureMarker("c_1") + "\nFirst dictation."
+	note := h.note("u1", "Kitchen", body)
+	c := h.appended("u1", note.ID, "c_1", "2026-01-01T10:00:00.000000000Z")
+	c.Status, c.AppendedAt = model.StatusFailed, 0
+	if _, err := h.store.PutCapture(h.ctx, c); err != nil {
+		t.Fatal(err)
+	}
+
+	flaky := NewCaptureService(&failPutNoteOnce{Store: h.store}, h.objects).WithNoteCreator(h.notes)
+	if err := flaky.DeleteCapture(h.ctx, "u1", "c_1"); err == nil {
+		t.Fatal("want the first delete to fail at the refresh")
+	}
+	if err := h.captures.DeleteCapture(h.ctx, "u1", "c_1"); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if after := h.unstamped("u1", note.ID); strings.Contains(after.SearchText, "first dictation") {
+		t.Errorf("search text still holds the deleted words: %q", after.SearchText)
 	}
 }
 

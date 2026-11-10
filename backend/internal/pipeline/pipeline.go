@@ -118,7 +118,7 @@ type NoteCreator interface {
 // regeneration that would not fit this invocation.
 type NoteCleanInvoker interface {
 	InvokeCleanNote(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode, requestedAt string) error
-	InvokeRegenerateNote(ctx context.Context, tenantID, noteID string, captureIDs []string) error
+	InvokeRegenerateRest(ctx context.Context, tenantID, noteID string, captureIDs []string, landed bool) error
 }
 
 // Config is everything the pipeline needs. Breaker is not optional: a nil one

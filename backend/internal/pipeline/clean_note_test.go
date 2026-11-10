@@ -300,16 +300,18 @@ type recordingCleanInvoker struct {
 	calls       []string
 	stamps      []string
 	regenerated [][]string
+	landed      []bool
 	err         error
 }
 
-func (r *recordingCleanInvoker) InvokeRegenerateNote(_ context.Context, _, _ string, captureIDs []string) error {
+func (r *recordingCleanInvoker) InvokeRegenerateRest(_ context.Context, _, _ string, captureIDs []string, landed bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.err != nil {
 		return r.err
 	}
 	r.regenerated = append(r.regenerated, append([]string(nil), captureIDs...))
+	r.landed = append(r.landed, landed)
 	return nil
 }
 

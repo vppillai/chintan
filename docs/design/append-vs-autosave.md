@@ -73,9 +73,13 @@ race made deterministic.
    before it cuts the paragraph (`cutFromNote`), and a regeneration stamps a
    checklist before it withdraws a recording's items (`dropReplacedItems`).
    Each clears its stamp with the refresh that follows its write. The two on
-   the request path do not wait: a delete or a move that meets another
-   recording's live stamp is refused rather than stamp over a worker's (409
-   for the delete, the move's "nothing was changed; try again").
+   the request path wait too, more briefly (`stampNote`, `noteBusyWait`,
+   3 s): the Recordings tab deletes or moves a selection as one request per
+   recording, all at once, and each sibling sits out the stamp of the one
+   before it. They never stamp over: a stamp that has stood longer than
+   that was left by a writer that died before its refresh, and the delete or
+   move is refused at once (409 for the delete, the move's "nothing was
+   changed; try again") until that writer's retry or the lease clears it.
 2. **Clear after completing.** The worker's `RefreshNoteIndex` publishes the
    paragraph's snippet and search text and bumps the version, so the row's
    version is once more a witness of the body; the stamp stays until
@@ -89,7 +93,9 @@ race made deterministic.
    clear their stamps with the refresh of each note they wrote
    (`ClearAppendStampFor`); a delete whose refresh failed leaves its stamp
    standing, and its repeat — which finds nothing left to cut — refreshes
-   anyway, because the capture is `appended`, and clears it. An append, a
+   anyway, because the capture is `appended` or the row still names it, and
+   clears it. The item withdrawal hands its stamp back when its refresh
+   fails, since nothing repeats it. An append, a
    delete or a move that stops without writing hands the stamp back with
    `ClearNoteAppend`.
 3. **Refuse the save.** `UpdateNote` refuses a body write with

@@ -94,6 +94,20 @@ func (i *Invoker) InvokeRegenerateNote(ctx context.Context, tenantID, noteID str
 	})
 }
 
+// InvokeRegenerateRest queues the rest of a regeneration that ran out of
+// time, for the worker itself: InvokeRegenerateNote plus whether the run has
+// already changed the body (Invocation.Landed).
+func (i *Invoker) InvokeRegenerateRest(ctx context.Context, tenantID, noteID string, captureIDs []string, landed bool) error {
+	return i.invoke(ctx, Invocation{
+		Task:          TaskRegenerateNote,
+		TenantID:      tenantID,
+		NoteID:        noteID,
+		CaptureIDs:    captureIDs,
+		Landed:        landed,
+		CorrelationID: obs.CorrelationID(ctx),
+	})
+}
+
 func (i *Invoker) invoke(ctx context.Context, inv Invocation) error {
 	payload, err := json.Marshal(inv)
 	if err != nil {

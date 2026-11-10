@@ -171,7 +171,9 @@ those plus the probes.
   with no audio key and no duration, and the API invokes the worker since no
   object lands to wake it. A hand-off that fails removes the row and the
   text before the request answers its error, so the sender's retry is the
-  only copy and the reaper has nothing to file beside it. The pipeline gates transcription on `RawKey` being
+  only copy and the reaper has nothing to file beside it. (An invoke that
+  reported a fault and was delivered all the same can still file the first
+  copy, if its worker got as far as the append before the row went.) The pipeline gates transcription on `RawKey` being
   empty, so it routes, cleans and appends the text as it would a transcript;
   the destination note's own language never sends it to the provider either
   (`wantsNoteLanguage` needs an audio key), "Transcribe again" refuses it

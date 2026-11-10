@@ -300,7 +300,8 @@ func TestRegenerateTaskSkipsWhatIsDoneAndChoosesForItselfWhenGivenNoIds(t *testi
 // A regeneration that would not fit the invocation hands the rest to another
 // one instead of running into the worker's timeout, and the recordings it
 // passes on get a fresh progress time, so the reaper does not take one that
-// is only waiting its turn down a capture's ordinary path.
+// is only waiting its turn down a capture's ordinary path. Every link tries
+// its first recording whatever the clock says, so a chain always ends.
 func TestRegenerateHandsTheRestToAnotherInvocationWhenItIsOutOfTime(t *testing.T) {
 	llmFake := &fake.LLM{Response: "Again, past the twelve words that a tidy would take."}
 	h := newHarness(t, harnessOpts{llm: llmFake})
@@ -317,36 +318,40 @@ func TestRegenerateHandsTheRestToAnotherInvocationWhenItIsOutOfTime(t *testing.T
 	}
 	seedTranscribedInto(t, h, note, "c_1", "one and on past the twelve words that a tidy would take", "", "One.")
 	seedTranscribedInto(t, h, note, "c_2", "two and on past the twelve words that a tidy would take", "", "Two.")
+	seedTranscribedInto(t, h, note, "c_3", "three and on past the twelve words that a tidy would take", "", "Three.")
 	reset := h.clock.Now()
-	for _, id := range []string{"c_1", "c_2"} {
+	for _, id := range []string{"c_1", "c_2", "c_3"} {
 		c, _ := h.store.GetCapture(ctx, "user1", id)
 		service.ResetForRegenerate(&c, reset)
+		if id == "c_3" {
+			c.Status = model.StatusCleaning // an earlier attempt died in its cleanup
+		}
 		if _, err := h.store.PutCapture(ctx, c); err != nil {
 			t.Fatal(err)
 		}
 	}
-	before, _ := h.objects.Get(ctx, note.S3MarkdownKey)
 	h.clock.Advance(10 * time.Minute)
 
 	// Less than the budget left of the invocation.
 	short, cancel := context.WithTimeout(ctx, regenerateBudget-time.Minute)
 	defer cancel()
-	if err := h.pipeline.RegenerateNote(short, "user1", "note1", []string{"c_1", "c_2"}); err != nil {
+	ids := []string{"c_1", "c_2", "c_3"}
+	if err := h.pipeline.RegenerateNote(short, "user1", "note1", ids); err != nil {
 		t.Fatalf("RegenerateNote: %v", err)
 	}
-	if len(invoker.regenerated) != 1 || !slices.Equal(invoker.regenerated[0], []string{"c_1", "c_2"}) {
-		t.Fatalf("handed on = %v, want one task naming c_1 and c_2", invoker.regenerated)
+	if len(invoker.regenerated) != 1 || !slices.Equal(invoker.regenerated[0], []string{"c_2", "c_3"}) || !invoker.landed[0] {
+		t.Fatalf("handed on = %v (landed %v), want one task naming c_2 and c_3 and saying the body changed", invoker.regenerated, invoker.landed)
 	}
-	if n := llmFake.Calls(); n != 0 {
-		t.Errorf("cleanup calls = %d, want none started with no time to finish", n)
+	if n := llmFake.Calls(); n != 1 {
+		t.Errorf("cleanup calls = %d, want one: the first recording runs, the rest have no time", n)
 	}
-	if got, _ := h.objects.Get(ctx, note.S3MarkdownKey); string(got) != string(before) {
-		t.Errorf("body changed: %q", got)
+	if c, _ := h.store.GetCapture(ctx, "user1", "c_1"); c.Status != model.StatusAppended {
+		t.Errorf("c_1 = %s, want appended", c.Status)
 	}
-	for _, id := range []string{"c_1", "c_2"} {
+	for _, id := range []string{"c_2", "c_3"} {
 		c, _ := h.store.GetCapture(ctx, "user1", id)
-		if c.Status != model.StatusTranscribed || c.LastProgressAt != model.FormatTime(h.clock.Now()) {
-			t.Errorf("%s = %s, last progress %s; want transcribed and touched at the hand-off (%s)", id, c.Status, c.LastProgressAt, model.FormatTime(h.clock.Now()))
+		if service.CaptureIsTerminal(c.Status) || c.LastProgressAt != model.FormatTime(h.clock.Now()) {
+			t.Errorf("%s = %s, last progress %s; want waiting and touched at the hand-off (%s)", id, c.Status, c.LastProgressAt, model.FormatTime(h.clock.Now()))
 		}
 		if service.CaptureStuck(c, h.clock.Now().Add(10*time.Minute)) {
 			t.Errorf("%s reads as stuck ten minutes after the hand-off; the reaper would run it as an ordinary capture", id)
@@ -356,7 +361,7 @@ func TestRegenerateHandsTheRestToAnotherInvocationWhenItIsOutOfTime(t *testing.T
 	// A hand-off that is refused fails the task, so Lambda retries it rather
 	// than leaving the rest with nobody.
 	invoker.err = errors.New("lambda: 429 TooManyRequestsException")
-	if err := h.pipeline.RegenerateNote(short, "user1", "note1", []string{"c_1", "c_2"}); err == nil {
+	if err := h.pipeline.RegenerateNote(short, "user1", "note1", ids); err == nil {
 		t.Fatal("RegenerateNote succeeded though the rest could not be handed on")
 	}
 	invoker.err = nil
@@ -365,9 +370,47 @@ func TestRegenerateHandsTheRestToAnotherInvocationWhenItIsOutOfTime(t *testing.T
 	if err := h.pipeline.RegenerateNote(ctx, "user1", "note1", invoker.regenerated[0]); err != nil {
 		t.Fatalf("the continuation: %v", err)
 	}
-	got, _ := h.objects.Get(ctx, note.S3MarkdownKey)
-	if want := service.CaptureMarker("c_1") + "\nAgain, past the twelve words that a tidy would take.\n\n" + service.CaptureMarker("c_2") + "\nAgain, past the twelve words that a tidy would take."; string(got) != want {
-		t.Fatalf("body after the continuation:\n%s\nwant:\n%s", got, want)
+	for _, id := range ids {
+		if c, _ := h.store.GetCapture(ctx, "user1", id); c.Status != model.StatusAppended {
+			t.Errorf("%s after the continuation = %s, want appended", id, c.Status)
+		}
+	}
+	if len(invoker.regenerated) != 1 {
+		t.Errorf("hand-offs = %v, want none from a link with time", invoker.regenerated)
+	}
+}
+
+// The link that finishes a run regenerates the whole-note view when any link
+// changed the body, not only when one of its own recordings landed: the last
+// link's recordings may all have failed or been deleted meanwhile.
+func TestTheLastLinkOfARegenerationCleansTheViewAnEarlierLinkOwes(t *testing.T) {
+	for _, landed := range []bool{true, false} {
+		llmFake := &fake.LLM{NoteResponse: "# Roof\n\nThe new view."}
+		h := newHarness(t, harnessOpts{llm: llmFake})
+		ctx := context.Background()
+		if _, err := h.store.PutNote(ctx, "user1", model.NoteIndex{
+			ID: "note1", Title: "Roof", UpdatedAt: model.Now(),
+			S3MarkdownKey: "tenants/user1/notes/note1/note.md",
+			S3MetaKey:     "tenants/user1/notes/note1/meta.json",
+			CleanedBody:   "# Roof\n\nThe old view.", CleanedMode: model.NoteCleanStructured, CleanedAt: model.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.objects.Put(ctx, "tenants/user1/notes/note1/note.md", []byte("The body an earlier link rewrote."), "text/markdown"); err != nil {
+			t.Fatal(err)
+		}
+		// The one recording left to this link was deleted while it waited.
+		raw, _ := json.Marshal(Invocation{Task: TaskRegenerateNote, TenantID: "user1", NoteID: "note1", CaptureIDs: []string{"c_gone"}, Landed: landed})
+		if err := NewWorker(h.pipeline).Handle(ctx, raw); err != nil {
+			t.Fatalf("Handle: %v", err)
+		}
+		want := 0
+		if landed {
+			want = 1
+		}
+		if calls := llmFake.NoteCalls(); len(calls) != want {
+			t.Errorf("landed=%v: whole-note calls = %d, want %d", landed, len(calls), want)
+		}
 	}
 }
 
