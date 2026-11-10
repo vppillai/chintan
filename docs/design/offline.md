@@ -128,11 +128,26 @@ save carried:
   parked retired the same way as the screen unmounts — a passing failure
   included, so it is not retried and the offline banner does not count it;
   the note says so when it is next opened. A prompt that was itself read
-  back from the queue is re-parked too, since the field stays editable
-  under it, but under the entry's own version, never the editor's: by then
-  the editor has been loaded from the server's newer copy, and a PATCH
-  stamped with that version would be accepted over it. The entry stays
-  retired, and the next visit asks again with what was typed.
+  back from the queue is parked too, since the field stays editable under
+  it; the next visit asks again with what was typed.
+
+Two rules keep a parked text from being paired with a version newer than the
+copy it was written over, which the server would accept over that copy:
+
+- **A retired entry stays retired, on its own version**, whatever is parked
+  over it — a draft typed under its prompt, or an offline keystroke from an
+  editor that never showed the prompt. The server turned that base down, the
+  editor may since have been loaded from the server's newer copy, and only
+  an answered prompt (Keep my edits, Send it again) moves the text onto a
+  newer version. The flush never sends it.
+- **The cached copy carries the entry's version.** `park` writes the draft
+  into the note's caches so the device shows what it holds, stamped with the
+  version the entry carries rather than the note's: the screen's poll may
+  have read the note again under an unanswered prompt, and the next editor
+  is loaded from the cache and stamps its saves with what it finds there.
+
+A retired entry whose note is gone is removed: by the purge on this device
+(`useDeleteNoteForever`), or by a read-back answered 404.
 
 Every parked entry carries what the edit was made over (`base`: the body and
 the recordings filed by then; a replacement keeps the entry's own). The

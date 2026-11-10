@@ -34,7 +34,8 @@ const ReviewPlayer = lazy(() =>
   import('./ReviewPlayer.tsx').then(
     (module) => ({ default: module.ReviewPlayer }),
     // The chunk could not be fetched — offline before the worker cached it,
-    // or a deploy since. Listening back is lost; Send and Discard are not.
+    // or a deploy since. Listening back is lost, until a reload: `lazy`
+    // keeps what the import answered. Send and Discard are not.
     () => ({ default: () => <div className="capture__waveform" /> }),
   ),
 );

@@ -17,6 +17,7 @@ import {
 import { useEffect } from 'react';
 
 import { cacheNoteDetail, cacheNoteList, forgetNote } from '@/offline/notesCache.ts';
+import { clearQueuedEdit } from '@/offline/queuedEdits.ts';
 
 import { useApi } from '../ApiProvider.tsx';
 import type {
@@ -603,6 +604,10 @@ export function useDeleteNoteForever() {
       // the user deliberately destroyed is the one disagreement between the two
       // copies that is not tolerable.
       remember(() => forgetNote(noteId), queryClient);
+      // With any edit to it the device still held: a retired one is never
+      // sent, so nothing else would remove it, and sign-out would go on
+      // warning of unsent work for a note that no longer exists.
+      remember(() => clearQueuedEdit(noteId).then(() => undefined), queryClient);
       // Removed, not invalidated: there is nothing left on the server to
       // refetch, and a refetch would 404 into an error the user cannot act on.
       queryClient.removeQueries({ queryKey: queryKeys.note(noteId) });

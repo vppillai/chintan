@@ -10,6 +10,7 @@ import { useOfflineQueue } from '@/offline/useOfflineQueue.ts';
 import { onAFakeClock } from '@/test/clock.ts';
 import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
+import { AUTOSAVE_DELAY_MS } from './autosave.ts';
 import { useNoteEditor } from './useNoteEditor.ts';
 
 /*
@@ -40,7 +41,7 @@ const capture = (id: string) =>
 const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The device opened the note at v3; the server holds `stored`. */
-function session(stored: NoteDetailWire, refuse: { patch?: number; get?: number } = {}) {
+function session(stored: NoteDetailWire, refuse: { patch?: number; get?: number; dark?: boolean } = {}) {
   const sent: Record<string, unknown>[] = [];
   const failing = { ...refuse };
   const json = (body: unknown, status = 200) =>
@@ -49,6 +50,7 @@ function session(stored: NoteDetailWire, refuse: { patch?: number; get?: number 
       headers: { 'content-type': status >= 400 ? 'application/problem+json' : 'application/json' },
     });
   const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+    if (failing.dark) throw new TypeError('Failed to fetch');
     if ((init?.method ?? 'GET') !== 'PATCH') {
       return failing.get ? json({ type: 'about:blank', title: 'Refused', status: failing.get }, failing.get) : json(stored);
     }
@@ -195,6 +197,88 @@ describe('a parked conflict is never sent without the user’s choice', () => {
   });
 });
 
+describe('a parked text is never paired with a version newer than the copy it was written over', () => {
+  it('an unanswered conflict, reopened with no connection, is not written over the newer copy by one more keystroke', async () => {
+    const server = session({ ...NOTE });
+    const first = server.open();
+    await waitFor(() => {
+      expect(first.result.current.model.draft.body).toBe('Start.');
+    });
+    // A recording is filed while the note is open; the save meets it.
+    Object.assign(server.stored, {
+      version: 4,
+      body: 'Start.\n\nFirst dictated paragraph.',
+      captures: [capture('cap-1')],
+    });
+    act(() => {
+      first.result.current.edit({ body: 'Start. Mine.' });
+    });
+    await act(async () => {
+      await first.result.current.saveNow();
+    });
+    expect(first.result.current.model.state).toBe('conflict');
+    // The screen's own poll for the recording reads the note again, under
+    // the prompt: the `note` the editor is handed is now the server's v4.
+    await act(() => server.queryClient.refetchQueries({ queryKey: queryKeys.note(NOTE.id) }));
+    await act(() => settle(100));
+    first.unmount();
+    await waitFor(async () => {
+      expect(await queuedEditFor(NOTE.id)).toMatchObject({ dead: true, body: { version: 3 } });
+    });
+    // The device's copy is my text at the version it was typed over. Cached
+    // at v4 it reopened as a clean v4 note, and the next save passed.
+    expect(server.queryClient.getQueryData(queryKeys.note(NOTE.id))).toMatchObject({
+      version: 3,
+      body: 'Start. Mine.',
+    });
+
+    // Reopened in a tunnel: no read-back, no prompt. One more word.
+    server.failing.dark = true;
+    const second = server.open();
+    await waitFor(() => {
+      expect(second.result.current.model.draft.body).toBe('Start. Mine.');
+    });
+    act(() => {
+      second.result.current.edit({ body: 'Start. Mine. More.' });
+    });
+    await settle(AUTOSAVE_DELAY_MS + 3_500);
+    // Still retired, still on its own version, with the new word.
+    expect(await queuedEditFor(NOTE.id)).toMatchObject({
+      dead: true,
+      body: { version: 3, body: 'Start. Mine. More.' },
+    });
+
+    delete server.failing.dark;
+    const before = server.sent.length;
+    await server.flush();
+    expect(server.sent, 'a retired entry is not sent').toHaveLength(before);
+    expect(server.stored.body).toBe('Start.\n\nFirst dictated paragraph.');
+  }, 15_000);
+
+  it('an offline save over a retired entry keeps it retired on its version, even from an editor on the server’s copy', async () => {
+    const server = session({ ...NOTE, version: 4, body: 'Written on the other device.' });
+    await server.typeAndLeave('Start. Mine.');
+    // The device has since read the server's copy; the prompt was never seen.
+    server.refetched();
+    server.failing.dark = true;
+    const view = server.open();
+    await waitFor(() => {
+      expect(view.result.current.model.draft.body).toBe('Written on the other device.');
+    });
+    act(() => {
+      view.result.current.edit({ body: 'Written on the other device. And by me.' });
+    });
+    await settle(AUTOSAVE_DELAY_MS + 3_500);
+
+    expect(await queuedEditFor(NOTE.id)).toMatchObject({ dead: true, refused: false, body: { version: 3 } });
+    delete server.failing.dark;
+    const before = server.sent.length;
+    await server.flush();
+    expect(server.sent).toHaveLength(before);
+    expect(server.stored).toMatchObject({ version: 4, body: 'Written on the other device.' });
+  }, 15_000);
+});
+
 describe('a recording filed while typing, then Back', () => {
   it('comes back as the prompt the screen would have shown: the recording named, its paragraph on offer', async () => {
     const server = session({
@@ -293,6 +377,37 @@ describe('the note moved again before the parked edit was read back', () => {
 });
 
 describe('an edit the server refused on its merits, then Back', () => {
+  it('left unanswered, is still an edit the server refused: the same prompt, not a conflict', async () => {
+    const server = session({ ...NOTE }, { patch: 413 });
+    await server.typeAndLeave('Start. Far too long.');
+    const second = server.open();
+    await waitFor(() => {
+      expect(second.result.current.model.theirs?.refused).toBe(true);
+    });
+    second.unmount();
+    await waitFor(async () => {
+      expect(await queuedEditFor(NOTE.id)).toMatchObject({ dead: true, refused: true });
+    });
+    // Re-parked as a conflict, the unmoved note sent it again unasked.
+    const before = server.sent.length;
+    const third = server.open();
+    await waitFor(() => {
+      expect(third.result.current.model.theirs?.refused).toBe(true);
+    });
+    expect(server.sent).toHaveLength(before);
+  });
+
+  it('is removed when the note it was made to is gone', async () => {
+    const server = session({ ...NOTE }, { patch: 413 });
+    await server.typeAndLeave('Start. Far too long.');
+    // Deleted elsewhere; this device still has its copy to open.
+    server.failing.get = 404;
+    server.open();
+    await waitFor(async () => {
+      expect(await queuedEditFor(NOTE.id)).toBeNull();
+    });
+  });
+
   it('a later failure of this editor’s own keeps its newer draft when the note is refetched', async () => {
     const server = session({ ...NOTE }, { patch: 413 });
     await server.typeAndLeave('Start. Far too long.');

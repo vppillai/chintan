@@ -6,6 +6,7 @@ import { queryKeys } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { enqueueReplacing } from '@/offline/queue.ts';
 import { queuedEditBody, queuedEditFor, queuedEditId } from '@/offline/queuedEdits.ts';
+import { performSignOut } from '@/features/auth/signOut.ts';
 import { flushTasks, onAFakeClock } from '@/test/clock.ts';
 import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
@@ -1096,8 +1097,8 @@ describe('a save that fails after sign-out', () => {
     act(() => {
       view.result.current.edit({ body: 'Ellis quoted nine hundred pounds.' });
     });
-    // As `performSignOut` marks the session before it empties the stores.
-    api.session.left = true;
+    // The real sign-out, with a save still to fail behind it.
+    await performSignOut({ session: api.session, queryClient, navigate: () => undefined, fetchImpl });
     view.unmount();
 
     await waitFor(() => {
