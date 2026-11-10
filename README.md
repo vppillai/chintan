@@ -28,7 +28,7 @@ Start with the doctor. It checks every prerequisite below, looks at the AWS acco
 scripts/doctor.sh --instance dev --region us-west-2
 ```
 
-Everything is CloudFormation, every stack is `chintan-<instance>-<environment>`, every secret is `/chintan/<instance>/<key>`, and every script has `--help`. Every script in `scripts/` that changes anything is a **dry run until you pass `--apply`**; the round drivers in `scripts/dev/` (`protect-main.sh` apart) and the live-QA harness in `scripts/qa/` take no flags and act at once.
+Everything is CloudFormation, every stack is `chintan-<instance>-<environment>`, every secret is `/chintan/<instance>/<key>`, and every script has `--help`. Every script in `scripts/` that changes anything is a **dry run until you pass `--apply`**; the round drivers in `scripts/dev/` (`protect-main.sh` apart) and the live-QA harness in `scripts/qa/` have no dry run and act at once.
 
 ### Prerequisites
 
