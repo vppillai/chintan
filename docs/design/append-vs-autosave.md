@@ -74,13 +74,14 @@ race made deterministic.
    checklist before it withdraws a recording's items (`dropReplacedItems`).
    Each clears its stamp with the refresh that follows its write. The two on
    the request path wait too, more briefly (`stampNote`, `noteBusyWait`,
-   3 s): the Recordings tab deletes or moves a selection as one request per
-   recording, all at once, and each sibling sits out the stamp of the one
-   before it; a stamp race lost to a sibling is part of the same queue and
-   is repeated for as long as the window lasts. The siblings run one at a
-   time inside that window, so a selection larger than fits in it — past a
-   dozen or so recordings at a few store calls a turn — has its tail
-   refused with the busy-note answer, for the person to repeat. They never stamp over: a stamp that has stood longer than
+   3 s): a second device, or a delete beside a move, sits out the stamp of
+   the one before it; a stamp race lost to a sibling is part of the same
+   queue and is repeated for as long as the window lasts. Requests that
+   arrive together run one at a time inside that window, and one that does
+   not fit in it is refused with the busy-note answer. The Recordings tab
+   does not lean on the window: it sends a selection's deletes or moves as
+   one request per recording, each after the last has answered
+   (`settleEach`). They never stamp over: a stamp that has stood longer than
    that was left by a writer that died before its refresh, and the delete or
    move is refused at once (409 for the delete, the move's "nothing was
    changed; try again") until that writer's retry or the lease clears it.

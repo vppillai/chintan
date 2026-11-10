@@ -8,7 +8,12 @@
  * and leave nothing on disk to recover.
  */
 
-import { openChintanDB, type CaptureChunkRecord, type StoredCapture } from '@/offline/db.ts';
+import {
+  openChintanDB,
+  reopenChintanDB,
+  type CaptureChunkRecord,
+  type StoredCapture,
+} from '@/offline/db.ts';
 
 function chunkKey(localId: string, index: number): string {
   // Zero-padded so IndexedDB's lexicographic key order is chunk order. An
@@ -18,34 +23,30 @@ function chunkKey(localId: string, index: number): string {
 }
 
 /**
- * `Blob.arrayBuffer()` is comparatively recent and absent on the older WebKit
- * builds this app has to run on, so FileReader is the fallback rather than the
- * exception.
+ * Writes one chunk. A write the connection rejects is tried once more on a
+ * fresh connection before the recorder hears of it: the bytes are in hand,
+ * and the usual cause — WebKit having closed the connection behind a page
+ * that was in the background — is cured by reopening. The recorder stops on
+ * a rejection, so without the second try one stale handle ended the take and
+ * dropped the chunk.
  */
-function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
-  if (typeof blob.arrayBuffer === 'function') return blob.arrayBuffer();
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as ArrayBuffer);
-    reader.onerror = () => reject(reader.error ?? new Error('Could not read chunk'));
-    reader.readAsArrayBuffer(blob);
-  });
-}
-
 export async function appendChunk(
   localId: string,
   index: number,
   blob: Blob,
 ): Promise<void> {
-  const db = await openChintanDB();
-  const data = await blobToArrayBuffer(blob);
-  await db.put('captureChunks', {
+  const record = {
     id: chunkKey(localId, index),
     localId,
     index,
-    data,
+    data: await blob.arrayBuffer(),
     bytes: blob.size,
-  });
+  };
+  try {
+    await (await openChintanDB()).put('captureChunks', record);
+  } catch {
+    await (await reopenChintanDB()).put('captureChunks', record);
+  }
 }
 
 export async function readChunks(localId: string): Promise<CaptureChunkRecord[]> {
@@ -61,11 +62,6 @@ export async function assembleBlob(localId: string, contentType: string): Promis
     chunks.map((chunk) => chunk.data),
     { type: contentType },
   );
-}
-
-export async function bufferedBytes(localId: string): Promise<number> {
-  const chunks = await readChunks(localId);
-  return chunks.reduce((total, chunk) => total + chunk.bytes, 0);
 }
 
 export async function saveCaptureRecord(record: StoredCapture): Promise<void> {

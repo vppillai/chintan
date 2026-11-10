@@ -126,9 +126,14 @@ is accepted. Otherwise `showNotification` with the note's title (or "Filed",
 "Needs a note", "Did not finish"), one fixed sentence per outcome, the
 manifest's icon, and `tag` = the note id, so a ring day's fourth filing into
 "Shopping list" replaces the third in the shade rather than stacking under
-it — the grouping Home does. `notificationclick` focuses an open window and
-navigates it to the note (`ROUTES.note`, under the registration's scope), or
-opens one. Either way the note screen then loads cold: the shell from the
+it — the grouping Home does. `notificationclick` focuses an open window and asks it to route to
+the note itself (`pwa/notificationOpen.ts`: an `OPEN` message with the URL,
+`ROUTES.note` under the registration's scope, which `usePushWakeup` routes
+to and answers), so the document is not replaced and a recording or an
+upload in that window goes on. A window that does not answer within
+`OPEN_ANSWER_MS` — signed out, or another deploy on the same origin — is
+navigated, and with no window one is opened. From a navigation or a new
+window the note screen loads cold: the shell from the
 precache, the note by its first `GET /v1/notes/{id}`, which on a phone the
 tap has just woken can fail or hang before it reaches the server — the
 server has had the note since before the push was sent. The screen keeps

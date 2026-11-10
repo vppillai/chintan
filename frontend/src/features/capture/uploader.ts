@@ -144,6 +144,17 @@ const defaultUploadDeps: UploadDeps = {
  * honest coarse one: a determinate bar pinned at 100% with pulsing opacity
  * reads as "stuck".
  */
+/**
+ * The device's own note that the upload landed, and the prune. The server
+ * has the audio by now, so a failure here (a full disk, a connection the
+ * browser closed) is not the upload's: thrown, it left the machine at
+ * `uploading` until a reload, with Record refused. The row stays unconfirmed
+ * instead, and the resume path finds the capture landed and confirms it then.
+ */
+async function confirmLocally(deps: UploadDeps, localId: string): Promise<void> {
+  await deps.confirm(localId).catch(() => {});
+}
+
 export async function uploadCapture(
   api: ChintanApi,
   request: UploadRequest,
@@ -183,7 +194,7 @@ export async function uploadCapture(
    */
   const landed = request.serverCaptureId ? await landedState(api, request.serverCaptureId) : 'waiting';
   if (landed === 'landed') {
-    await deps.confirm(request.localId);
+    await confirmLocally(deps, request.localId);
     emit({ type: 'uploadDone' });
     return;
   }
@@ -348,6 +359,6 @@ export async function uploadCapture(
   await peaksPut;
 
   // Last, and only now: the server has the audio.
-  await deps.confirm(request.localId);
+  await confirmLocally(deps, request.localId);
   emit({ type: 'uploadDone' });
 }

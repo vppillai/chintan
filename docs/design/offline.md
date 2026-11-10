@@ -213,7 +213,9 @@ left under a prompt is never sent without a tap even if it was stored on the
 server's own version. The read-back reads the entry again after its fetch:
 "Use the newer version" tapped as a hung fetch answers has dropped the entry
 by then, and there is nothing to ask. Try again under a
-retired entry's "did not save" runs the read-back again. Keep sends the
+retired entry's "did not save" runs the read-back again; with no connection
+it cannot start, and the line says "No connection, so that did not reach
+the server." instead. Keep sends the
 held body on the newer version;
 either choice clears the entry (`clearQueuedEdit`). A direct save made online
 while the device holds an entry, live or retired, sends the entry's fields at

@@ -41,6 +41,7 @@
 import { cleanupOutdatedCaches, matchPrecache, precacheAndRoute } from 'workbox-precaching';
 
 import { ROUTES } from './app/routes.ts';
+import { openFromNotification } from './pwa/notificationOpen.ts';
 
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: { url: string; revision: string | null }[];
@@ -82,10 +83,9 @@ const NETWORK_TIMEOUT_MS = 4_000;
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
 
-self.addEventListener('install', () => {
-  // Deliberately NOT skipWaiting(). The new worker waits until the user accepts
-  // the update, so a session is never served a mix of two builds.
-});
+// No `install` listener, and so no `skipWaiting()` there: the new worker
+// waits until the user accepts the update, so a session is never served a mix
+// of two builds.
 
 self.addEventListener('activate', (event: ExtendableEvent) => {
   event.waitUntil(
@@ -182,25 +182,9 @@ self.addEventListener('push', (event: PushEvent) => {
 self.addEventListener('notificationclick', (event: NotificationEvent) => {
   event.notification.close();
   const url = (event.notification.data as { url?: string } | null)?.url ?? self.registration.scope;
-  event.waitUntil(
-    (async () => {
-      const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-      const open = windows[0];
-      if (open) {
-        // `navigate` rejects for a window this worker does not control (the
-        // match included uncontrolled ones on purpose, so a tab mid-install
-        // is still found); a new window is the fallback, not a dead tap.
-        try {
-          await open.focus();
-          await open.navigate(url);
-          return;
-        } catch {
-          /* fall through to a new window */
-        }
-      }
-      await self.clients.openWindow(url);
-    })(),
-  );
+  // An open window routes there itself rather than being reloaded, which
+  // would end a recording or an upload in it (`notificationOpen.ts`).
+  event.waitUntil(openFromNotification(self.clients, url));
 });
 
 /**

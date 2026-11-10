@@ -481,6 +481,37 @@ describe('a resumed upload never replays a dead credential', () => {
     expect(kinds(h.events)).toContain('uploadDone');
   });
 
+  it('finishes the upload when only the device’s own confirmation fails, first time and on a resume', async () => {
+    // A full disk or a closed connection after the PUT: the audio is on the
+    // server. Thrown, this left the recorder at `uploading` until a reload.
+    const failing = (h: Harness): UploadDeps => ({
+      ...h.deps,
+      confirm: async () => {
+        throw new Error('QuotaExceededError');
+      },
+    });
+    const first = harness();
+    await uploadCapture(first.api, REQUEST, emitInto(first.events), failing(first));
+    expect(kinds(first.events).at(-1)).toBe('uploadDone');
+
+    const resumed = harness({
+      getCapture: async () => ({
+        id: 'srv-1',
+        status: 'appended' as const,
+        created_at: '2026-08-07T10:00:00.000Z',
+        version: 2,
+      }),
+    });
+    await uploadCapture(
+      resumed.api,
+      { ...REQUEST, serverCaptureId: 'srv-1' },
+      emitInto(resumed.events),
+      failing(resumed),
+    );
+    expect(kinds(resumed.events).at(-1)).toBe('uploadDone');
+    expect(resumed.puts).toEqual([]);
+  });
+
   it('says why, rather than failing silently, when no live credential can be had', async () => {
     const h = harness({
       createCapture: async () => presign('https://s3.test/stale', -HOUR),

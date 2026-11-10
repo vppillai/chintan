@@ -40,7 +40,8 @@ export function mountSettings(
       if ((init?.method ?? 'GET') === 'PUT') {
         const body = JSON.parse(String(init?.body)) as SettingsWire;
         puts.push(body);
-        stored = { ...body, daily_spend_cap_micros: stored.daily_spend_cap_micros ?? 0 };
+        // As the server does: the fields named are laid over the stored record.
+        stored = { ...stored, ...body };
       }
       return json(stored);
     }
@@ -105,9 +106,9 @@ describe('every control saves itself when it is changed', () => {
     await waitFor(() => {
       expect(puts).toHaveLength(1);
     });
-    expect(puts[0]?.default_language).toBe('ml');
-    // The rest of the record rides along unchanged: PUT replaces the whole thing.
-    expect(puts[0]?.theme).toBe('ink');
+    // Only the field that was changed: the rest of this device's copy may be
+    // a week old, and sent along it put another device's changes back.
+    expect(puts[0]).toEqual({ default_language: 'ml' });
     expect(screen.getByText(/transcribed as Malayalam/i)).toBeInTheDocument();
     // A brief tick, not a permanent claim.
     expect(await screen.findByText('Saved')).toBeInTheDocument();
@@ -131,7 +132,7 @@ describe('every control saves itself when it is changed', () => {
     await waitFor(() => {
       expect(puts).toHaveLength(1);
     });
-    expect(puts[0]?.theme).toBe('nocturne');
+    expect(puts[0]).toEqual({ theme: 'nocturne' });
     expect(screen.queryByText(/unsaved/i)).toBeNull();
   });
 
@@ -229,7 +230,7 @@ describe('every control saves itself when it is changed', () => {
               { status: 403, headers: { 'content-type': 'application/problem+json' } },
             );
           }
-          return json(body);
+          return json({ ...STORED, ...body });
         }
         return json(STORED);
       }
@@ -252,13 +253,22 @@ describe('every control saves itself when it is changed', () => {
     // The choice stays where the user put it.
     expect(screen.getByRole('button', { name: 'Nocturne' })).toHaveAttribute('aria-pressed', 'true');
 
+    // A second change while the first is unsaved carries both, so the first
+    // is not dropped by the second's success.
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /transcription language/i }), 'ml');
+    await waitFor(() => {
+      expect(puts).toHaveLength(2);
+    });
+    expect(puts[1]).toEqual({ theme: 'nocturne', default_language: 'ml' });
+    expect(screen.getByRole('button', { name: 'Nocturne' })).toHaveAttribute('aria-pressed', 'true');
+
     refuse = false;
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
     await waitFor(() => {
-      expect(puts).toHaveLength(2);
+      expect(puts).toHaveLength(3);
     });
-    expect(puts[1]?.theme).toBe('nocturne');
+    expect(puts[2]).toEqual({ theme: 'nocturne', default_language: 'ml' });
     expect(await screen.findByText('Saved')).toBeInTheDocument();
   });
 });

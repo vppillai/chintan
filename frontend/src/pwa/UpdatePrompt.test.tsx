@@ -1,6 +1,9 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { INITIAL_CAPTURE, type CaptureState } from '@/features/capture/machine.ts';
+import { useCaptureStore } from '@/features/capture/store.ts';
+
 import { UPDATE_CHECK_INTERVAL_MS, UpdatePrompt } from './UpdatePrompt.tsx';
 
 /*
@@ -32,6 +35,7 @@ function withServiceWorker(registration: FakeRegistration): void {
 }
 
 afterEach(() => {
+  useCaptureStore.setState({ model: INITIAL_CAPTURE });
   Reflect.deleteProperty(navigator, 'serviceWorker');
   Reflect.deleteProperty(document, 'visibilityState');
   vi.useRealTimers();
@@ -61,6 +65,29 @@ describe('the update prompt', () => {
     await settled();
 
     expect(screen.getByRole('status')).toHaveTextContent(/a new version of .+ is ready/i);
+    expect(screen.getByRole('button', { name: 'Update' })).toBeInTheDocument();
+  });
+
+  it('is not offered while a recording or an upload is in flight, and is once the audio is safe', async () => {
+    // Update reloads the page, and a reload ends the take.
+    const registration = new FakeRegistration();
+    registration.waiting = new FakeWorker();
+    withServiceWorker(registration);
+    const become = (state: CaptureState): void => {
+      act(() => {
+        useCaptureStore.setState({ model: { ...INITIAL_CAPTURE, state, localId: 'cap-live' } });
+      });
+    };
+
+    become('recording');
+    render(<UpdatePrompt />);
+    await settled();
+    expect(screen.queryByRole('button', { name: 'Update' })).toBeNull();
+
+    become('uploading');
+    expect(screen.queryByRole('button', { name: 'Update' })).toBeNull();
+
+    become('uploaded');
     expect(screen.getByRole('button', { name: 'Update' })).toBeInTheDocument();
   });
 

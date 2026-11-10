@@ -406,6 +406,34 @@ describe('selecting several recordings', () => {
     });
     expect(await screen.findByText('2 recordings deleted')).toBeInTheDocument();
   });
+
+  it('sends the selection’s deletes one at a time, since the server takes one per note at a time', async () => {
+    const user = userEvent.setup();
+    bucketStub();
+    const api = apiStub(TWO);
+    let inFlight = 0;
+    let most = 0;
+    const slowDeletes: typeof fetch = async (input, init) => {
+      if (init?.method !== 'DELETE') return api.fetchImpl(input, init);
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return api.fetchImpl(input, init);
+    };
+    mount(slowDeletes);
+
+    await user.click((await screen.findAllByRole('button', { name: /more for recording from/i }))[0]!);
+    await user.click(screen.getByRole('menuitem', { name: 'Select' }));
+    const bar = await screen.findByRole('toolbar', { name: 'Recording actions' });
+    await user.click(within(bar).getByRole('button', { name: 'Select all' }));
+    await user.click(within(bar).getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete 2 recordings?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Delete them' }));
+
+    expect(await screen.findByText('2 recordings deleted')).toBeInTheDocument();
+    expect(most).toBe(1);
+  });
 });
 
 /**

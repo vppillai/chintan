@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react';
 import { useApi } from '@/api/ApiProvider.tsx';
 import { queryKeys } from '@/api/queries.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
+import { formatDurationShort } from '@/features/notes/groups.ts';
 import type { StoredCapture } from '@/offline/db.ts';
 
 import { discardCapture, unconfirmedCaptures } from './buffer.ts';
@@ -111,7 +112,7 @@ export function ResumePrompt() {
             You have an unsent recording from {relativeTime(oldest.createdAt)}.
           </p>
           <p className="resume-prompt__detail">
-            <span className="numeric">{formatDuration(oldest.durationMs)}</span>
+            <span className="numeric">{formatDurationShort(oldest.durationMs)}</span>
             {stranded.length > 1 && (
               <>
                 {' · '}
@@ -174,13 +175,6 @@ export function ResumePrompt() {
       />
     </>
   );
-}
-
-function formatDuration(ms: number): string {
-  const total = Math.round(ms / 1000);
-  const minutes = Math.floor(total / 60);
-  const seconds = total % 60;
-  return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
 export function relativeTime(epochMs: number, now: number = Date.now()): string {

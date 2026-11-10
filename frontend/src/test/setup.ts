@@ -12,6 +12,16 @@ import { afterEach, beforeEach, vi } from 'vitest';
 
 import { resetDatabaseHandle, settleDatabase } from '@/offline/db.ts';
 
+import { bytesOf } from './blob.ts';
+
+// jsdom's `Blob` has no `arrayBuffer()`; every browser the app runs in does,
+// and the capture buffer calls it bare.
+if (typeof Blob.prototype.arrayBuffer !== 'function') {
+  Blob.prototype.arrayBuffer = async function arrayBuffer(this: Blob) {
+    return (await bytesOf(this)).buffer as ArrayBuffer;
+  };
+}
+
 /**
  * jsdom supplies its own `AbortController`/`AbortSignal` but no `Request`, so
  * under this environment the global `Request` is the runtime's native one and

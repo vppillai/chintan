@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { config } from '@/config/env.ts';
+import { isCaptureBusy } from '@/features/capture/machine.ts';
+import { useCaptureStore } from '@/features/capture/store.ts';
 
 /**
  * How often a foregrounded app asks whether a new build is out.
@@ -101,7 +103,14 @@ export function UpdatePrompt() {
     };
   }, []);
 
-  if (!waiting) return null;
+  /*
+   * Not while a recording or an upload is in flight: Update reloads the
+   * page, which ends the take. The prompt appears mid-recording because the
+   * check runs on every return to the app; it is offered again the moment
+   * the audio is safe.
+   */
+  const busy = useCaptureStore((state) => isCaptureBusy(state.model));
+  if (!waiting || busy) return null;
 
   return (
     <div className="update-prompt" role="status" aria-live="polite">

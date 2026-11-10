@@ -630,33 +630,52 @@ describe('a note the first request never reached is asked for again', () => {
   });
 
   it('recovers from a first read that failed on the way out, with nothing pressed', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+    // The clock moves only when the test moves it. Advancing with real time,
+    // the ladder's first rung raced the assertions below on a slow machine:
+    // the note was re-read, and found, before "Not on this device" was seen.
+    const realTimeout = setTimeout;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    /**
+     * Waits in real time for `found`, a millisecond of the faked clock per
+     * turn: enough for the client's zero-delay retries, and at 400 turns
+     * never enough to reach the ladder's rung.
+     */
+    const until = async (found: () => boolean): Promise<void> => {
+      for (let turn = 0; !found() && turn < 400; turn += 1) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1);
+          await new Promise((resolve) => realTimeout(resolve, 5));
+        });
+      }
+    };
     // No jitter: the client's own retries of a network failure are instant.
     vi.spyOn(Math, 'random').mockReturnValue(0);
     const api = server([ROOF]);
-    // The client retries a network failure three times before it gives up,
-    // so the first four attempts fail as a dead link fails them.
-    let failures = 4;
+    // Every attempt fails as a dead link fails it until the link comes up.
+    // By the switch and not by a count of attempts: the back guard remounts
+    // the screen under a deep link, and whether that lands before or after
+    // the first read gives up decides how many reads there are.
+    let linkUp = false;
     const flaky = vi.fn<typeof fetch>(async (input, init) => {
-      if (/\/v1\/notes\/roof-repair$/.test(String(input)) && failures > 0) {
-        failures -= 1;
+      if (/\/v1\/notes\/roof-repair$/.test(String(input)) && !linkUp) {
         throw new TypeError('Failed to fetch');
       }
       return api.fetchImpl(input, init);
     });
     mount(flaky, '/notes/roof-repair');
 
-    expect(await screen.findByRole('heading', { name: 'Not on this device' })).toBeInTheDocument();
+    await until(() => screen.queryByRole('heading', { name: 'Not on this device' }) !== null);
+    expect(screen.getByRole('heading', { name: 'Not on this device' })).toBeInTheDocument();
     expect(api.gets).toBe(0);
 
-    // The first rung of the ladder, measured from the mount.
-    act(() => {
-      vi.advanceTimersByTime(CAPTURE_POLL_FAST_MS + 50);
+    // The first rung of the ladder, measured from the mount: the read is
+    // asked again, and this time answered.
+    linkUp = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CAPTURE_POLL_FAST_MS + 50);
     });
-
-    expect(
-      await screen.findByRole('textbox', { name: 'Note body' }, { timeout: 3_000 }),
-    ).toBeInTheDocument();
+    await until(() => screen.queryByRole('textbox', { name: 'Note body' }) !== null);
+    expect(screen.getByRole('textbox', { name: 'Note body' })).toBeInTheDocument();
     expect(api.gets).toBe(1);
   });
 
@@ -1076,7 +1095,8 @@ describe('the note is panels under one strip', () => {
       // Past 30 % of the height, slowly (0.2 px/ms, half the flick speed):
       // the fraction alone closes it, sliding away until the slide ends.
       dragDown(height * 0.4, 800);
-      expect(sheet().style.translate).toBe(`0 ${height}px`);
+      // Either spelling of zero: engines differ on whether it keeps its unit.
+      expect(sheet().style.translate).toMatch(new RegExp(`^0(px)? ${String(height)}px$`));
       // The sheet's own slide ending; a child's colour settling would not do.
       fireEvent.transitionEnd(sheet(), { propertyName: 'translate' });
       expect(screen.queryByRole('dialog')).toBeNull();
@@ -1742,5 +1762,46 @@ describe('one screen per note (review round 19, FE-2)', () => {
     });
     expect(api.patches.map((patch) => patch.status)).toEqual([200]);
     expect(api.notes.get('garden')).toMatchObject({ body: 'Garden body', version: 5 });
+  });
+});
+
+describe('Try again under an edit the queue gave up on, with no connection', () => {
+  afterEach(() => {
+    // No `online` event: it would start the read-back as the test ends.
+    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+    onlineManager.setOnline(true);
+  });
+
+  it('says there is no connection rather than doing nothing in silence', async () => {
+    const user = userEvent.setup();
+    const api = server([ROOF]);
+    const { queryClient } = mount(api.fetchImpl, '/notes/roof-repair');
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+    });
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+    act(() => {
+      window.dispatchEvent(new Event('offline'));
+    });
+    await enqueueReplacing({
+      id: queuedEditId('roof-repair'),
+      kind: 'updateNote',
+      payload: { noteId: 'roof-repair', body: { version: ROOF.version, body: 'Held on the device.' } },
+      retired: true,
+    });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.queuedEdit('roof-repair') });
+
+    const sentence = 'No connection, so that did not reach the server.';
+    const retry = await screen.findByRole('button', { name: 'Try again' });
+    expect(screen.queryByText(sentence)).toBeNull();
+
+    await user.click(retry);
+
+    await waitFor(() => {
+      expect(document.querySelector('.save-indicator')).toHaveTextContent(sentence);
+    });
+    // Still offered, and nothing was sent or dropped.
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    expect(await queuedCount()).toBe(1);
   });
 });
