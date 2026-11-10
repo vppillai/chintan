@@ -161,6 +161,21 @@ export function openChintanDB(): Promise<ChintanDatabase> {
   return dbPromise;
 }
 
+/**
+ * A fresh connection, for a write the cached one rejected. WebKit closes the
+ * connection behind a backgrounded page and does not always say so
+ * (`terminated` above): the first the app hears of it is then a rejected
+ * write, and a reopen succeeds. The old handle is closed, which waits for
+ * whatever it still has in flight.
+ */
+export function reopenChintanDB(): Promise<ChintanDatabase> {
+  void dbPromise?.then((db) => {
+    db.close();
+  });
+  dbPromise = null;
+  return openChintanDB();
+}
+
 /** Tests reopen a fresh database between cases. */
 export function resetDatabaseHandle(): void {
   dbPromise = null;
