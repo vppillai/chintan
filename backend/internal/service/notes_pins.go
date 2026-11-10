@@ -103,7 +103,7 @@ func (s *NotesService) ReorderPins(ctx context.Context, userID string, ids []str
 // the winner is unknown, and the conflict is reported as it stands.
 func (s *NotesService) putPinRank(ctx context.Context, userID string, note model.NoteIndex, rank int64) (model.NoteIndex, error) {
 	var err error
-	for attempt := 0; attempt < maxIndexRefreshAttempts; attempt++ {
+	for attempt := 0; attempt < MaxIndexRefreshAttempts; attempt++ {
 		if attempt > 0 && (!note.Pinned() || !NoteIsActive(note)) {
 			return model.NoteIndex{}, ErrPinReorderInvalid
 		}

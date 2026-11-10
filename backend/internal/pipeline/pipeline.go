@@ -56,10 +56,6 @@ const (
 	// hundred notes at the owner's average line are about 1,500 tokens.
 	maxRouteCandidateTokens = 2000
 
-	// maxIndexRefreshAttempts bounds the optimistic-concurrency retry on the note
-	// index after an append.
-	maxIndexRefreshAttempts = 5
-
 	// audioURLTTL is how long the presigned GET handed to the speech provider
 	// stays valid. It has to outlast a long transcription without becoming a
 	// standing grant.

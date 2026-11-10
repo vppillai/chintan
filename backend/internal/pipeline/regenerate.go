@@ -173,6 +173,11 @@ func (p *Pipeline) dropReplacedItems(ctx context.Context, tenantID string, captu
 	if capture.Status != model.StatusNoContent || len(previous) == 0 {
 		return nil
 	}
+	// Stamped like the append this stands in for, and cleared by the refresh,
+	// so an editor save cannot land between the two and write the items back.
+	if err := p.stampNoteAppend(ctx, tenantID, note.ID, capture.ID); err != nil {
+		return fmt.Errorf("pipeline: stamp note for the removal: %w", err)
+	}
 	written, err := service.RewriteNoteBody(ctx, p.cfg.Objects, note.S3MarkdownKey, func(existing string) (string, bool) {
 		if !service.HasCaptureMarker(existing, capture.ID) {
 			return existing, false
@@ -180,16 +185,17 @@ func (p *Pipeline) dropReplacedItems(ctx context.Context, tenantID string, captu
 		next := replaceChecklistItems(existing, capture.ID, previous, "")
 		return next, next != existing
 	})
-	if err != nil {
-		return fmt.Errorf("pipeline: remove the recording's earlier items: %w", err)
-	}
-	if !written {
+	if err != nil || !written {
+		p.clearStampOf(ctx, *capture)
+		if err != nil {
+			return fmt.Errorf("pipeline: remove the recording's earlier items: %w", err)
+		}
 		return nil
 	}
 	if _, err := service.RefreshNoteIndex(ctx, p.cfg.Store, p.cfg.Objects, tenantID, note.ID, service.RefreshOptions{
-		Now:         p.now,
-		RequireBody: true,
-		Attempts:    maxIndexRefreshAttempts,
+		Now:                 p.now,
+		RequireBody:         true,
+		ClearAppendStampFor: capture.ID,
 	}); err != nil {
 		return fmt.Errorf("pipeline: refresh note index: %w", err)
 	}
