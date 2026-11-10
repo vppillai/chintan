@@ -152,7 +152,6 @@ export type CaptureEvent =
    * the upload begins; after that the target has been sent.
    */
   | { type: 'target'; noteId: string | null }
-  | { type: 'discard' }
   | { type: 'reset' };
 
 export const INITIAL_CAPTURE: CaptureModel = {
@@ -481,9 +480,6 @@ export function captureReducer(model: CaptureModel, event: CaptureEvent): Captur
       }
       if (model.noteId === event.noteId) return model;
       return { ...model, noteId: event.noteId };
-
-    case 'discard':
-      return { ...INITIAL_CAPTURE };
 
     case 'reset':
       return { ...INITIAL_CAPTURE };
