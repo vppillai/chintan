@@ -115,6 +115,35 @@ func TestSettingsValidatesStoresAndReturnsWhatWasStored(t *testing.T) {
 		}
 	})
 
+	// A second device whose copy of the record predates a change made on the
+	// first used to send the whole stale record with the one field it
+	// changed, and the PUT replaced the row: retention went back to what
+	// that device remembered, and S3 deleted audio a month on against the
+	// person's last choice. A field left out keeps what is stored.
+	t.Run("a field left out keeps its stored value", func(t *testing.T) {
+		for _, step := range []struct {
+			body map[string]any
+			want handler.Settings
+		}{
+			{map[string]any{"retention_days": 90, "theme": "nocturne", "default_language": "ml"}, handler.Settings{RetentionDays: 90, Theme: "nocturne", DefaultLanguage: "ml"}},
+			{map[string]any{"theme": "ink"}, handler.Settings{RetentionDays: 90, Theme: "ink", DefaultLanguage: "ml"}},
+			{map[string]any{"retention_days": 0}, handler.Settings{RetentionDays: 0, Theme: "ink", DefaultLanguage: "ml"}},
+			{map[string]any{"default_language": "auto"}, handler.Settings{RetentionDays: 0, Theme: "ink", DefaultLanguage: "auto"}},
+			{map[string]any{}, handler.Settings{RetentionDays: 0, Theme: "ink", DefaultLanguage: "auto"}},
+		} {
+			w := h.do(t, http.MethodPut, "/v1/settings", "user1", step.body)
+			if w.Code != http.StatusOK {
+				t.Fatalf("PUT %v: status = %d body = %s", step.body, w.Code, w.Body.String())
+			}
+			var got handler.Settings
+			decodeInto(t, w, &got)
+			got.DailySpendCapMicros = 0
+			if got != step.want {
+				t.Fatalf("after PUT %v: stored %+v, want %+v", step.body, got, step.want)
+			}
+		}
+	})
+
 	// Storing whatever is sent and echoing the request back would make a value
 	// the server did not understand look accepted.
 	t.Run("an unknown value is refused, not coerced silently", func(t *testing.T) {

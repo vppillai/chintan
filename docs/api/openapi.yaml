@@ -113,8 +113,12 @@ paths:
         '500': { $ref: '#/components/responses/ServerError' }
     put:
       tags: [settings]
-      summary: Replace settings
+      summary: Update settings
       description: |
+        Changes the fields the body names and keeps the rest as stored, so a
+        client sends only what it changed: a device whose copy of the record
+        is old cannot revert a field another device has set since.
+
         Returns what was stored, not what was sent: echoing the request body
         back would hide validation coercion from the client.
       parameters:
@@ -123,7 +127,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/Settings' }
+            schema: { $ref: '#/components/schemas/SettingsUpdate' }
       responses:
         '200':
           description: Stored settings.
@@ -1724,6 +1728,31 @@ components:
             properties:
               ok: { type: boolean }
               latency_ms: { type: integer }
+
+    SettingsUpdate:
+      description: |
+        The settings fields to change; each is optional and one left out
+        keeps its stored value. The fields and their rules are those of
+        `Settings`. `cleanup_mode` and `daily_spend_cap_micros` are accepted
+        and ignored.
+      type: object
+      properties:
+        cleanup_mode:
+          type: string
+          deprecated: true
+        retention_days:
+          type: integer
+          minimum: 0
+          maximum: 3650
+        theme:
+          type: string
+          enum: [ink, nocturne, system]
+        default_language:
+          type: string
+          pattern: '^(auto|[a-z]{2})$'
+        daily_spend_cap_micros:
+          type: integer
+          minimum: 0
 
     Settings:
       type: object
