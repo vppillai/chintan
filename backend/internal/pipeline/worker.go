@@ -53,6 +53,11 @@ type Invocation struct {
 	// the API reset them (service.RequestRegenerate). Empty when an operator
 	// sent the task: the worker then chooses and resets them itself.
 	CaptureIDs []string `json:"capture_ids,omitempty"`
+	// Landed is set on a regenerate-note task the worker queued for itself
+	// (handOffRegeneration) when an earlier link of the run changed the body:
+	// the link that finishes regenerates the whole-note view on it, whether
+	// or not one of its own recordings lands.
+	Landed bool `json:"landed,omitempty"`
 	// CorrelationID is the id the API minted for the request, so the worker's
 	// log lines join the API's into one trace.
 	CorrelationID string `json:"correlation_id,omitempty"`
@@ -136,7 +141,7 @@ func (w *Worker) Handle(ctx context.Context, raw json.RawMessage) error {
 			continue
 		}
 
-		if _, err := w.pipeline.RunUpload(recCtx, ref); err != nil {
+		if _, err := w.pipeline.runCapture(recCtx, ref); err != nil {
 			obs.Log(recCtx).Error("capture will be retried",
 				slog.String("capture_id", ref.CaptureID),
 				slog.String("error", err.Error()))

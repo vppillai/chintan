@@ -397,30 +397,10 @@ func (s *DynamoStore) GetNote(ctx context.Context, tenantID, noteID string) (mod
 	return noteFromItem(result.Item)
 }
 
-// NoteExists is a GetItem projected to the sort key alone: DynamoDB charges
-// the read by the item's full size either way, but nothing but the key crosses
-// the wire, which is the cost that matters when a poll asks this for every
-// receipt on the library screen.
-func (s *DynamoStore) NoteExists(ctx context.Context, tenantID, noteID string) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	result, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
-		TableName: aws.String(s.tableName),
-		Key: map[string]types.AttributeValue{
-			"pk": strAttr(userPK(tenantID)),
-			"sk": strAttr(noteSK(noteID)),
-		},
-		ProjectionExpression: aws.String("sk"),
-	})
-	if err != nil {
-		return false, fmt.Errorf("dynamo note exists: %w", err)
-	}
-	return len(result.Item) > 0, nil
-}
-
-// NotesExist is NoteExists for a set: one BatchGetItem projected to the sort
-// key, so a page of twenty receipts naming five notes costs one call, not five.
+// NotesExist is one BatchGetItem projected to the sort key: DynamoDB charges
+// the read by each item's full size either way, but nothing but the keys
+// crosses the wire, and a page of twenty receipts naming five notes costs one
+// call, not five.
 func (s *DynamoStore) NotesExist(ctx context.Context, tenantID string, noteIDs []string) (map[string]bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -62,8 +63,8 @@ func TestGetNoteDetailReadsTheRowOnceAndKeepsTenantsApart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetNoteDetail: %v", err)
 	}
-	if len(detail.Captures.Items) != 1 || detail.Captures.Items[0].ID != "c_1" {
-		t.Errorf("captures = %+v, want c_1", detail.Captures.Items)
+	if len(detail.Captures) != 1 || detail.Captures[0].ID != "c_1" {
+		t.Errorf("captures = %+v, want c_1", detail.Captures)
 	}
 	if store.getNote != 1 || store.listByNote != 1 {
 		t.Errorf("GetNote = %d, ListCapturesByNote = %d, want 1 and 1", store.getNote, store.listByNote)
@@ -75,6 +76,38 @@ func TestGetNoteDetailReadsTheRowOnceAndKeepsTenantsApart(t *testing.T) {
 	}
 	if store.listByNote != 0 {
 		t.Errorf("another tenant's note queried its captures %d times", store.listByNote)
+	}
+}
+
+// The note screen has no other source for a note's recordings and follows no
+// cursor, so the detail carries them all: one default page hid every
+// recording past the fiftieth from play, delete, move and retranscribe.
+func TestGetNoteDetailCarriesEveryRecordingUpToTheManifestBound(t *testing.T) {
+	ctx := context.Background()
+	store := dynamofake.NewStore()
+	notes := service.NewNotesService(store, memory.NewObjects())
+	note, err := notes.CreateNote(ctx, "user1", "Shopping", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const recordings = service.MaxRecordingURLs + 5
+	for i := 0; i < recordings; i++ {
+		if _, err := store.PutCapture(ctx, model.CaptureIndex{
+			ID: fmt.Sprintf("c_%03d", i), UserID: "user1", NoteID: note.ID, Status: model.StatusAppended,
+			CreatedAt: fmt.Sprintf("2026-01-01T10:00:00.%09dZ", i),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	detail, err := notes.GetNoteDetail(ctx, "user1", note.ID)
+	if err != nil {
+		t.Fatalf("GetNoteDetail: %v", err)
+	}
+	if len(detail.Captures) != service.MaxRecordingURLs {
+		t.Fatalf("captures = %d, want the newest %d of %d", len(detail.Captures), service.MaxRecordingURLs, recordings)
+	}
+	if first := detail.Captures[0].ID; first != fmt.Sprintf("c_%03d", recordings-1) {
+		t.Errorf("first capture = %s, want the newest", first)
 	}
 }
 

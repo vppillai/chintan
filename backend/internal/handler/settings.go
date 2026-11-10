@@ -22,7 +22,7 @@ func (rt *router) getSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, settingsOf(service.NormalizeSettings(stored), rt.SpendCapMicros))
 }
 
-// putSettings validates, stores, and returns what was stored.
+// putSettings merges, validates, stores, and returns what was stored.
 //
 // The response is the stored record, never the request body echoed back.
 // Echoing hides every coercion: a theme the server did not recognise would come
@@ -40,7 +40,16 @@ func (rt *router) putSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	validated, err := service.ValidateSettings(req.settings())
+	// The fields present are laid over the stored record and the result is
+	// validated whole. Replacing the record with the body let a second device,
+	// whose copy predates a change made on the first, revert that change by
+	// saving anything at all — and a reverted retention deletes audio.
+	current, err := rt.Settings.GetSettings(r.Context(), userID)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	validated, err := service.ValidateSettings(req.over(service.NormalizeSettings(current)))
 	if err != nil {
 		fail(w, r, err)
 		return

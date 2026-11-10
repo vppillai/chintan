@@ -165,6 +165,14 @@ func (p *Pipeline) verifyPeaks(ctx context.Context, capture *model.CaptureIndex)
 // this delivery reports is the truth rather than its own stale guess.
 func (p *Pipeline) concede(ctx context.Context, capture *model.CaptureIndex) error {
 	current, err := p.cfg.Store.GetCapture(ctx, capture.UserID, capture.ID)
+	if errors.Is(err, repository.ErrNotFound) {
+		// Lost to a delete: the person removed the capture, or its note for
+		// good, while this delivery was working on it. There is nothing left
+		// to write and nothing to retry.
+		obs.Log(ctx).Info("capture was deleted under this delivery; stopping",
+			slog.String("capture_id", capture.ID))
+		return errDeliveryConceded
+	}
 	if err != nil {
 		// Genuinely retryable: we know we lost, but not to what.
 		return fmt.Errorf("pipeline: reload capture after a lost write: %w", err)

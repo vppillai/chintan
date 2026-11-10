@@ -524,20 +524,6 @@ func sortCapturesNewestFirst(captures []model.CaptureIndex) {
 	})
 }
 
-func (s *DynamoStore) UpdateCaptureStatus(ctx context.Context, tenantID, captureID string, status model.CaptureStatus, errMsg string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	capture, err := s.GetCapture(ctx, tenantID, captureID)
-	if err != nil {
-		return err
-	}
-	capture.Status = status
-	capture.Error = errMsg
-	_, err = s.PutCapture(ctx, capture)
-	return err
-}
-
 func (s *DynamoStore) DeleteCapture(ctx context.Context, tenantID, captureID string) error {
 	if err := ctx.Err(); err != nil {
 		return err

@@ -66,10 +66,24 @@ race made deterministic.
    re-reads and stamps again. Two captures appending to one note wait on each
    other's stamp for up to `Config.AppendStampWait` (10 s by default) before
    stamping over it, so the row's one stamp always names the write in flight;
-   only a holder that died mid-append is ever stamped over. A move of a
-   recording into a note is a second stamper of that note (`moveInto`):
-   it stamps the target before copying the paragraph in, clears the stamp with
-   the target's refresh, and refuses the move rather than stamp over a worker's.
+   only a holder that died mid-append is ever stamped over. Every other
+   writer of a body that is not the editor stamps the same way, through the
+   one loop (`service.StampNoteForBodyWrite`): a move stamps the target and
+   the source before it writes either (`moveInto`), a delete stamps the note
+   before it cuts the paragraph (`cutFromNote`), and a regeneration stamps a
+   checklist before it withdraws a recording's items (`dropReplacedItems`).
+   Each clears its stamp with the refresh that follows its write. The two on
+   the request path wait too, more briefly (`stampNote`, `noteBusyWait`,
+   3 s): the Recordings tab deletes or moves a selection as one request per
+   recording, all at once, and each sibling sits out the stamp of the one
+   before it; a stamp race lost to a sibling is part of the same queue and
+   is repeated for as long as the window lasts. The siblings run one at a
+   time inside that window, so a selection larger than fits in it — past a
+   dozen or so recordings at a few store calls a turn — has its tail
+   refused with the busy-note answer, for the person to repeat. They never stamp over: a stamp that has stood longer than
+   that was left by a writer that died before its refresh, and the delete or
+   move is refused at once (409 for the delete, the move's "nothing was
+   changed; try again") until that writer's retry or the lease clears it.
 2. **Clear after completing.** The worker's `RefreshNoteIndex` publishes the
    paragraph's snippet and search text and bumps the version, so the row's
    version is once more a witness of the body; the stamp stays until
@@ -79,10 +93,15 @@ race made deterministic.
    clears it too, for the attempt that died between the two. Cleared any earlier, a completion that failed left the paragraph
    open to a save while the capture was unfinished: the edit moved the words
    off the marker, the retry did not recognise its own paragraph, and the
-   takeover after the lease wrote the dictation twice. A move clears its
-   stamp with the target's refresh (`ClearAppendStampFor`). An append that
-   hands its claim back without writing clears the stamp with
-   `ClearNoteAppend` too.
+   takeover after the lease wrote the dictation twice. A move and a delete
+   clear their stamps with the refresh of each note they wrote
+   (`ClearAppendStampFor`); a delete whose refresh failed leaves its stamp
+   standing, and its repeat — which finds nothing left to cut — refreshes
+   anyway, because the capture is `appended` or the row still names it, and
+   clears it. The item withdrawal hands its stamp back when its refresh
+   fails, since nothing repeats it. An append, a
+   delete or a move that stops without writing hands the stamp back with
+   `ClearNoteAppend`.
 3. **Refuse the save.** `UpdateNote` refuses a body write with
    `ErrAppendInProgress` while `appending_capture` is set and `appending_at` is
    younger than `AppendClaimLease` — checked **before** the version, because
@@ -124,9 +143,11 @@ is a fixed string the frontend matches, like `type` for the spend cap. Fixture:
 ## The version the editor saves on
 
 The editor's PATCH carries the note's `version`, and two things bump it
-without touching the words: a clean request the moment it is accepted, and
-the worker's answer to it; the poll only delivers the new version to the
-editor, it makes none. `useNoteEditor.ts` therefore has one rule in three
+without touching the words: the worker's answer to a clean request (the
+request itself only stamps the row, `StampCleanRequest`, and moves nothing),
+and the stamp a recording's append, move or delete puts on the row before it
+writes the body; the poll only delivers the new version to the editor, it
+makes none. `useNoteEditor.ts` therefore has one rule in three
 places: **the version moves only when the
 words did not.** The sync effect, on a newer `note`, resets a settled editor
 to it, and otherwise rebases the draft onto the new version when the

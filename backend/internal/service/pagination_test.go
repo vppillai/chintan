@@ -35,7 +35,6 @@ func TestValidateCursorAcceptsAnyWellFormedToken(t *testing.T) {
 	cases := map[string]string{
 		"absent":                "",
 		"a store continuation":  base64.RawURLEncoding.EncodeToString([]byte("user1\x00note_007")),
-		"a walk offset":         encodeWalkCursor(50),
 		"at the declared bound": strings.Repeat("a", MaxCursorLen),
 	}
 	for name, cursor := range cases {

@@ -116,7 +116,7 @@ func (w directInvoker) InvokeAsk(ctx context.Context, tenantID, askID string) er
 }
 
 func (w directInvoker) InvokeRegenerateNote(ctx context.Context, tenantID, noteID string, captureIDs []string) error {
-	return w.p.RegenerateNote(ctx, tenantID, noteID, captureIDs)
+	return w.p.RegenerateNote(ctx, tenantID, noteID, captureIDs, false)
 }
 
 func TestCompleteCaptureAppendsToSpokenNote(t *testing.T) {
