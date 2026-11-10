@@ -32,6 +32,11 @@ const NOTE: NoteDetailWire = {
   captures: [],
 };
 
+const capture = (id: string) =>
+  ({ id, status: 'appended', created_at: '2026-08-06T09:20:00.000Z', version: 1, note_id: NOTE.id }) as NonNullable<
+    NoteDetailWire['captures']
+  >[number];
+
 const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The device opened the note at v3; the server holds `stored`. */
@@ -97,7 +102,7 @@ function session(stored: NoteDetailWire, refuse: { patch?: number; get?: number 
   const refetched = () => {
     queryClient.setQueryData(queryKeys.note(NOTE.id), structuredClone(stored));
   };
-  return { open, typeAndLeave, flush, refetched, sent, failing, stored };
+  return { open, typeAndLeave, flush, refetched, sent, failing, stored, queryClient };
 }
 
 describe('a parked conflict is never sent without the user’s choice', () => {
@@ -119,12 +124,46 @@ describe('a parked conflict is never sent without the user’s choice', () => {
     await server.flush();
 
     expect(server.stored).toMatchObject({ version: 4, body: 'Written on the other device.' });
-    expect(await queuedEditFor(NOTE.id)).toEqual(parked);
+    // Still retired, on the version the edit was made over: never the editor's.
+    expect(await queuedEditFor(NOTE.id)).toMatchObject({ dead: true, body: parked?.body, refused: false });
     const third = server.open();
     await waitFor(() => {
       expect(third.result.current.model.state).toBe('conflict');
     });
     expect(third.result.current.model.draft.body).toBe('Start. Mine.');
+  });
+
+  it('keeps what was typed under the read-back prompt, in the entry and on its version', async () => {
+    const filed = { version: 4, body: 'Start.\n\nDictated paragraph.' };
+    const server = session({ ...NOTE, ...filed, captures: [capture('cap-1')] });
+    await server.typeAndLeave('Start. Mine.');
+    server.refetched();
+    const second = server.open();
+    await waitFor(() => {
+      expect(second.result.current.model.state).toBe('conflict');
+    });
+    // The field stays editable under the prompt.
+    act(() => {
+      second.result.current.edit({ body: 'Start. Mine. And a second sentence.' });
+    });
+    second.unmount();
+    await waitFor(async () => {
+      expect(await queuedEditFor(NOTE.id)).toMatchObject({
+        dead: true,
+        body: { version: 3, body: 'Start. Mine. And a second sentence.' },
+      });
+    });
+    await server.flush();
+    expect(server.stored, 'nothing written without a choice').toMatchObject(filed);
+
+    const third = server.open();
+    await waitFor(() => {
+      expect(third.result.current.model.state).toBe('conflict');
+    });
+    expect(third.result.current.model.draft.body).toBe('Start. Mine. And a second sentence.');
+    // Still judged against what the first edit was made over, not against
+    // the server's copy the second editor had been loaded from.
+    expect(third.result.current.model.theirs).toMatchObject({ addition: 'Dictated paragraph.', recording: true });
   });
 
   it('a conflict met on screen and left is parked retired, on the version the edit was made over', async () => {
@@ -147,7 +186,7 @@ describe('a parked conflict is never sent without the user’s choice', () => {
       expect(await queuedEditFor(NOTE.id)).toMatchObject({
         dead: true,
         body: { version: 3, body: 'Start. Mine.' },
-        prompt: { refused: false },
+        refused: false,
       });
     });
     await server.flush();
@@ -188,7 +227,101 @@ describe('a recording filed while typing, then Back', () => {
   });
 });
 
+describe('the note moved again before the parked edit was read back', () => {
+  it('keep-both adds everything filed since the edit, not only what the refused save saw', async () => {
+    const one = 'Start.\n\nFirst dictated paragraph.';
+    const server = session({ ...NOTE, version: 4, body: one, captures: [capture('cap-1')] });
+    await server.typeAndLeave('Start. Mine.');
+    // A second recording is filed before the note is reopened. The addition
+    // stored at the refusal, sent on this newer version, wrote over it.
+    Object.assign(server.stored, {
+      version: 5,
+      body: `${one}\n\nSecond dictated paragraph.`,
+      captures: [capture('cap-1'), capture('cap-2')],
+    });
+    server.refetched();
+
+    const view = server.open();
+    await waitFor(() => {
+      expect(view.result.current.model.state).toBe('conflict');
+    });
+    expect(view.result.current.model.theirs).toMatchObject({
+      addition: 'First dictated paragraph.\n\nSecond dictated paragraph.',
+      recording: true,
+    });
+    await act(async () => {
+      view.result.current.keepBoth();
+      await view.result.current.saveNow();
+    });
+    expect(server.stored.body).toBe('Start. Mine.\n\nFirst dictated paragraph.\n\nSecond dictated paragraph.');
+  });
+
+  it('a save that could not be answered, parked live and then refused by the flush, reads back with the recording named', async () => {
+    const server = session(
+      { ...NOTE, version: 4, body: 'Start.\n\nDictated paragraph.', captures: [capture('cap-1')] },
+      { patch: 503 },
+    );
+    await onAFakeClock(async () => {
+      const first = server.open();
+      await waitFor(() => {
+        expect(first.result.current.model.draft.body).toBe('Start.');
+      });
+      act(() => {
+        first.result.current.edit({ body: 'Start. Mine.' });
+      });
+      first.unmount();
+      // Through the client's retries, to the queue: live, no prompt known.
+      await act(() => vi.advanceTimersByTimeAsync(40_000));
+      await waitFor(async () => {
+        expect(await queuedEditFor(NOTE.id)).toMatchObject({ pending: true });
+      });
+      delete server.failing.patch;
+      await act(() => server.queryClient.refetchQueries({ queryKey: queryKeys.offlineQueue() }));
+      await act(() => vi.advanceTimersByTimeAsync(2_000));
+      await waitFor(async () => {
+        expect(await queuedEditFor(NOTE.id)).toMatchObject({ dead: true });
+      });
+
+      server.refetched();
+      const view = server.open();
+      await waitFor(() => {
+        expect(view.result.current.model.state).toBe('conflict');
+      });
+      expect(view.result.current.model.theirs).toMatchObject({ addition: 'Dictated paragraph.', recording: true });
+    });
+  });
+});
+
 describe('an edit the server refused on its merits, then Back', () => {
+  it('a later failure of this editor’s own keeps its newer draft when the note is refetched', async () => {
+    const server = session({ ...NOTE }, { patch: 413 });
+    await server.typeAndLeave('Start. Far too long.');
+    const view = server.open();
+    await waitFor(() => {
+      expect(view.result.current.model.theirs?.refused).toBe(true);
+    });
+    // Send it again, refused again; then more typing, refused too.
+    await act(async () => {
+      view.result.current.keepMine();
+      await view.result.current.saveNow();
+    });
+    act(() => {
+      view.result.current.edit({ body: 'Start. Shorter.' });
+    });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+    expect(view.result.current.model.state).toBe('error');
+
+    // The note is refetched — a new object, the entry still retired. The
+    // read-back must not write the held text over the live draft.
+    act(() => {
+      server.refetched();
+    });
+    await settle(300);
+    expect(view.result.current.model).toMatchObject({ state: 'error', draft: { body: 'Start. Shorter.' } });
+  });
+
   it('is asked about on the next visit, not sent again, and can be dropped', async () => {
     const server = session({ ...NOTE }, { patch: 413 });
     await server.typeAndLeave('Start. Far too long.');
@@ -218,6 +351,11 @@ describe('a save that fails behind a save still on the wire, with the screen gon
     const view = server.open();
     await waitFor(() => {
       expect(view.result.current.model.draft.body).toBe('Start.');
+    });
+    // The queue has been read, and holds nothing: a save that lands has no
+    // other reason to look in it than the key this editor parked under.
+    await waitFor(() => {
+      expect(server.queryClient.getQueryState(queryKeys.queuedEdit(NOTE.id))?.status).toBe('success');
     });
     // A blur's save, refused; one more keystroke; Back before it answers.
     server.failing.patch = 413;

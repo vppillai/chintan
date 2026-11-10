@@ -122,16 +122,28 @@ save carried:
   version check and is retired; read back, the server's copy has every field
   it names (`holdsAll`) and it is forgotten with no prompt.
 - A 409, or a refusal on the edit's merits (`isTerminal`), is parked already
-  retired (`retired`, at the attempt ceiling) with what the prompt needs
-  (`ParkedPrompt`: the paragraph the server's copy added, whether a
-  recording was filed, whether it was a refusal). The flush never sends it;
-  only a tap on the prompt does.
+  retired (`retired`, at the attempt ceiling; `refused` on the payload says
+  which). The flush never sends it; only a tap on the prompt does.
 - A draft left on screen under "Couldn't save" or the conflict prompt is
-  parked retired the same way as the screen unmounts. A prompt that was
-  itself read back from the queue is not: the editor has by then been loaded
-  from the server's newer copy, a PATCH stamped with that version would be
-  accepted over it, and the entry already holds the text — it stays, and the
-  next visit asks again.
+  parked retired the same way as the screen unmounts — a passing failure
+  included, so it is not retried and the offline banner does not count it;
+  the note says so when it is next opened. A prompt that was itself read
+  back from the queue is re-parked too, since the field stays editable
+  under it, but under the entry's own version, never the editor's: by then
+  the editor has been loaded from the server's newer copy, and a PATCH
+  stamped with that version would be accepted over it. The entry stays
+  retired, and the next visit asks again with what was typed.
+
+Every parked entry carries what the edit was made over (`base`: the body and
+the recordings filed by then; a replacement keeps the entry's own). The
+read-back judges the server's copy against it, and against the copy it has
+just fetched — so the prompt names a recording filed since, and "Keep my
+edits and add the recording" adds everything filed since the edit, however
+many times the note moved before it was reopened.
+
+Nothing is parked after sign-out (`Session.left`): the stores have been
+emptied for the next person, and a save still on the wire must not write a
+note back into them.
 
 **The flush** (`queue.flush`, run by `useOfflineQueue`) walks entries oldest
 first and never overlaps itself: a reconnect and a window focus landing
@@ -166,7 +178,8 @@ not moved, an entry that ran out of attempts is sent once more on its
 version; one parked as refused is asked about instead — "That edit did not
 save", Send it again or Drop my edit — so an edit the server will never take
 is neither re-sent on every visit nor impossible to drop. Try again under a
-retired entry's "did not save" runs the read-back again. Keep sends the held body on the newer version;
+retired entry's "did not save" runs the read-back again. Keep sends the
+held body on the newer version;
 either choice clears the entry (`clearQueuedEdit`). A direct save made online
 while an entry is still pending sends the held fields under its own
 (`queuedEditFor` carries the body), since it clears the entry once it lands:

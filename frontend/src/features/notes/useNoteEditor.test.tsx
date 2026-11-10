@@ -931,8 +931,8 @@ describe('a save refused after the screen has gone keeps the text (review round 
   const typed = { version: NOTE.version, body: 'Ellis quoted nine hundred pounds.' };
 
   it.each([
-    ['a 409 against a copy that moved on', 409, { dead: true, prompt: { addition: null, recording: false, refused: false } }],
-    ['a refusal on its merits', 413, { dead: true, prompt: { addition: null, recording: false, refused: true } }],
+    ['a 409 against a copy that moved on', 409, { dead: true, refused: false }],
+    ['a refusal on its merits', 413, { dead: true, refused: true }],
     ['a session that expired', 401, { pending: true }],
   ])('parks the PATCH on %s', async (_name, status, parked) => {
     const { wrapper } = refusing(status, { ...NOTE, version: 7, body: 'Someone else wrote this.' });
@@ -1003,7 +1003,7 @@ describe('a save refused after the screen has gone keeps the text (review round 
       expect(await queuedEditFor(NOTE.id)).toMatchObject({
         body: { ...typed, title: 'Roof repair — Ellis' },
         dead: true,
-        prompt: { refused: true },
+        refused: true,
       });
     });
   });
@@ -1075,6 +1075,37 @@ describe('a save the server could not answer, with the note still open (FE-8)', 
       expect(view.result.current.model.state).toBe('saved');
     });
     expect(patches).toEqual([{ version: NOTE.version, body: 'Ellis quoted nine hundred pounds.' }]);
+  });
+});
+
+describe('a save that fails after sign-out', () => {
+  it('writes nothing back to the device the next person will use', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) =>
+      (init?.method ?? 'GET') === 'PATCH'
+        ? problem(413)
+        : new Response(JSON.stringify(NOTE), { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    const api = testApiContext(fetchImpl);
+    const queryClient = testQueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TestProviders api={api} queryClient={queryClient}>
+        {children}
+      </TestProviders>
+    );
+    const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+    act(() => {
+      view.result.current.edit({ body: 'Ellis quoted nine hundred pounds.' });
+    });
+    // As `performSignOut` marks the session before it empties the stores.
+    api.session.left = true;
+    view.unmount();
+
+    await waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalled();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(await queuedEditFor(NOTE.id)).toBeNull();
+    expect(queryClient.getQueryData(queryKeys.note(NOTE.id))).toBeUndefined();
   });
 });
 
