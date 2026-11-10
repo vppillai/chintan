@@ -114,9 +114,11 @@ type NoteCreator interface {
 }
 
 // NoteCleanInvoker is the slice of service.Invoker the pipeline needs to queue
-// a clean-note task for itself.
+// a task for itself: a note's cleaned view after an append, and the rest of a
+// regeneration that would not fit this invocation.
 type NoteCleanInvoker interface {
 	InvokeCleanNote(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode, requestedAt string) error
+	InvokeRegenerateNote(ctx context.Context, tenantID, noteID string, captureIDs []string) error
 }
 
 // Config is everything the pipeline needs. Breaker is not optional: a nil one

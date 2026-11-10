@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
@@ -89,7 +90,18 @@ func (p *Pipeline) RegenerateNote(ctx context.Context, tenantID, noteID string, 
 	}
 
 	done := 0
-	for _, id := range captureIDs {
+	for i, id := range captureIDs {
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < regenerateBudget && p.cfg.CleanInvoker != nil {
+			// A recording started now could be killed with the invocation.
+			// The rest goes to a fresh one, which skips whatever has landed.
+			if err := p.handOffRegeneration(ctx, tenantID, noteID, captureIDs[i:]); err != nil {
+				return err
+			}
+			log.Info("regenerate-note: out of time; the rest was handed to another invocation",
+				slog.Int("regenerated", done),
+				slog.Int("remaining", len(captureIDs)-i))
+			return nil
+		}
 		capture, err := p.cfg.Store.GetCapture(ctx, tenantID, id)
 		if errors.Is(err, repository.ErrNotFound) {
 			continue
@@ -130,6 +142,44 @@ func (p *Pipeline) RegenerateNote(ctx context.Context, tenantID, noteID string, 
 		slog.Int("captures", len(captureIDs)),
 		slog.Int("regenerated", done),
 		slog.Bool("cleaned_view", done > 0 && current.CleanedBody != ""))
+	return nil
+}
+
+// regenerateBudget is how much of the invocation RegenerateNote wants left
+// before it starts another recording. One recording is a cleanup call, bounded
+// at two minutes, and an append; the rest of the margin keeps the hand-off
+// inside service.CaptureStuckAfter of the rows' last touch, so the reaper does
+// not take a recording that is only waiting its turn.
+const regenerateBudget = 6 * time.Minute
+
+// handOffRegeneration queues the task again for rest, the recordings this
+// invocation has no time left for. Without it a long note ran into the
+// worker's timeout, Lambda's two retries carried on from where each was
+// killed, and whatever three invocations could not finish dead-lettered and
+// paged.
+//
+// Each waiting row's progress time is moved to now first, best effort. They
+// were reset when the request was accepted, and one that waits out the stuck
+// threshold is run by the reaper down a capture's ordinary path, which is not
+// this one: it lands checklist items the person removed, queues the cleaned
+// view once per recording and may transcribe again.
+func (p *Pipeline) handOffRegeneration(ctx context.Context, tenantID, noteID string, rest []string) error {
+	touched := model.FormatTime(p.now())
+	for _, id := range rest {
+		c, err := p.cfg.Store.GetCapture(ctx, tenantID, id)
+		if err != nil || c.NoteID != noteID || c.Status != model.StatusTranscribed {
+			continue
+		}
+		c.LastProgressAt = touched
+		if _, err := p.cfg.Store.PutCapture(ctx, c); err != nil {
+			obs.Log(ctx).Warn("regenerate-note: could not refresh a waiting recording's progress time",
+				slog.String("capture_id", id),
+				slog.String("error", err.Error()))
+		}
+	}
+	if err := p.cfg.CleanInvoker.InvokeRegenerateNote(ctx, tenantID, noteID, rest); err != nil {
+		return fmt.Errorf("pipeline: regenerate-note: hand the rest to another invocation: %w", err)
+	}
 	return nil
 }
 
