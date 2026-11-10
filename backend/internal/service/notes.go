@@ -246,8 +246,13 @@ func (s *NotesService) createNote(ctx context.Context, userID string, note model
 	body = StripCaptureMarkers(body)
 	note.Snippet = Snippet(body)
 	note.SearchText = SearchText(body)
-	err = s.objects.Put(ctx, markdownKey, []byte(body), "text/markdown")
-	if err != nil {
+	// Only where there is no body yet (If-None-Match). CreateNoteOnce reaches
+	// here when its read of the row lost a race, and by then another
+	// recording's paragraph may be in the body: an unconditional write would
+	// blank it before the row write below reports the conflict. A body that is
+	// already there is left as it is and the row decides.
+	err = s.objects.PutIfMatch(ctx, markdownKey, []byte(body), "text/markdown", "")
+	if err != nil && !errors.Is(err, repository.ErrPreconditionFailed) {
 		return model.NoteIndex{}, fmt.Errorf("failed to create markdown file: %w", err)
 	}
 
