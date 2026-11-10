@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
@@ -280,109 +279,6 @@ func TestListUnroutedCapturesReturnsOnlyTheCapturesWithNoNote(t *testing.T) {
 	}
 }
 
-// The walk is the fallback for a store with no tenant-wide capture query. Every
-// repository.Store now declares ListCaptures, so nothing reaches it through
-// ListCaptures any more; it is exercised directly so that the property it was
-// fixed for cannot rot unnoticed while it is still in the tree.
-func TestTheCaptureWalkFallbackAlsoFindsAnUnroutedCapture(t *testing.T) {
-	store, svc := captureFixture(t,
-		model.CaptureIndex{ID: "c_routed", UserID: "user1", NoteID: "n1", Status: model.StatusAppended, CreatedAt: "2026-08-08T10:00:00.000000000Z"},
-		model.CaptureIndex{ID: "c_orphan", UserID: "user1", NoteID: "", Status: model.StatusNeedsTarget, CreatedAt: "2026-08-08T11:00:00.000000000Z"},
-	)
-	ctx := context.Background()
-	// The fixture gave n1 its row, which is what the walk lists through.
-	if ok, _ := store.NoteExists(ctx, "user1", "n1"); !ok {
-		t.Fatal("fixture: n1 has no row")
-	}
-
-	page, err := svc.listCapturesByWalk(ctx, "user1", CaptureFilterAll, repository.ListOptions{})
-	if err != nil {
-		t.Fatalf("listCapturesByWalk: %v", err)
-	}
-
-	want := []string{"c_orphan", "c_routed"}
-	if got := captureIDs(page); !slices.Equal(got, want) {
-		t.Fatalf("walked captures = %v, want %v (newest first, unrouted included)", got, want)
-	}
-}
-
-// The walk's cursor is its own offset token, not the store's, so it is only
-// valid against this same walk. It is honest about that rather than passing off
-// an offset as a continuation key.
-func TestTheCaptureWalkPagesWithItsOwnCursor(t *testing.T) {
-	store, svc := captureFixture(t,
-		model.CaptureIndex{ID: "c_1", UserID: "user1", CreatedAt: "2026-08-08T10:00:00.000000000Z"},
-		model.CaptureIndex{ID: "c_2", UserID: "user1", CreatedAt: "2026-08-08T11:00:00.000000000Z"},
-		model.CaptureIndex{ID: "c_3", UserID: "user1", CreatedAt: "2026-08-08T12:00:00.000000000Z"},
-	)
-	ctx := context.Background()
-	if _, err := store.PutNote(ctx, "user1", model.NoteIndex{ID: "n1", Title: "Roof"}); err != nil {
-		t.Fatalf("PutNote: %v", err)
-	}
-
-	first, err := svc.listCapturesByWalk(ctx, "user1", CaptureFilterAll, repository.ListOptions{Limit: 2})
-	if err != nil {
-		t.Fatalf("listCapturesByWalk: %v", err)
-	}
-	if got := captureIDs(first); !slices.Equal(got, []string{"c_3", "c_2"}) {
-		t.Fatalf("first page = %v, want [c_3 c_2]", got)
-	}
-	if first.Cursor == "" {
-		t.Fatal("first page returned no cursor with a third capture behind it")
-	}
-
-	second, err := svc.listCapturesByWalk(ctx, "user1", CaptureFilterAll, repository.ListOptions{Limit: 2, Cursor: first.Cursor})
-	if err != nil {
-		t.Fatalf("listCapturesByWalk(cursor): %v", err)
-	}
-	if got := captureIDs(second); !slices.Equal(got, []string{"c_1"}) {
-		t.Fatalf("second page = %v, want [c_1]", got)
-	}
-	if second.Cursor != "" {
-		t.Errorf("second page returned cursor %q with nothing behind it", second.Cursor)
-	}
-}
-
-func TestWalkCursorRoundTripsItsOffset(t *testing.T) {
-	for _, offset := range []int{0, 1, 50, 4096} {
-		got, err := decodeWalkCursor(encodeWalkCursor(offset))
-		if err != nil {
-			t.Errorf("decodeWalkCursor(encodeWalkCursor(%d)): %v", offset, err)
-			continue
-		}
-		if got != offset {
-			t.Errorf("offset round-tripped to %d, want %d", got, offset)
-		}
-	}
-	if got, err := decodeWalkCursor(""); err != nil || got != 0 {
-		t.Fatalf("decodeWalkCursor(\"\") = %d, %v; want 0 and no error for a first page", got, err)
-	}
-}
-
-// A malformed cursor is a client mistake. Typing it as ErrInvalidCursor is what
-// lets the handler answer 400 rather than 500, which is the difference between
-// the client fixing its request and the client retrying the same broken one.
-func TestWalkCursorRejectsAForeignOrMalformedToken(t *testing.T) {
-	cases := map[string]string{
-		"not base64":            "!!!not base64!!!",
-		"another query's token": base64.RawURLEncoding.EncodeToString([]byte("notes:12")),
-		"a store continuation":  base64.RawURLEncoding.EncodeToString([]byte("user1\x00note_007")),
-		"not a number":          base64.RawURLEncoding.EncodeToString([]byte(walkCursorPrefix + "seven")),
-		"negative offset":       base64.RawURLEncoding.EncodeToString([]byte(walkCursorPrefix + "-1")),
-	}
-	for name, cursor := range cases {
-		t.Run(name, func(t *testing.T) {
-			got, err := decodeWalkCursor(cursor)
-			if !errors.Is(err, ErrInvalidCursor) {
-				t.Fatalf("decodeWalkCursor(%q) err = %v, want ErrInvalidCursor", cursor, err)
-			}
-			if got != 0 {
-				t.Fatalf("decodeWalkCursor(%q) = %d alongside the rejection, want 0", cursor, got)
-			}
-		})
-	}
-}
-
 func TestListCapturesSurfacesAStoreFailure(t *testing.T) {
 	boom := errors.New("dynamodb: dial tcp: connection refused")
 	svc := NewCaptureService(captureListErrStore{Store: dynamofake.NewStore(), err: boom}, memory.NewObjects())
@@ -476,16 +372,6 @@ func TestListCapturesDropsAReceiptForANoteThatIsGone(t *testing.T) {
 	if got := captureIDs(one); len(got) != 1 {
 		t.Fatalf("captures = %v, want one", got)
 	}
-
-	// The walk cannot reach a capture of a note with no row in the first
-	// place: it lists captures through their notes.
-	walked, err := svc.listCapturesByWalk(ctx, "user1", CaptureFilterAll, repository.ListOptions{})
-	if err != nil {
-		t.Fatalf("listCapturesByWalk: %v", err)
-	}
-	if got := captureIDs(walked); slices.Contains(got, "c_00000000000000020_gone") {
-		t.Fatalf("walked captures = %v, must not include the filed capture of the deleted note", got)
-	}
 }
 
 // noteExistsErrStore fails the note lookup the list makes for a page of
@@ -495,10 +381,6 @@ type noteExistsErrStore struct {
 	err error
 }
 
-func (s noteExistsErrStore) NoteExists(context.Context, string, string) (bool, error) {
-	return false, s.err
-}
-
 func (s noteExistsErrStore) NotesExist(context.Context, string, []string) (map[string]bool, error) {
 	return nil, s.err
 }
@@ -506,13 +388,7 @@ func (s noteExistsErrStore) NotesExist(context.Context, string, []string) (map[s
 // countingNotesExist records every existence lookup the list makes.
 type countingNotesExist struct {
 	repository.Store
-	singles int
 	batches [][]string
-}
-
-func (s *countingNotesExist) NoteExists(ctx context.Context, tenantID, noteID string) (bool, error) {
-	s.singles++
-	return s.Store.NoteExists(ctx, tenantID, noteID)
 }
 
 func (s *countingNotesExist) NotesExist(ctx context.Context, tenantID string, noteIDs []string) (map[string]bool, error) {
@@ -542,9 +418,6 @@ func TestListCapturesAsksAboutAPagesNotesInOneRoundTrip(t *testing.T) {
 	}
 	if len(page.Items) != 20 {
 		t.Fatalf("page = %d items, want 20", len(page.Items))
-	}
-	if counting.singles != 0 {
-		t.Fatalf("the list made %d single-note lookups; want none", counting.singles)
 	}
 	if len(counting.batches) != 1 || len(counting.batches[0]) != 5 {
 		t.Fatalf("the list asked about the page's notes in %d call(s) of %v; want one call naming the five distinct notes", len(counting.batches), counting.batches)

@@ -142,9 +142,9 @@ func TestNotesService(t *testing.T) {
 			t.Fatalf("CreateNote failed: %v", err)
 		}
 
-		err = notesService.DeleteNote(ctx, userID, created.ID)
+		_, err = notesService.ArchiveNote(ctx, userID, created.ID)
 		if err != nil {
-			t.Fatalf("DeleteNote failed: %v", err)
+			t.Fatalf("ArchiveNote failed: %v", err)
 		}
 
 		// Verify it's archived (soft deleted, not hard deleted)
