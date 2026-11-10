@@ -27,6 +27,12 @@ export interface EnqueueInput {
   /** Supply to make enqueueing itself idempotent across a double-tap. */
   id?: string;
   idempotencyKey?: string;
+  /**
+   * Stored at the attempt ceiling: kept for its screen to read back, never
+   * sent by the flush. For an edit the server has already refused, where a
+   * replay could only repeat the refusal — or, worse, be accepted later.
+   */
+  retired?: boolean;
 }
 
 function newId(): string {
@@ -90,7 +96,7 @@ export async function enqueueReplacing(
     createdAt: existing?.createdAt ?? Date.now(),
     // Reset: this is new content, and it should not inherit the failures of the
     // text it replaced.
-    attempts: 0,
+    attempts: input.retired ? MAX_ATTEMPTS : 0,
     lastAttemptAt: null,
     lastError: null,
   };
@@ -304,6 +310,6 @@ async function flushOnce(run: MutationRunner): Promise<FlushResult> {
  */
 const TERMINAL_STATUSES: ReadonlySet<number> = new Set([400, 403, 409, 413, 422]);
 
-function isTerminal(error: ApiError): boolean {
+export function isTerminal(error: ApiError): boolean {
   return error.kind === 'http' && TERMINAL_STATUSES.has(error.status);
 }

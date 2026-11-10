@@ -24,6 +24,28 @@ import { isDead } from './queue.ts';
 export interface QueuedEditPayload {
   noteId: string;
   body: NoteUpdateWire;
+  /** What the edit was made over; see `ParkedBase`. Absent on an entry an older build wrote. */
+  base?: ParkedBase;
+  /**
+   * Set on an entry parked already retired, which the flush never sends:
+   * `false` for a conflict, `true` for an edit the server refused on its
+   * merits or one left under "Couldn't save" — asked about, not re-sent,
+   * when the note has not moved.
+   */
+  refused?: boolean;
+}
+
+/**
+ * The note as the edit found it: the body it was typed over and the
+ * recordings already filed into it. Kept with the entry because the editor
+ * that reads it back has been loaded from the server's newer copy, and can
+ * no longer tell what that copy added — and judged against the copy fetched
+ * at read-back, not the one the save was refused over, since the note may
+ * have moved again in between.
+ */
+interface ParkedBase {
+  body: string;
+  captures: string[];
 }
 
 /**
@@ -63,6 +85,8 @@ export interface QueuedEdit {
   body: NoteUpdateWire | null;
   /** The entry's idempotency key: which entry that save may forget. */
   key: string;
+  base?: ParkedBase | undefined;
+  refused?: boolean | undefined;
 }
 
 /** `null` means the server has it — the entry is removed only on success. */
@@ -77,6 +101,8 @@ export async function queuedEditFor(noteId: string): Promise<QueuedEdit | null> 
     error: entry.lastError,
     body: queuedEditPayload(entry)?.body ?? null,
     key: entry.idempotencyKey,
+    base: queuedEditPayload(entry)?.base,
+    refused: queuedEditPayload(entry)?.refused,
   };
 }
 

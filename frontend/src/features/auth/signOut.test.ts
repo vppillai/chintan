@@ -82,6 +82,12 @@ describe('what signing out has to leave behind', () => {
     expect(h.store.read()).toBeNull();
   });
 
+  it('marks the session as left, so a save that fails afterwards writes nothing back', async () => {
+    const h = harness();
+    await performSignOut(h);
+    expect(h.session.left).toBe(true);
+  });
+
   it('empties the cached note corpus', async () => {
     const h = harness();
     h.queryClient.setQueryData(['notes', { state: 'active' }], { items: [{ id: 'roof' }] });

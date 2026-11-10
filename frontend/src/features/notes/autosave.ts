@@ -114,6 +114,12 @@ export interface EditorModel {
     addition: string | null;
     /** Whether a recording was filed into the note since this draft was loaded. */
     recording: boolean;
+    /**
+     * Not a conflict: the server refused my edit on a note that has not
+     * moved, and the edit was kept on the device. The same two ways out —
+     * send it again, or drop it for the server's copy — under their own words.
+     */
+    refused?: boolean;
   } | null;
 }
 
@@ -138,6 +144,7 @@ export type EditorEvent =
       message: string;
       addition?: string | null;
       recording?: boolean;
+      refused?: boolean;
       /**
        * My side, when it is not what the editor holds: a queued edit the
        * server refused, read back from the queue (`useNoteEditor`).
@@ -237,6 +244,42 @@ export function patchFor(model: EditorModel): NoteUpdateWire {
 export function draftFields(body: NoteUpdateWire): Partial<NoteDraft> {
   const { version: _version, pinned: _pinned, ...fields } = body;
   return fields;
+}
+
+/**
+ * A held PATCH's part in the one that replaces it: the fields it names, at
+ * the values the draft has now. The held values themselves would send a
+ * change the user has since undone — a tag added offline and removed again
+ * equals the server's copy, so `patchFor` names nothing for it and the held
+ * tag went to the server under "Saved". A title cleared since is left out,
+ * as `patchFor` leaves it out.
+ */
+export function heldFields(held: NoteUpdateWire | null | undefined, draft: NoteDraft): Partial<NoteDraft> {
+  if (!held) return {};
+  return Object.fromEntries(
+    (Object.keys(draftFields(held)) as (keyof NoteDraft)[])
+      .filter((field) => field !== 'title' || draft.title.trim() !== '')
+      .map((field) => [field, draft[field]]),
+  );
+}
+
+/**
+ * Whether the server's copy already has every field a held PATCH names: the
+ * PATCH landed and its answer was lost, so there is nothing left to send.
+ */
+export function holdsAll(theirs: NoteDraft, held: NoteUpdateWire): boolean {
+  return Object.entries(draftFields(held)).every(
+    ([field, value]) => JSON.stringify(theirs[field as keyof NoteDraft]) === JSON.stringify(value),
+  );
+}
+
+/** The draft's fields that differ from what the editor last loaded, saved or queued. */
+export function typedSince(model: EditorModel): Partial<NoteDraft> {
+  return Object.fromEntries(
+    Object.entries(model.draft).filter(
+      ([field, value]) => JSON.stringify(value) !== JSON.stringify(model.saved[field as keyof NoteDraft]),
+    ),
+  );
 }
 
 /**
@@ -390,6 +433,7 @@ export function editorReducer(model: EditorModel, event: EditorEvent): EditorMod
           version: event.version,
           addition: event.addition ?? null,
           recording: event.recording ?? false,
+          ...(event.refused ? { refused: true } : {}),
         },
       };
 

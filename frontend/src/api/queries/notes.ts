@@ -14,9 +14,10 @@ import {
   type QueryClient,
   type QueryKey,
 } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 import { cacheNoteDetail, cacheNoteList, forgetNote } from '@/offline/notesCache.ts';
+import { clearQueuedEdit } from '@/offline/queuedEdits.ts';
 
 import { useApi } from '../ApiProvider.tsx';
 import type {
@@ -331,6 +332,31 @@ function restoreNoteLists(queryClient: QueryClient, lists: NoteLists | undefined
   for (const [key, data] of lists ?? []) queryClient.setQueryData(key, data);
 }
 
+/**
+ * A pin or a colour set from Home, written into the cached note — only when
+ * the cached copy is at the version the request was sent on.
+ *
+ * Such a PATCH carries no body and its answer is a row, so the body in the
+ * cache is whatever was last read. Home's row can be ahead of it: a recording
+ * filed since the note was last open moves the row and not the cached detail.
+ * Stamped with the answer's version regardless, the cache held the old body
+ * at the new version; the editor loaded that, ignored the refetch (same
+ * version), and the next keystroke was accepted over the recording's
+ * paragraph. A copy that is behind is left as it is, old body at its own old
+ * version, and read again: a save from it is refused, not accepted.
+ */
+function stampDetail(
+  queryClient: QueryClient,
+  noteId: string,
+  sentVersion: number,
+  fields: Partial<NoteDetailWire>,
+): void {
+  queryClient.setQueryData<NoteDetailWire>(queryKeys.note(noteId), (current) =>
+    current?.version === sentVersion ? { ...current, ...fields } : current,
+  );
+  void queryClient.invalidateQueries({ queryKey: queryKeys.note(noteId) });
+}
+
 /* ---------------------------------------------------------------------------
    Pinned notes (2026-09-24 contract, B)
 
@@ -372,9 +398,7 @@ export function usePinNote() {
       patchNoteLists(queryClient, (row) =>
         row.id === note.id ? { ...row, ...fromServer(saved) } : row,
       );
-      queryClient.setQueryData<NoteDetailWire>(queryKeys.note(note.id), (current) =>
-        current ? { ...current, ...fromServer(saved) } : current,
-      );
+      stampDetail(queryClient, note.id, note.version, fromServer(saved));
     },
     onMutate: async ({ note, pinned }) => {
       const lists = await snapshotNoteLists(queryClient);
@@ -429,10 +453,14 @@ export function useColorNote(noteId: string) {
     }
     return fallback;
   };
+  // The version the request on the wire carried; the scope makes it one at a time.
+  const sent = useRef(0);
   return useMutation({
     scope: { id: `color:${noteId}` },
-    mutationFn: ({ version, color }: { version: number; color: NoteColor }) =>
-      api.updateNote(noteId, { version: versionOf(version), color }),
+    mutationFn: ({ version, color }: { version: number; color: NoteColor }) => {
+      sent.current = versionOf(version);
+      return api.updateNote(noteId, { version: sent.current, color });
+    },
     onMutate: async ({ color }) => {
       const lists = await snapshotNoteLists(queryClient);
       patchNoteLists(queryClient, (row) => (row.id === noteId ? { ...row, color } : row));
@@ -442,9 +470,7 @@ export function useColorNote(noteId: string) {
       patchNoteLists(queryClient, (row) =>
         row.id === noteId ? { ...row, color: saved.color ?? 'none', version: saved.version } : row,
       );
-      queryClient.setQueryData<NoteDetailWire>(queryKeys.note(noteId), (current) =>
-        current ? { ...current, color: saved.color ?? 'none', version: saved.version } : current,
-      );
+      stampDetail(queryClient, noteId, sent.current, { color: saved.color ?? 'none', version: saved.version });
     },
     onError: (_error, _vars, context) => {
       restoreNoteLists(queryClient, context?.lists);
@@ -603,6 +629,10 @@ export function useDeleteNoteForever() {
       // the user deliberately destroyed is the one disagreement between the two
       // copies that is not tolerable.
       remember(() => forgetNote(noteId), queryClient);
+      // With any edit to it the device still held: a retired one is never
+      // sent, so nothing else would remove it, and sign-out would go on
+      // warning of unsent work for a note that no longer exists.
+      remember(() => clearQueuedEdit(noteId).then(() => undefined), queryClient);
       // Removed, not invalidated: there is nothing left on the server to
       // refetch, and a refetch would 404 into an error the user cannot act on.
       queryClient.removeQueries({ queryKey: queryKeys.note(noteId) });

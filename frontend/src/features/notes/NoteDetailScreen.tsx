@@ -94,7 +94,18 @@ const NoteDrawer = lazy(() => import('./NoteDrawer.tsx').then((m) => ({ default:
  * sheet at the foot (`NoteDrawer`), where the conflict banner also stands.
  */
 export function NoteDetailScreen() {
+  /*
+   * One screen per note. "Open <title>" after a move walks from one note to
+   * another on the same route, and an instance that served both carried the
+   * first note's editor into the second: the pending edit was dropped by the
+   * reset, or its late answer landed in the other note's model. Keyed, the
+   * walk is an unmount, and the editor's unmount flush sends what was typed.
+   */
   const { id } = useParams<{ id: string }>();
+  return <NoteScreen key={id} id={id} />;
+}
+
+function NoteScreen({ id }: { id: string | undefined }) {
   const online = useOnline();
   const { data: served, isLoading, fetchStatus, error, dataUpdatedAt } = useNote(id);
   /*
@@ -460,15 +471,7 @@ export function NoteDetailScreen() {
 
       <SaveIndicator editor={editor} />
 
-      {/*
-        Keyed by the note: the tab strip's memory and the panels' own state
-        belong to one note, and "Open <title>" after a move walks from one
-        note to another without remounting this screen. The find bar's state
-        is not keyed: a query carried into the next note is a query the user
-        may well want there too, and the panel clamps the active match.
-      */}
       <NoteViews
-        key={note.id}
         note={note}
         editor={editor}
         checklist={checklist}
@@ -945,6 +948,37 @@ function SaveIndicator({ editor }: { editor: ReturnType<typeof useNoteEditor> })
     const addition = theirs?.addition ?? null;
     const mustConfirm = recording && addition === null;
     const confirmed = discardConfirmedFor === theirs?.version;
+    /*
+     * An edit the server would not take, kept on the device when the screen
+     * was left: nothing changed elsewhere, so the prompt says what did
+     * happen, and its two buttons are the same two ways out.
+     */
+    if (theirs?.refused) {
+      return (
+        <div className="save-conflict" role="alert">
+          <p className="save-conflict__title">That edit did not save</p>
+          <p className="save-conflict__body">
+            Your last edit to this note is only on this device. Send it again, or drop it and keep the note as it
+            was saved.
+          </p>
+          <div className="save-conflict__actions">
+            <button type="button" className="save-conflict__action" onClick={editor.takeTheirs}>
+              Drop my edit
+            </button>
+            <button
+              type="button"
+              className="save-conflict__action"
+              onClick={() => {
+                editor.keepMine();
+                void editor.saveNow();
+              }}
+            >
+              Send it again
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="save-conflict" role="alert">
         <p className="save-conflict__title">{SAVE_LABELS.conflict}</p>

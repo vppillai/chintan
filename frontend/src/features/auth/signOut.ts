@@ -123,6 +123,7 @@ export async function performSignOut({
   // Read before the clear takes it away; sent only once the device is clean.
   const refreshToken = session.current()?.refreshToken ?? null;
 
+  session.left = true;
   session.clear();
   clearPending();
   queryClient.clear();
