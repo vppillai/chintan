@@ -777,16 +777,21 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     if (state !== 'clean' && state !== 'saved' && state !== 'queued') return;
     let gone = false;
     void (async () => {
+      if (!(await queuedEditFor(note.id))?.dead) return;
+      const theirs = await api
+        .getNote(note.id)
+        .catch((error: unknown) => (error instanceof ApiError && error.isNotFound ? 404 : null));
+      /*
+       * Read after the fetch, not before it. `gone` is set only once the
+       * effect is cleaned up, which waits for a render; "Use the newer
+       * version" tapped in the instant a hung fetch answers has by then
+       * opened the entry's delete but not yet rendered. A pass trusting the
+       * entry it read before the fetch raised the prompt again over the copy
+       * just taken, holding the edit just dropped — and left there, that edit
+       * was parked on the server's own version and sent on the next visit.
+       */
       const entry = await queuedEditFor(note.id);
       const held = entry?.dead ? entry.body : null;
-      // A round trip on whatever connection there is. Anything that changes
-      // the entry or the note meanwhile re-runs this effect, and `gone`
-      // retires this pass.
-      const theirs = held
-        ? await api
-            .getNote(note.id)
-            .catch((error: unknown) => (error instanceof ApiError && error.isNotFound ? 404 : null))
-        : null;
       if (gone || !entry || !held || !theirs) return;
       // The note is gone, and with it everything the edit could mean: the
       // flush never sends a retired entry, so nothing else would remove it.
@@ -807,7 +812,10 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
       }
       const current = latest.current;
       const moved = theirs.version > held.version;
-      const refused = !moved && (entry.refused ?? false);
+      // An edit this editor parked retired — out of a prompt, a refusal or
+      // "Couldn't save" — is asked about on a note that has not moved, never
+      // sent: only an entry the flush gave up on takes the resend below.
+      const refused = !moved && entry.refused !== undefined;
       // What the entry was parked over, or — for one an older build queued —
       // what this editor holds, which is right unless it was reloaded since.
       const base = entry.base ?? { body: current.saved.body, captures: [...knownCaptures.current] };

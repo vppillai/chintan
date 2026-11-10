@@ -43,7 +43,15 @@ const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeou
 /** The device opened the note at v3; the server holds `stored`. */
 function session(
   stored: NoteDetailWire,
-  refuse: { patch?: number; get?: number; dark?: boolean; patchDark?: boolean; slowGetMs?: number } = {},
+  refuse: {
+    patch?: number;
+    get?: number;
+    dark?: boolean;
+    patchDark?: boolean;
+    slowGetMs?: number;
+    /** Holds the next read, and only that one, until it resolves. */
+    gate?: Promise<void>;
+  } = {},
 ) {
   const sent: Record<string, unknown>[] = [];
   const failing = { ...refuse };
@@ -55,6 +63,9 @@ function session(
   const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
     if (failing.dark) throw new TypeError('Failed to fetch');
     if ((init?.method ?? 'GET') !== 'PATCH') {
+      const gate = failing.gate;
+      delete failing.gate;
+      if (gate) await gate;
       if (failing.slowGetMs) await settle(failing.slowGetMs);
       return failing.get ? json({ type: 'about:blank', title: 'Refused', status: failing.get }, failing.get) : json(stored);
     }
@@ -473,6 +484,83 @@ describe('a pin from Home on a row newer than the note the device holds', () => 
       pinned: true,
       body: 'Start.',
     });
+  });
+});
+
+describe('"Use the newer version" tapped as a read-back still in the air lands', () => {
+  it('does not bring the dropped edit back, and nothing is sent over the copy taken', async () => {
+    const server = session({ ...NOTE, version: 4, body: 'Written on the other device.' });
+    await server.typeAndLeave('Start. Mine.');
+    let release = (): void => undefined;
+    server.failing.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // Reopened: the read-back's GET hangs, as a first request on a dead
+    // connection does while later ones get through.
+    const view = server.open();
+    await waitFor(() => {
+      expect(view.result.current.model.draft.body).toBe('Start. Mine.');
+    });
+    await settle(200);
+    act(() => {
+      view.result.current.edit({ body: 'Start. Mine. Typed.' });
+    });
+    // The save is refused and its own read answers: the prompt is on screen.
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+    expect(view.result.current.model.state).toBe('conflict');
+
+    await act(async () => {
+      view.result.current.takeTheirs();
+      release();
+      await Promise.resolve();
+    });
+    await settle(500);
+    // Judged by the entry as read before the fetch, the prompt came back
+    // holding the edit just dropped, on the server's version.
+    expect(view.result.current.model).toMatchObject({
+      state: 'saved',
+      version: 4,
+      draft: { body: 'Written on the other device.' },
+    });
+    expect(await queuedEditFor(NOTE.id)).toBeNull();
+
+    view.unmount();
+    await settle(300);
+    const before = server.sent.length;
+    const again = server.open();
+    await settle(800);
+    expect(again.result.current.model.draft.body).toBe('Written on the other device.');
+    expect(server.sent).toHaveLength(before);
+    expect(server.stored).toMatchObject({ version: 4, body: 'Written on the other device.' });
+  }, 15_000);
+});
+
+describe('an edit parked retired by this editor, on a note that has not moved', () => {
+  it('is asked about, never sent again unasked, whatever it was parked from', async () => {
+    // Parked out of a conflict prompt (`refused: false`), yet on the
+    // server's own version: only an entry the flush itself gave up on is
+    // sent once more without a tap.
+    await enqueueReplacing({
+      id: queuedEditId(NOTE.id),
+      kind: 'updateNote',
+      payload: {
+        noteId: NOTE.id,
+        body: { version: 4, body: 'Start. Mine.' },
+        base: { body: 'Start.', captures: [] },
+        refused: false,
+      },
+      retired: true,
+    });
+    const server = session({ ...NOTE, version: 4, body: 'Written on the other device.' });
+    const view = server.open();
+    await waitFor(() => {
+      expect(view.result.current.model.theirs?.refused).toBe(true);
+    });
+    await settle(300);
+    expect(server.sent).toHaveLength(0);
+    expect(server.stored.body).toBe('Written on the other device.');
   });
 });
 

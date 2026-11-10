@@ -204,10 +204,15 @@ the editor reads the held body, fetches the server's copy and shows the
 conflict prompt — Keep my edits, or Use the newer version
 (`append-vs-autosave.md`) — with the recording warning and "Keep my edits and
 add the recording" when the entry was parked with them. When the server has
-not moved, an entry that ran out of attempts is sent once more on its
-version; one parked as refused is asked about instead — "That edit did not
-save", Send it again or Drop my edit — so an edit the server will never take
-is neither re-sent on every visit nor impossible to drop. Try again under a
+not moved, an entry the flush itself gave up on is sent once more on its
+version; one the editor parked retired — out of a prompt, a refusal or
+"Couldn't save" — is asked about instead, whichever it was: "That edit did
+not save", Send it again or Drop my edit. So an edit the server will never
+take is neither re-sent on every visit nor impossible to drop, and an edit
+left under a prompt is never sent without a tap even if it was stored on the
+server's own version. The read-back reads the entry again after its fetch:
+"Use the newer version" tapped as a hung fetch answers has dropped the entry
+by then, and there is nothing to ask. Try again under a
 retired entry's "did not save" runs the read-back again. Keep sends the
 held body on the newer version;
 either choice clears the entry (`clearQueuedEdit`). A direct save made online
