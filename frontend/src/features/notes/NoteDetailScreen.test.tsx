@@ -1701,3 +1701,33 @@ describe('a conflict takes the foot of the screen', () => {
     expect(screen.getByRole('combobox', { name: 'Transcription language' })).toBeInTheDocument();
   });
 });
+
+describe('one screen per note (review round 19, FE-2)', () => {
+  /*
+   * "Open <title>" after a move pushes one note over another on the same
+   * route. One instance served both, so the first note's pending edit was
+   * dropped by the editor's reset — no request, the text gone.
+   */
+  it('saves what was typed in one note when the route walks to another inside the debounce', async () => {
+    const user = userEvent.setup();
+    const api = server([ROOF, { ...ROOF, id: 'garden', title: 'Garden', body: 'Garden body', version: 5 }]);
+    const { router } = mount(api.fetchImpl, '/notes/roof-repair');
+    const body = await screen.findByRole('textbox', { name: 'Note body' });
+    await waitFor(() => {
+      expect(body).toHaveValue('v1 body');
+    });
+    await user.type(body, ' and more');
+
+    // No blur: the route changes under the field, as "Open <title>" does.
+    await act(() => router.navigate('/notes/garden'));
+
+    await waitFor(() => {
+      expect(api.notes.get('roof-repair')?.body).toBe('v1 body and more');
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Note body' })).toHaveValue('Garden body');
+    });
+    expect(api.patches.map((patch) => patch.status)).toEqual([200]);
+    expect(api.notes.get('garden')).toMatchObject({ body: 'Garden body', version: 5 });
+  });
+});

@@ -94,7 +94,18 @@ const NoteDrawer = lazy(() => import('./NoteDrawer.tsx').then((m) => ({ default:
  * sheet at the foot (`NoteDrawer`), where the conflict banner also stands.
  */
 export function NoteDetailScreen() {
+  /*
+   * One screen per note. "Open <title>" after a move walks from one note to
+   * another on the same route, and an instance that served both carried the
+   * first note's editor into the second: the pending edit was dropped by the
+   * reset, or its late answer landed in the other note's model. Keyed, the
+   * walk is an unmount, and the editor's unmount flush sends what was typed.
+   */
   const { id } = useParams<{ id: string }>();
+  return <NoteScreen key={id} id={id} />;
+}
+
+function NoteScreen({ id }: { id: string | undefined }) {
   const online = useOnline();
   const { data: served, isLoading, fetchStatus, error, dataUpdatedAt } = useNote(id);
   /*
@@ -460,15 +471,7 @@ export function NoteDetailScreen() {
 
       <SaveIndicator editor={editor} />
 
-      {/*
-        Keyed by the note: the tab strip's memory and the panels' own state
-        belong to one note, and "Open <title>" after a move walks from one
-        note to another without remounting this screen. The find bar's state
-        is not keyed: a query carried into the next note is a query the user
-        may well want there too, and the panel clamps the active match.
-      */}
       <NoteViews
-        key={note.id}
         note={note}
         editor={editor}
         checklist={checklist}
