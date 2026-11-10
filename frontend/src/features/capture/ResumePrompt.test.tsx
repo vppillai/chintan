@@ -237,6 +237,34 @@ describe('a take left at review: Stop, then Back (review round 19, FE-5)', () =>
     expect(useCaptureStore.getState().model).toMatchObject({ state: 'review', localId: 'cap-live' });
   });
 
+  it('leaves the store alone when the capture screen sent the take meanwhile', async () => {
+    const user = userEvent.setup();
+    await saveCaptureRecord(stranded());
+    await appendChunk('cap-a', 0, new Blob(['webm bytes'], { type: 'audio/webm' }));
+    useCaptureStore.setState({ model: atReview });
+    let answer: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const slow: typeof fetch = async (input, init) => {
+      await held;
+      return serverWith('appended')(input, init);
+    };
+    await mount(slow);
+
+    await user.click(await screen.findByRole('button', { name: 'Send' }));
+    // The capture screen's own Send starts while the prompt's is on the wire.
+    act(() => {
+      useCaptureStore.setState({ model: { ...atReview, state: 'uploading' } });
+    });
+    answer();
+
+    await waitFor(async () => {
+      expect((await readCaptureRecord('cap-a'))?.uploadedAt).not.toBeNull();
+    });
+    expect(useCaptureStore.getState().model.state).toBe('uploading');
+  });
+
   it('Discard from the prompt takes the take from the store', async () => {
     const user = userEvent.setup();
     await saveCaptureRecord(stranded());
