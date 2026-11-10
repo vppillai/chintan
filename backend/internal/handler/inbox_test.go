@@ -308,7 +308,7 @@ func TestInboxTextIsACaptureAlreadyTranscribed(t *testing.T) {
 
 	// The recordings list renders it without a player, and a request to
 	// transcribe it again is refused rather than sent to a provider.
-	w = h.do(t, http.MethodGet, "/v1/captures?note_id="+note.ID, "user1", nil)
+	w = h.do(t, http.MethodGet, "/v1/notes/"+note.ID, "user1", nil)
 	if !strings.Contains(w.Body.String(), `"has_audio":false`) {
 		t.Fatalf("recordings list: %s", w.Body.String())
 	}

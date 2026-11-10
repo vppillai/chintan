@@ -193,6 +193,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/NotePage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/ServerError' }
     post:
@@ -293,6 +294,8 @@ paths:
     post:
       tags: [notes]
       summary: Restore an archived note
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '200':
           description: Restored.
@@ -900,6 +903,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CapturePage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/ServerError' }
     post:
@@ -1273,6 +1277,7 @@ paths:
                 properties:
                   url: { type: string, format: uri }
                   expires_at: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '500': { $ref: '#/components/responses/ServerError' }
